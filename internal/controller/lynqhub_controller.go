@@ -84,7 +84,7 @@ func (r *LynqHubReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	// Handle finalizer logic
 	if !registry.DeletionTimestamp.IsZero() {
-		// Registry is being deleted
+		// Hub is being deleted
 		if containsString(registry.Finalizers, FinalizerLynqHub) {
 			// Run cleanup logic for DeletionPolicy.Retain resources
 			if err := r.cleanupRetainResources(ctx, registry); err != nil {
@@ -686,7 +686,7 @@ func (r *LynqHubReconciler) updateLynqNode(ctx context.Context, registry *lynqv1
 		r.Recorder.Eventf(node, corev1.EventTypeNormal, "TemplateApplied",
 			"Applying LynqForm '%s' changes (generation: %s -> %s). "+
 				"Total %d resources will be reconciled: %s. "+
-				"Registry: %s, UID: %s",
+				"Hub: %s, UID: %s",
 			tmpl.Name, oldTemplateGeneration, newTemplateGeneration,
 			totalResources, resourceDetails,
 			registry.Name, row.UID)
@@ -885,9 +885,9 @@ func (r *LynqHubReconciler) updateStatus(ctx context.Context, registry *lynqv1.L
 	logger := log.FromContext(ctx)
 
 	// Record metrics first (these don't depend on the status update)
-	metrics.RegistryDesired.WithLabelValues(registry.Name, registry.Namespace).Set(float64(desired))
-	metrics.RegistryReady.WithLabelValues(registry.Name, registry.Namespace).Set(float64(ready))
-	metrics.RegistryFailed.WithLabelValues(registry.Name, registry.Namespace).Set(float64(failed))
+	metrics.HubDesired.WithLabelValues(registry.Name, registry.Namespace).Set(float64(desired))
+	metrics.HubReady.WithLabelValues(registry.Name, registry.Namespace).Set(float64(ready))
+	metrics.HubFailed.WithLabelValues(registry.Name, registry.Namespace).Set(float64(failed))
 
 	// Retry status update on conflict
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -941,7 +941,7 @@ func (r *LynqHubReconciler) updateStatus(ctx context.Context, registry *lynqv1.L
 	}
 }
 
-// cleanupRetainResources handles DeletionPolicy.Retain resources when Registry is deleted
+// cleanupRetainResources handles DeletionPolicy.Retain resources when Hub is deleted
 func (r *LynqHubReconciler) cleanupRetainResources(ctx context.Context, registry *lynqv1.LynqHub) error {
 	logger := log.FromContext(ctx)
 
@@ -951,7 +951,7 @@ func (r *LynqHubReconciler) cleanupRetainResources(ctx context.Context, registry
 		return fmt.Errorf("failed to list nodes: %w", err)
 	}
 
-	logger.Info("Cleaning up retain resources", "registry", registry.Name, "nodeCount", len(nodes.Items))
+	logger.Info("Cleaning up retain resources", "hub", registry.Name, "nodeCount", len(nodes.Items))
 
 	// For each node, process Retain resources
 	for _, node := range nodes.Items {
@@ -963,7 +963,7 @@ func (r *LynqHubReconciler) cleanupRetainResources(ctx context.Context, registry
 		}
 	}
 
-	logger.Info("Cleanup complete for retain resources", "registry", registry.Name)
+	logger.Info("Cleanup complete for retain resources", "hub", registry.Name)
 	return nil
 }
 

@@ -367,7 +367,7 @@ func (r *LynqNodeReconciler) emitTemplateAppliedEvent(ctx context.Context, node 
 	r.Recorder.Eventf(node, corev1.EventTypeNormal, "TemplateResourcesApplying",
 		"Applying resources from LynqForm '%s' (generation: %s). "+
 			"Reconciling %d total resources: %s. "+
-			"Registry: %s, LynqNode UID: %s, Namespace: %s. "+
+			"Hub: %s, LynqNode UID: %s, Namespace: %s. "+
 			"Resources will be applied in dependency order with readiness checks.",
 		templateName, templateGeneration,
 		totalResources, resourceDetails,
@@ -378,7 +378,7 @@ func (r *LynqNodeReconciler) emitTemplateAppliedEvent(ctx context.Context, node 
 		"template", templateName,
 		"generation", templateGeneration,
 		"totalResources", totalResources,
-		"registry", registryName)
+		"hub", registryName)
 }
 
 // emitTemplateAppliedCompleteEvent emits a detailed completion event after template resources are applied
@@ -401,7 +401,7 @@ func (r *LynqNodeReconciler) emitTemplateAppliedCompleteEvent(ctx context.Contex
 		r.Recorder.Eventf(node, corev1.EventTypeWarning, "TemplateAppliedPartial",
 			"Applied LynqForm '%s' (generation: %s) with partial success. "+
 				"Changed: %d, Ready: %d, Failed: %d out of %d total resources. "+
-				"Registry: %s, LynqNode UID: %s. "+
+				"Hub: %s, LynqNode UID: %s. "+
 				"Failed resources require attention.",
 			templateName, templateGeneration,
 			changedCount, readyCount, failedCount, totalResources,
@@ -420,7 +420,7 @@ func (r *LynqNodeReconciler) emitTemplateAppliedCompleteEvent(ctx context.Contex
 		r.Recorder.Eventf(node, corev1.EventTypeNormal, "TemplateAppliedSuccess",
 			"Successfully applied LynqForm '%s' (generation: %s). "+
 				"All %d resources reconciled successfully (%d changed, %d ready). "+
-				"Registry: %s, LynqNode UID: %s, Namespace: %s. "+
+				"Hub: %s, LynqNode UID: %s, Namespace: %s. "+
 				"All resources are now in desired state.",
 			templateName, templateGeneration,
 			totalResources, changedCount, readyCount,
@@ -607,7 +607,7 @@ func (r *LynqNodeReconciler) collectResourcesFromLynqNode(node *lynqv1.LynqNode)
 }
 
 // renderResource renders a resource template
-// Note: NameTemplate, LabelsTemplate, AnnotationsTemplate, TargetNamespace are already rendered by Registry controller
+// Note: NameTemplate, LabelsTemplate, AnnotationsTemplate, TargetNamespace are already rendered by Hub controller
 // We only need to render the spec (unstructured.Unstructured) contents which may contain template variables
 func (r *LynqNodeReconciler) renderResource(ctx context.Context, engine *template.Engine, resource lynqv1.TResource, vars template.Variables, node *lynqv1.LynqNode) (*unstructured.Unstructured, error) {
 	// Get spec (already an unstructured.Unstructured)

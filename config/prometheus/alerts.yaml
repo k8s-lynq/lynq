@@ -74,18 +74,18 @@ spec:
             dashboard: "https://grafana.example.com/d/lynq/node-details?var-lynqnode={{ $labels.lynqnode }}&var-namespace={{ $labels.namespace }}"
             runbook_url: "https://lynq.sh/alert-runbooks#lynqnodestatusunknown"
 
-        # Critical: Registry has widespread node failures
-        - alert: RegistryManyNodesFailure
-          expr: registry_failed > 5 or (registry_failed / registry_desired > 0.5 and registry_desired > 0)
+        # Critical: Hub has widespread node failures
+        - alert: HubManyNodesFailure
+          expr: hub_failed > 5 or (hub_failed / hub_desired > 0.5 and hub_desired > 0)
           for: 5m
           labels:
             severity: critical
             component: lynq
           annotations:
-            summary: "Registry {{ $labels.registry }} has widespread failures"
-            description: "Registry {{ $labels.registry }} in namespace {{ $labels.namespace }} has {{ $value }} failed nodes (>5 or >50% of desired). This indicates a systemic issue requiring immediate attention."
-            dashboard: "https://grafana.example.com/d/lynq/registry-overview?var-registry={{ $labels.registry }}&var-namespace={{ $labels.namespace }}"
-            runbook_url: "https://lynq.sh/alert-runbooks#registrymanynodesfailure"
+            summary: "Hub {{ $labels.hub }} has widespread failures"
+            description: "Hub {{ $labels.hub }} in namespace {{ $labels.namespace }} has {{ $value }} failed nodes (>5 or >50% of desired). This indicates a systemic issue requiring immediate attention."
+            dashboard: "https://grafana.example.com/d/lynq/hub-overview?var-hub={{ $labels.hub }}&var-namespace={{ $labels.namespace }}"
+            runbook_url: "https://lynq.sh/alert-runbooks#hubmanynodesfailure"
 
     # ========================================
     # Warning Alerts - Attention Required
@@ -135,34 +135,34 @@ spec:
             dashboard: "https://grafana.example.com/d/lynq/node-details?var-lynqnode={{ $labels.lynqnode }}&var-namespace={{ $labels.namespace }}"
             runbook_url: "https://lynq.sh/alert-runbooks#lynqnodehighconflictrate"
 
-        # Warning: Registry has failed nodes
-        - alert: RegistryNodesFailure
-          expr: registry_failed > 0 and registry_failed <= 5
+        # Warning: Hub has failed nodes
+        - alert: HubNodesFailure
+          expr: hub_failed > 0 and hub_failed <= 5
           for: 10m
           labels:
             severity: warning
             component: lynq
           annotations:
-            summary: "Registry {{ $labels.registry }} has {{ $value }} failed node(s)"
-            description: "Registry {{ $labels.registry }} in namespace {{ $labels.namespace }} has {{ $value }} failed nodes for 10+ minutes. This may indicate provisioning issues affecting some nodes."
-            dashboard: "https://grafana.example.com/d/lynq/registry-overview?var-registry={{ $labels.registry }}&var-namespace={{ $labels.namespace }}"
-            runbook_url: "https://lynq.sh/alert-runbooks#registrynodesfailure"
+            summary: "Hub {{ $labels.hub }} has {{ $value }} failed node(s)"
+            description: "Hub {{ $labels.hub }} in namespace {{ $labels.namespace }} has {{ $value }} failed nodes for 10+ minutes. This may indicate provisioning issues affecting some nodes."
+            dashboard: "https://grafana.example.com/d/lynq/hub-overview?var-hub={{ $labels.hub }}&var-namespace={{ $labels.namespace }}"
+            runbook_url: "https://lynq.sh/alert-runbooks#hubnodesfailure"
 
-        # Warning: Registry sync issues
-        - alert: RegistryDesiredCountMismatch
+        # Warning: Hub sync issues
+        - alert: HubDesiredCountMismatch
           expr: |
-            (registry_ready != registry_desired)
-            and (registry_desired > 0)
-            and (registry_failed == 0)
+            (hub_ready != hub_desired)
+            and (hub_desired > 0)
+            and (hub_failed == 0)
           for: 20m
           labels:
             severity: warning
             component: lynq
           annotations:
-            summary: "Registry {{ $labels.registry }} has node count mismatch"
-            description: "Registry {{ $labels.registry }} in namespace {{ $labels.namespace }} has {{ $labels.registry_ready }} ready nodes but desires {{ $labels.registry_desired }}. No failures detected but sync may be delayed."
-            dashboard: "https://grafana.example.com/d/lynq/registry-overview?var-registry={{ $labels.registry }}&var-namespace={{ $labels.namespace }}"
-            runbook_url: "https://lynq.sh/alert-runbooks#registrydesiredcountmismatch"
+            summary: "Hub {{ $labels.hub }} has node count mismatch"
+            description: "Hub {{ $labels.hub }} in namespace {{ $labels.namespace }} has {{ $labels.hub_ready }} ready nodes but desires {{ $labels.hub_desired }}. No failures detected but sync may be delayed."
+            dashboard: "https://grafana.example.com/d/lynq/hub-overview?var-hub={{ $labels.hub }}&var-namespace={{ $labels.namespace }}"
+            runbook_url: "https://lynq.sh/alert-runbooks#hubdesiredcountmismatch"
 
         # Warning: High reconciliation error rate
         - alert: LynqNodeReconciliationErrors

@@ -71,7 +71,7 @@ var _ = Describe("LynqNode Deletion Regression Tests", Pending, func() {
 			registryName = "test-deletion-registry-" + time.Now().Format("150405")
 			templateName = "test-deletion-template-" + time.Now().Format("150405")
 
-			// Create Registry
+			// Create Hub
 			registry = &lynqv1.LynqHub{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      registryName,
