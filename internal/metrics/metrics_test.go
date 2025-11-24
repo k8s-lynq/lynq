@@ -118,55 +118,55 @@ lynqnode_resources_failed{lynqnode="lynqnode1",namespace="default"} 3
 	assert.NoError(t, err)
 }
 
-func TestRegistryDesired(t *testing.T) {
-	RegistryDesired.Reset()
+func TestHubDesired(t *testing.T) {
+	HubDesired.Reset()
 
-	// Set desired LynqNode count for registries
-	RegistryDesired.WithLabelValues("mysql-prod", "default").Set(100)
-	RegistryDesired.WithLabelValues("mysql-staging", "staging").Set(20)
+	// Set desired LynqNode count for hubs
+	HubDesired.WithLabelValues("mysql-prod", "default").Set(100)
+	HubDesired.WithLabelValues("mysql-staging", "staging").Set(20)
 
-	count := testutil.CollectAndCount(RegistryDesired)
+	count := testutil.CollectAndCount(HubDesired)
 	assert.Equal(t, 2, count)
 
 	expected := `
-# HELP registry_desired Number of desired LynqNodes from the registry data source
-# TYPE registry_desired gauge
-registry_desired{namespace="default",registry="mysql-prod"} 100
-registry_desired{namespace="staging",registry="mysql-staging"} 20
+# HELP hub_desired Number of desired LynqNodes from the hub data source
+# TYPE hub_desired gauge
+hub_desired{hub="mysql-prod",namespace="default"} 100
+hub_desired{hub="mysql-staging",namespace="staging"} 20
 `
-	err := testutil.CollectAndCompare(RegistryDesired, strings.NewReader(expected))
+	err := testutil.CollectAndCompare(HubDesired, strings.NewReader(expected))
 	assert.NoError(t, err)
 }
 
-func TestRegistryReady(t *testing.T) {
-	RegistryReady.Reset()
+func TestHubReady(t *testing.T) {
+	HubReady.Reset()
 
 	// Set ready LynqNode count
-	RegistryReady.WithLabelValues("mysql-prod", "default").Set(95)
+	HubReady.WithLabelValues("mysql-prod", "default").Set(95)
 
-	count := testutil.CollectAndCount(RegistryReady)
+	count := testutil.CollectAndCount(HubReady)
 	assert.Equal(t, 1, count)
 
-	problems, err := testutil.CollectAndLint(RegistryReady)
+	problems, err := testutil.CollectAndLint(HubReady)
 	assert.NoError(t, err)
 	assert.Empty(t, problems)
 }
 
-func TestRegistryFailed(t *testing.T) {
-	RegistryFailed.Reset()
+func TestHubFailed(t *testing.T) {
+	HubFailed.Reset()
 
 	// Set failed LynqNode count
-	RegistryFailed.WithLabelValues("mysql-prod", "default").Set(5)
+	HubFailed.WithLabelValues("mysql-prod", "default").Set(5)
 
-	count := testutil.CollectAndCount(RegistryFailed)
+	count := testutil.CollectAndCount(HubFailed)
 	assert.Equal(t, 1, count)
 
 	expected := `
-# HELP registry_failed Number of failed LynqNodes for a registry
-# TYPE registry_failed gauge
-registry_failed{namespace="default",registry="mysql-prod"} 5
+# HELP hub_failed Number of failed LynqNodes for a hub
+# TYPE hub_failed gauge
+hub_failed{hub="mysql-prod",namespace="default"} 5
 `
-	err := testutil.CollectAndCompare(RegistryFailed, strings.NewReader(expected))
+	err := testutil.CollectAndCompare(HubFailed, strings.NewReader(expected))
 	assert.NoError(t, err)
 }
 
@@ -282,9 +282,9 @@ func TestMetricsRegistration(t *testing.T) {
 		LynqNodeResourcesReady,
 		LynqNodeResourcesDesired,
 		LynqNodeResourcesFailed,
-		RegistryDesired,
-		RegistryReady,
-		RegistryFailed,
+		HubDesired,
+		HubReady,
+		HubFailed,
 		ApplyAttemptsTotal,
 		LynqNodeConditionStatus,
 		LynqNodeConflictsTotal,

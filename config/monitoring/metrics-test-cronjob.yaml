@@ -74,7 +74,7 @@ spec:
               curl -k -s \
                 -H "Authorization: Bearer $TOKEN" \
                 https://lynq-controller-manager-metrics-service.lynq-system.svc:8443/metrics \
-                | grep -E "^(lynqnode_|registry_|apply_)" || echo "No custom metrics found"
+                | grep -E "^(lynqnode_|hub_|apply_)" || echo "No custom metrics found"
 
               echo ""
               echo "===================="

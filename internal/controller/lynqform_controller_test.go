@@ -82,7 +82,7 @@ var _ = Describe("LynqForm Controller", func() {
 			if err != nil {
 				Expect(err.Error()).To(Or(
 					ContainSubstring("hubId is required"),
-					ContainSubstring("Registry validation failed"),
+					ContainSubstring("Hub validation failed"),
 				))
 			}
 		})

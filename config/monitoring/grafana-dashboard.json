@@ -73,7 +73,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(registry_desired)",
+          "expr": "sum(hub_desired)",
           "refId": "A"
         }
       ],
@@ -132,7 +132,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(registry_ready)",
+          "expr": "sum(hub_ready)",
           "refId": "A"
         }
       ],
@@ -195,7 +195,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(registry_failed)",
+          "expr": "sum(hub_failed)",
           "refId": "A"
         }
       ],
@@ -1101,14 +1101,14 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "registry_ready / registry_desired",
+          "expr": "hub_ready / hub_desired",
           "format": "table",
           "instant": true,
-          "legendFormat": "{{registry}}",
+          "legendFormat": "{{hub}}",
           "refId": "A"
         }
       ],
-      "title": "Registry Health",
+      "title": "Hub Health",
       "transformations": [
         {
           "id": "organize",
@@ -1127,7 +1127,7 @@
             "indexByName": {},
             "renameByName": {
               "Value": "Health",
-              "registry": "Registry",
+              "hub": "Hub",
               "namespace": "Namespace"
             }
           }
@@ -1416,7 +1416,7 @@
             "uid": "${datasource}"
           },
           "expr": "workqueue_depth{name=\"lynqhub\"}",
-          "legendFormat": "Registry Queue",
+          "legendFormat": "Hub Queue",
           "refId": "B"
         },
         {

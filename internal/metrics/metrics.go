@@ -59,31 +59,31 @@ var (
 		[]string{"lynqnode", "namespace"},
 	)
 
-	// RegistryDesired tracks the desired LynqNode count per registry
-	RegistryDesired = prometheus.NewGaugeVec(
+	// HubDesired tracks the desired LynqNode count per hub
+	HubDesired = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "registry_desired",
-			Help: "Number of desired LynqNodes from the registry data source",
+			Name: "hub_desired",
+			Help: "Number of desired LynqNodes from the hub data source",
 		},
-		[]string{"registry", "namespace"},
+		[]string{"hub", "namespace"},
 	)
 
-	// RegistryReady tracks the ready LynqNode count per registry
-	RegistryReady = prometheus.NewGaugeVec(
+	// HubReady tracks the ready LynqNode count per hub
+	HubReady = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "registry_ready",
-			Help: "Number of ready LynqNodes for a registry",
+			Name: "hub_ready",
+			Help: "Number of ready LynqNodes for a hub",
 		},
-		[]string{"registry", "namespace"},
+		[]string{"hub", "namespace"},
 	)
 
-	// RegistryFailed tracks the failed LynqNode count per registry
-	RegistryFailed = prometheus.NewGaugeVec(
+	// HubFailed tracks the failed LynqNode count per hub
+	HubFailed = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "registry_failed",
-			Help: "Number of failed LynqNodes for a registry",
+			Name: "hub_failed",
+			Help: "Number of failed LynqNodes for a hub",
 		},
-		[]string{"registry", "namespace"},
+		[]string{"hub", "namespace"},
 	)
 
 	// ApplyAttemptsTotal counts resource apply attempts
@@ -140,9 +140,9 @@ func init() {
 		LynqNodeResourcesReady,
 		LynqNodeResourcesDesired,
 		LynqNodeResourcesFailed,
-		RegistryDesired,
-		RegistryReady,
-		RegistryFailed,
+		HubDesired,
+		HubReady,
+		HubFailed,
 		ApplyAttemptsTotal,
 		LynqNodeConditionStatus,
 		LynqNodeConflictsTotal,
