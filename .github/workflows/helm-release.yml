@@ -96,39 +96,48 @@ jobs:
         run: |
           VERSION="${{ steps.extract_version.outputs.version }}"
 
-          # Create header only
-          cat << 'EOF' > release-header.md
+          # Get previous tag for changelog generation
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 v${VERSION}^ 2>/dev/null || echo "")
+
+          # Generate release notes using GitHub API
+          if [ -n "$PREVIOUS_TAG" ]; then
+            CHANGELOG=$(gh api \
+              --method POST \
+              -H "Accept: application/vnd.github+json" \
+              /repos/k8s-lynq/lynq/releases/generate-notes \
+              -f tag_name="v${VERSION}" \
+              -f previous_tag_name="${PREVIOUS_TAG}" \
+              --jq .body)
+          else
+            # First release - get all commits
+            CHANGELOG=$(gh api \
+              --method POST \
+              -H "Accept: application/vnd.github+json" \
+              /repos/k8s-lynq/lynq/releases/generate-notes \
+              -f tag_name="v${VERSION}" \
+              --jq .body)
+          fi
+
+          # Create final release notes
+          cat << EOF > final-notes.md
           **Lynq - Kubernetes-Native Database-Driven Automation**
 
           **⚠️ IMPORTANT:** Requires cert-manager before installation.
 
-          ```bash
+          \`\`\`bash
           helm repo add lynq https://k8s-lynq.github.io/lynq
-          helm install lynq lynq/lynq-operator --version $VERSION
-          ```
+          helm install lynq lynq/lynq-operator --version ${VERSION}
+          \`\`\`
 
           [Documentation](https://lynq.sh) • [Chart README](https://github.com/k8s-lynq/lynq/blob/main/chart/README.md)
 
           ---
 
+          ${CHANGELOG}
           EOF
 
-          # Replace $VERSION in the header
-          sed -i "s/\$VERSION/${VERSION}/g" release-header.md
-
-          # Get auto-generated notes (includes PRs and contributors)
-          gh api \
-            -H "Accept: application/vnd.github+json" \
-            /repos/k8s-lynq/lynq/releases/tags/v${VERSION} \
-            --jq .body > auto-notes.md 2>/dev/null || echo "" > auto-notes.md
-
-          # Combine header with auto-generated changelog
-          cat release-header.md auto-notes.md > final-notes.md
-
-          # Update release with combined notes and regenerate to ensure latest
-          gh release edit "v${VERSION}" \
-            --notes-file final-notes.md \
-            --generate-notes
+          # Update release
+          gh release edit "v${VERSION}" --notes-file final-notes.md
 
       - name: Update Helm repository index
         env:
