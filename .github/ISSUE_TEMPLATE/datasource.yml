@@ -82,6 +82,7 @@ body:
         - label: Added integration tests
         - label: Created documentation in `docs/datasource-<name>.md`
         - label: Added example manifests in `config/samples/<datasource>/`
+        - label: Updated datasource dropdown in issue templates (if needed)
         - label: Updated README and roadmap
 
   - type: textarea
