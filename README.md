@@ -6,7 +6,7 @@
 
 ### Kubernetes-Native Database-Driven Automation
 
-**Automate node lifecycle from database to production**
+**Automate resource lifecycle from database to production**
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/k8s-lynq/lynq)](https://goreportcard.com/report/github.com/k8s-lynq/lynq)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
@@ -23,13 +23,28 @@
 
 ## 📖 Overview
 
-**Lynq Operator** is a Kubernetes operator that automates database-driven infrastructure provisioning. It reads node data from external datasources and dynamically creates, updates, and manages Kubernetes resources using declarative templates.
+**Lynq Operator** is a Kubernetes operator that automates database-driven infrastructure provisioning. It reads data from external datasources and dynamically creates, updates, and manages Kubernetes resources using declarative templates.
 
-**One database row = One fully provisioned node stack**
+### 💡 Core Concept
 
-🗄️ Database-driven automation • 📝 Go templates + Sprig functions • 🔄 Server-Side Apply • 📊 DAG-based dependencies • ⚙️ Lifecycle policies • 🚀 Production-ready
+> [!IMPORTANT]
+> **One database row = One complete set of Kubernetes resources**
+>
+> Each row in your database automatically provisions and manages a complete stack of Kubernetes resources (Deployments, Services, Ingresses, ConfigMaps, and more) using declarative templates.
 
-📚 **[Complete Documentation](https://lynq.sh/)** • 🏗️ **[Architecture Guide](https://lynq.sh/architecture)**
+### ✨ Key Features
+
+- 🗄️ **Database-driven automation** - Sync resources from MySQL, PostgreSQL, and more
+- 📝 **Go templates + Sprig functions** - Powerful template engine with 200+ built-in functions
+- 🔄 **Server-Side Apply** - Kubernetes-native resource management
+- 📊 **DAG-based dependencies** - Control resource creation order with dependency graphs
+- ⚙️ **Lifecycle policies** - Fine-grained control over creation, deletion, and conflicts
+- 🚀 **Production-ready** - Battle-tested with comprehensive monitoring and observability
+
+### 📚 Learn More
+
+- **[Complete Documentation](https://lynq.sh/)** - Full guides, tutorials, and API reference
+- **[Architecture Guide](https://lynq.sh/architecture)** - Deep dive into design and internals
 
 ---
 
@@ -37,9 +52,9 @@
 
 Get started with Lynq Operator in 5 minutes:
 
-🎯 **[Quick Start Guide](https://lynq.sh/quickstart)** - Step-by-step tutorial with working examples
-📦 **[Installation Guide](https://lynq.sh/installation)** - Helm, Kustomize, and manual installation options
-⚙️ **[Configuration Examples](https://lynq.sh/quickstart#configuration)** - LynqHub and LynqForm setup
+- 🎯 **[Quick Start Guide](https://lynq.sh/quickstart)** - Step-by-step tutorial with working examples
+- 📦 **[Installation Guide](https://lynq.sh/installation)** - Helm, Kustomize, and manual installation options
+- ⚙️ **[Configuration Examples](https://lynq.sh/quickstart#configuration)** - LynqHub and LynqForm setup
 
 ---
 
@@ -47,24 +62,52 @@ Get started with Lynq Operator in 5 minutes:
 
 Complete documentation is available at **[lynq.sh](https://lynq.sh/)**
 
-**Getting Started**: [Quick Start](https://lynq.sh/quickstart) • [Installation](https://lynq.sh/installation)
-**Core Concepts**: [Architecture](https://lynq.sh/architecture) • [API Reference](https://lynq.sh/api) • [Templates](https://lynq.sh/templates)
-**Operations**: [DataSource Setup](https://lynq.sh/datasource) • [Monitoring](https://lynq.sh/monitoring) • [Troubleshooting](https://lynq.sh/troubleshooting)
-**Integrations**: [ExternalDNS](https://lynq.sh/integration-external-dns) • [Flux](https://lynq.sh/integration-flux) • [Argo CD](https://lynq.sh/integration-argocd)
+### Getting Started
+- [Quick Start](https://lynq.sh/quickstart) - Get up and running in minutes
+- [Installation](https://lynq.sh/installation) - Multiple installation methods
+
+### Core Concepts
+- [Architecture](https://lynq.sh/architecture) - System design and components
+- [API Reference](https://lynq.sh/api) - CRD specifications
+- [Templates](https://lynq.sh/templates) - Template syntax and functions
+
+### Operations
+- [DataSource Setup](https://lynq.sh/datasource) - Configure MySQL, PostgreSQL, and more
+- [Monitoring](https://lynq.sh/monitoring) - Metrics and observability
+- [Troubleshooting](https://lynq.sh/troubleshooting) - Common issues and solutions
+
+### Integrations
+- [Crossplane](https://lynq.sh/integration-crossplane) - Infrastructure as Code
+- [ExternalDNS](https://lynq.sh/integration-external-dns) - Dynamic DNS management
+- [Flux](https://lynq.sh/integration-flux) - GitOps workflows
+- [Argo CD](https://lynq.sh/integration-argocd) - Declarative GitOps
 
 ---
 
 ## 🛠️ Development
 
+### Getting Started
+
 ```bash
+# Clone the repository
 git clone https://github.com/k8s-lynq/lynq.git
 cd lynq
-make install  # Install CRDs
-make run      # Run locally
-make test     # Run tests
+
+# Install CRDs
+make install
+
+# Run locally
+make run
+
+# Run tests
+make test
 ```
 
-📖 **[Development Guide](https://lynq.sh/development)** - Building, testing, and contributing to Lynq Operator
+### Resources
+
+- 📖 **[Development Guide](https://lynq.sh/development)** - Building, testing, and contributing
+- 🔧 **[Local Development Setup](https://lynq.sh/development#local-setup)** - Environment configuration
+- 🧪 **[Testing Guide](https://lynq.sh/development#testing)** - Unit, integration, and e2e tests
 
 ---
 
@@ -72,9 +115,12 @@ make test     # Run tests
 
 We welcome contributions! Whether you're fixing bugs, adding features, improving documentation, or sharing use cases - all contributions are valued.
 
-🌟 **Want to add a new datasource?** Lynq uses a pluggable adapter pattern - see our [Contributing a Datasource Guide](https://lynq.sh/contributing-datasource)
+### How to Contribute
 
-📋 **[Contributing Guidelines](CONTRIBUTING.md)** - Code standards, commit conventions, and PR process
+- 🐛 **[Report Issues](https://github.com/k8s-lynq/lynq/issues/new)** - Bug reports and feature requests
+- 📋 **[Contributing Guidelines](CONTRIBUTING.md)** - Code standards, commit conventions, and PR process
+- 🌟 **[Add a Datasource](https://lynq.sh/contributing-datasource)** - Pluggable adapter pattern guide
+- 💬 **[Join Discussions](https://github.com/k8s-lynq/lynq/discussions)** - Ask questions and share ideas
 
 ---
 
@@ -82,24 +128,37 @@ We welcome contributions! Whether you're fixing bugs, adding features, improving
 
 **Production-ready** • Kubernetes v1.28-v1.33 validated • Apache 2.0 License
 
+- ✅ **Stable** - Used in production environments
 - 🗺️ **[Roadmap](docs/roadmap.md)** - Feature plans and versioning
+- 🔄 **Active Development** - Regular updates and improvements
 
 ---
 
 ## 📝 License
 
 Licensed under the [Apache License 2.0](LICENSE).
+
 Copyright 2025 Lynq Operator Authors.
 
 ---
 
-## 📬 Community
+## 📬 Community & Support
 
-🐛 [GitHub Issues](https://github.com/k8s-lynq/lynq/issues) • 💬 [Discussions](https://github.com/k8s-lynq/lynq/discussions)
+### Get Help
+
+- 🐛 **[Report Issues](https://github.com/k8s-lynq/lynq/issues)** - Bug reports and feature requests
+- 💬 **[Discussions](https://github.com/k8s-lynq/lynq/discussions)** - Ask questions and share ideas
+- 📖 **[Documentation](https://lynq.sh/)** - Comprehensive guides and tutorials
+
+### Stay Updated
+
+- ⭐ **Star this repository** to show your support
+- 👁️ **Watch** for updates and releases
+- 🔔 **Follow** our releases for the latest features
 
 ---
 
-## Star History
+## ⭐ Star History
 
 <a href="https://www.star-history.com/#k8s-lynq/lynq&type=timeline&legend=top-left">
  <picture>
@@ -113,6 +172,8 @@ Copyright 2025 Lynq Operator Authors.
 
 <div align="center">
 
-**[⬆ Back to Top](#lynq)**
+**Made with ❤️ by the Lynq community**
+
+[⬆ Back to Top](#lynq-operator)
 
 </div>
