@@ -1,0 +1,124 @@
+name: Bug Report
+description: Report a bug or unexpected behavior
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please fill out the information below to help us investigate.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of the bug
+      placeholder: Tell us what went wrong
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the behavior
+      placeholder: |
+        1. Deploy LynqHub with '...'
+        2. Create LynqForm with '...'
+        3. Observe error '...'
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What should have happened?
+      placeholder: Describe the expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened?
+      placeholder: Describe what actually happened
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Lynq Operator Version
+      description: Which version of the operator are you using?
+      placeholder: "e.g., v1.1.9"
+    validations:
+      required: true
+
+  - type: input
+    id: k8s-version
+    attributes:
+      label: Kubernetes Version
+      description: Which Kubernetes version are you running?
+      placeholder: "e.g., v1.28.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      description: Where are you running the operator?
+      options:
+        - GKE
+        - EKS
+        - AKS
+        - kind
+        - k3s
+        - minikube
+        - Other (specify in description)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: datasource
+    attributes:
+      label: Datasource Type
+      description: Which datasource are you using?
+      options:
+        - MySQL
+        - PostgreSQL
+        - Other (specify in description)
+        - Not applicable
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs
+      description: Paste relevant operator logs (use `kubectl logs -n lynq-system deployment/lynq-controller-manager`)
+      render: shell
+      placeholder: Paste logs here
+    validations:
+      required: false
+
+  - type: textarea
+    id: yaml
+    attributes:
+      label: CRD YAML
+      description: Paste relevant LynqHub/LynqForm/LynqNode YAML (redact sensitive info)
+      render: yaml
+      placeholder: Paste YAML here
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other context, screenshots, or information
+      placeholder: Add any other context about the problem
+    validations:
+      required: false

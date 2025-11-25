@@ -1,0 +1,104 @@
+name: Datasource Contribution
+description: Propose or contribute a new datasource adapter
+title: "[Datasource]: "
+labels: ["datasource", "enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for contributing a new datasource! Please read the [Datasource Contribution Guide](https://github.com/k8s-lynq/lynq/blob/main/docs/contributing-datasource.md) before proceeding.
+
+  - type: dropdown
+    id: datasource-type
+    attributes:
+      label: Datasource Type
+      description: Which datasource are you adding?
+      options:
+        - PostgreSQL
+        - MongoDB
+        - REST API
+        - Redis
+        - DynamoDB
+        - Firestore
+        - Other (specify below)
+    validations:
+      required: true
+
+  - type: input
+    id: datasource-custom
+    attributes:
+      label: Custom Datasource Name
+      description: If you selected "Other", specify the datasource name
+      placeholder: "e.g., Cassandra, CouchDB, etc."
+    validations:
+      required: false
+
+  - type: dropdown
+    id: status
+    attributes:
+      label: Status
+      description: What's the current status of this datasource?
+      options:
+        - "Planning - Gathering requirements"
+        - "In Progress - Implementation started"
+        - "Ready for Review - PR submitted"
+        - "Discussion - Need feedback"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Brief description of the datasource and its use case
+      placeholder: Describe what this datasource does and why it's useful
+    validations:
+      required: true
+
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Implementation Details
+      description: Technical details about the implementation
+      placeholder: |
+        - Client library: github.com/example/client
+        - Connection method: ...
+        - Query format: ...
+        - Special considerations: ...
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Implementation Checklist
+      description: Track your progress (check items as you complete them)
+      options:
+        - label: Implemented `Datasource` interface (`QueryNodes()` and `Close()`)
+        - label: Added datasource spec to `api/v1/lynqhub_types.go`
+        - label: Updated factory in `internal/datasource/interface.go`
+        - label: Added controller logic for connection/credentials
+        - label: Written unit tests (>80% coverage)
+        - label: Added integration tests
+        - label: Created documentation in `docs/datasource-<name>.md`
+        - label: Added example manifests in `config/samples/<datasource>/`
+        - label: Updated datasource dropdown in issue templates (if needed)
+        - label: Updated README and roadmap
+
+  - type: textarea
+    id: help-needed
+    attributes:
+      label: Help Needed
+      description: Do you need any help or guidance?
+      placeholder: Describe any challenges or questions you have
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other context, links, or references
+      placeholder: Links to datasource docs, similar implementations, etc.
+    validations:
+      required: false

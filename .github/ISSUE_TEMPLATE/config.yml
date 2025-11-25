@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Discussion Forum
+    url: https://github.com/k8s-lynq/lynq/discussions
+    about: Ask questions, share ideas, and discuss with the community
+  - name: Documentation
+    url: https://lynq.sh
+    about: Read the official documentation
+  - name: Search Existing Issues
+    url: https://github.com/k8s-lynq/lynq/issues
+    about: Search before creating a new issue to avoid duplicates
