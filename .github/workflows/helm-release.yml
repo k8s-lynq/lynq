@@ -90,6 +90,55 @@ jobs:
             --release-name-template "v{{ .Version }}" \
             --packages-with-index
 
+      - name: Update release notes with changelog
+        env:
+          GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+        run: |
+          VERSION="${{ steps.extract_version.outputs.version }}"
+
+          # Get previous tag for changelog generation
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 v${VERSION}^ 2>/dev/null || echo "")
+
+          # Generate release notes using GitHub API
+          if [ -n "$PREVIOUS_TAG" ]; then
+            CHANGELOG=$(gh api \
+              --method POST \
+              -H "Accept: application/vnd.github+json" \
+              /repos/k8s-lynq/lynq/releases/generate-notes \
+              -f tag_name="v${VERSION}" \
+              -f previous_tag_name="${PREVIOUS_TAG}" \
+              --jq .body)
+          else
+            # First release - get all commits
+            CHANGELOG=$(gh api \
+              --method POST \
+              -H "Accept: application/vnd.github+json" \
+              /repos/k8s-lynq/lynq/releases/generate-notes \
+              -f tag_name="v${VERSION}" \
+              --jq .body)
+          fi
+
+          # Create final release notes
+          cat << EOF > final-notes.md
+          **Lynq - Kubernetes-Native Database-Driven Automation**
+
+          **⚠️ IMPORTANT:** Requires cert-manager before installation.
+
+          \`\`\`bash
+          helm repo add lynq https://k8s-lynq.github.io/lynq
+          helm install lynq lynq/lynq-operator --version ${VERSION}
+          \`\`\`
+
+          [Documentation](https://lynq.sh) • [Chart README](https://github.com/k8s-lynq/lynq/blob/main/chart/README.md)
+
+          ---
+
+          ${CHANGELOG}
+          EOF
+
+          # Update release
+          gh release edit "v${VERSION}" --notes-file final-notes.md
+
       - name: Update Helm repository index
         env:
           CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
@@ -115,37 +164,6 @@ jobs:
           publish_dir: .gh-pages-artifacts
           keep_files: true  # Preserve Helm index, chart packages, and docs
           commit_message: "chore: update Artifact Hub metadata"
-
-      - name: Create release summary
-        run: |
-          VERSION="${{ steps.extract_version.outputs.version }}"
-          cat << EOF > release-summary.md
-          ## Helm Chart Release v${VERSION}
-
-          ### Installation
-
-          \`\`\`bash
-          helm repo add lynq-operator https://k8s-lynq.github.io/lynq
-          helm repo update
-          helm install lynq-operator lynq-operator/lynq-operator --version ${VERSION}
-          \`\`\`
-
-          ### What's Included
-
-          - Chart Version: ${VERSION}
-          - App Version: ${VERSION}
-          - Image: ghcr.io/k8s-lynq/lynq-operator:${VERSION}
-
-          ### Files
-
-          - \`lynq-operator-${VERSION}.tgz\` - Helm chart package
-
-          ### Documentation
-
-          - [Chart README](https://github.com/k8s-lynq/lynq/blob/main/chart/README.md)
-          - [Installation Guide](https://k8s-lynq.github.io/lynq)
-          EOF
-          cat release-summary.md
 
       - name: Summary
         run: |

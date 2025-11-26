@@ -139,16 +139,172 @@ Integration and E2E suites create and mutate Kubernetes resources. Run them agai
 
 ### E2E Tests
 
-```bash
-# Create test cluster
-kind create cluster --name e2e-test
+End-to-End tests run against a real Kubernetes cluster (Kind) to validate complete scenarios.
 
-# Run E2E tests
+::: tip Test Strategy
+Lynq uses a 3-tier testing approach:
+
+| Test Type | Environment | Speed | Use Case |
+|-----------|-------------|-------|----------|
+| **Unit** | fake client | Very Fast (seconds) | Logic validation, TDD |
+| **Integration** | envtest | Fast (seconds-minutes) | Controller behavior |
+| **E2E** | Kind cluster | Slower (minutes) | Real scenarios, policies |
+
+**When to use E2E tests:**
+- Testing actual Kubernetes behavior (ownerReferences, labels, etc.)
+- Validating policy behaviors (CreationPolicy, DeletionPolicy)
+- End-to-end workflows with multiple resources
+- CI/CD validation before release
+:::
+
+#### Prerequisites
+
+```bash
+# Install Kind (required for E2E tests)
+# macOS
+brew install kind
+
+# Linux
+curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.25.0/kind-linux-amd64
+chmod +x ./kind
+sudo mv ./kind /usr/local/bin/kind
+
+# Verify installation
+kind version
+```
+
+#### Quick Start
+
+```bash
+# Run all E2E tests (creates cluster, runs tests, cleans up)
 make test-e2e
 
-# Cleanup
-kind delete cluster --name e2e-test
+# This will:
+# 1. Create Kind cluster "lynq-test-e2e"
+# 2. Build and load operator image
+# 3. Install CRDs and deploy operator
+# 4. Run all E2E tests (including policy tests)
+# 5. Delete cluster
 ```
+
+#### Running Specific Tests
+
+```bash
+# Setup cluster once
+make setup-test-e2e
+
+# Run specific test suites
+go test ./test/e2e/ -v -ginkgo.focus="Policy Behaviors"    # Policy tests only
+go test ./test/e2e/ -v -ginkgo.focus="CreationPolicy"      # Creation policy only
+go test ./test/e2e/ -v -ginkgo.focus="DeletionPolicy"      # Deletion policy only
+
+# Cleanup when done
+make cleanup-test-e2e
+```
+
+#### Development Workflow (Fast Iteration)
+
+For rapid development cycles, reuse the cluster:
+
+```bash
+# 1. Create cluster once
+make setup-test-e2e
+
+# 2. Make code changes, then:
+make docker-build IMG=example.com/lynq:v0.0.1
+kind load docker-image example.com/lynq:v0.0.1 --name lynq-test-e2e
+kubectl rollout restart deployment lynq-controller-manager -n lynq-system
+
+# 3. Run tests
+go test ./test/e2e/ -v -ginkgo.focus="Policy"
+
+# 4. Repeat steps 2-3 as needed
+
+# 5. Cleanup when done
+make cleanup-test-e2e
+```
+
+#### Writing BDD E2E Tests
+
+Policy E2E tests use Ginkgo BDD framework with Given-When-Then pattern:
+
+```go
+// test/e2e/policy_e2e_test.go
+var _ = Describe("Policy Behaviors", func() {
+    Context("CreationPolicy", func() {
+        It("should create resource only once with Once policy", func() {
+            // Given: A LynqNode with CreationPolicy=Once
+            By("creating LynqNode with Once policy")
+            createLynqNode(nodeYAML)
+
+            // When: ConfigMap is created
+            By("verifying ConfigMap has created-once annotation")
+            Eventually(func() string {
+                return getAnnotation(cmName, "lynq.sh/created-once")
+            }, timeout).Should(Equal("true"))
+
+            // And: Update spec to change data
+            By("updating LynqNode spec")
+            updateLynqNode(updatedYAML)
+
+            // Then: ConfigMap should NOT be updated
+            By("verifying ConfigMap data remains unchanged")
+            Consistently(func() string {
+                return getConfigMapData(cmName, "key")
+            }, "30s", "5s").Should(Equal("initial-value"))
+        })
+    })
+})
+```
+
+**Key patterns:**
+- Use `By()` for clear test steps (Given-When-Then)
+- Use `Eventually()` for async operations (resource creation, updates)
+- Use `Consistently()` to verify state doesn't change
+- Use `BeforeEach/AfterEach` for setup/cleanup
+
+#### Troubleshooting E2E Tests
+
+```bash
+# Test timeout - check pod status
+kubectl get pods -n lynq-system
+kubectl logs -n lynq-system deployment/lynq-controller-manager
+
+# Cluster stuck - force cleanup
+kind delete cluster --name lynq-test-e2e
+
+# Image not loaded - verify
+docker exec -it lynq-test-e2e-control-plane crictl images | grep lynq
+
+# Namespace stuck - remove finalizers
+kubectl patch ns policy-test -p '{"metadata":{"finalizers":[]}}' --type=merge
+```
+
+#### CI/CD Integration
+
+E2E tests run automatically in GitHub Actions:
+
+```yaml
+# .github/workflows/test-e2e.yml
+# Triggers on: push, pull_request
+# Runs: make test-e2e
+```
+
+Tests run in CI on:
+- Every push to main/master
+- Every pull request
+- Manual workflow dispatch
+
+#### Detailed Guide
+
+📚 **For comprehensive E2E testing guide**: See [E2E Testing Guide](e2e-testing-guide.md)
+
+The full guide includes:
+- Detailed setup instructions
+- Advanced test scenarios
+- Policy test examples
+- Performance optimization
+- Complete troubleshooting section
 
 ## Code Quality
 

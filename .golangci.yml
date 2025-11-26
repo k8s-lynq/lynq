@@ -40,6 +40,11 @@ linters:
           - dupl
           - lll
         path: internal/*
+      - linters:
+          - lll
+          - staticcheck
+          - unparam
+        path: test/*
     paths:
       - third_party$
       - builtin$

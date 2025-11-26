@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/public/logo.png" alt="Kubernetes Lynq Operator" width="400">
+<img src="docs/public/logo.png" alt="Kubernetes Lynq Operator" width="200">
 
 # Lynq Operator
 

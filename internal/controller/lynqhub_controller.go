@@ -531,6 +531,9 @@ func (r *LynqHubReconciler) createLynqNode(ctx context.Context, registry *lynqv1
 
 	// 1. Build template variables
 	vars := template.BuildVariables(row.UID, row.HostOrURL, row.Activate, row.Extra)
+	// Add hubId and templateRef for template rendering (needed for labelsTemplate, annotationsTemplate)
+	vars["hubId"] = registry.Name
+	vars["templateRef"] = tmpl.Name
 
 	// 2. Render all template resources
 	renderedSpec, err := r.renderAllTemplateResources(tmpl, vars)
@@ -563,6 +566,7 @@ func (r *LynqHubReconciler) createLynqNode(ctx context.Context, registry *lynqv1
 				"lynq.sh/activate":            row.Activate,
 				"lynq.sh/extra":               string(extraJSON),
 				"lynq.sh/template-generation": fmt.Sprintf("%d", tmpl.Generation),
+				"lynq.sh/hubId":               registry.Name,
 			},
 		},
 		Spec: *renderedSpec,
@@ -630,6 +634,9 @@ func (r *LynqHubReconciler) updateLynqNode(ctx context.Context, registry *lynqv1
 
 	// 1. Build template variables with new data
 	vars := template.BuildVariables(row.UID, row.HostOrURL, row.Activate, row.Extra)
+	// Add hubId and templateRef for template rendering (needed for labelsTemplate, annotationsTemplate)
+	vars["hubId"] = registry.Name
+	vars["templateRef"] = tmpl.Name
 
 	// 2. Render all template resources
 	renderedSpec, err := r.renderAllTemplateResources(tmpl, vars)
@@ -667,6 +674,7 @@ func (r *LynqHubReconciler) updateLynqNode(ctx context.Context, registry *lynqv1
 		latest.Annotations["lynq.sh/activate"] = row.Activate
 		latest.Annotations["lynq.sh/extra"] = string(extraJSON)
 		latest.Annotations["lynq.sh/template-generation"] = newTemplateGeneration
+		latest.Annotations["lynq.sh/hubId"] = registry.Name
 
 		// Update spec with newly rendered resources
 		latest.Spec = *renderedSpec

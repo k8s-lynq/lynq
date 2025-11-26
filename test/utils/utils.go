@@ -20,6 +20,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -251,4 +252,61 @@ func UncommentCode(filename, target, prefix string) error {
 	}
 
 	return nil
+}
+
+// StringReader returns an io.Reader from a string, useful for piping YAML to kubectl
+func StringReader(s string) io.Reader {
+	return strings.NewReader(s)
+}
+
+// WaitForNamespaceDeletion waits for a namespace to be fully deleted
+func WaitForNamespaceDeletion(namespace string, timeoutSeconds int) error {
+	cmd := exec.Command("kubectl", "wait", "namespace", namespace,
+		"--for=delete",
+		fmt.Sprintf("--timeout=%ds", timeoutSeconds))
+	_, err := Run(cmd)
+	return err
+}
+
+// CleanupNamespace forcefully deletes a namespace with grace period
+func CleanupNamespace(namespace string) error {
+	// First try normal delete
+	cmd := exec.Command("kubectl", "delete", "namespace", namespace,
+		"--ignore-not-found=true",
+		"--wait=false")
+	_, _ = Run(cmd)
+
+	// Remove finalizers if namespace is stuck
+	cmd = exec.Command("kubectl", "get", "namespace", namespace, "-o", "json")
+	output, err := Run(cmd)
+	if err != nil {
+		// Namespace doesn't exist, which is fine
+		return nil
+	}
+
+	if strings.Contains(output, "\"finalizers\"") {
+		// Patch to remove finalizers
+		cmd = exec.Command("kubectl", "patch", "namespace", namespace,
+			"-p", `{"metadata":{"finalizers":null}}`,
+			"--type=merge")
+		_, _ = Run(cmd)
+	}
+
+	return nil
+}
+
+// EnsureResourceDeleted verifies a resource is deleted with retries
+func EnsureResourceDeleted(resourceType, resourceName, namespace string, retries int) error {
+	for i := 0; i < retries; i++ {
+		cmd := exec.Command("kubectl", "get", resourceType, resourceName, "-n", namespace)
+		_, err := Run(cmd)
+		if err != nil {
+			// Resource doesn't exist, success
+			return nil
+		}
+		// Wait before retry
+		cmd = exec.Command("sleep", "2")
+		_, _ = Run(cmd)
+	}
+	return fmt.Errorf("resource %s/%s still exists after %d retries", resourceType, resourceName, retries)
 }

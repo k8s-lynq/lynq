@@ -201,6 +201,13 @@ func (a *Applier) ApplyResource(
 
 	case lynqv1.PatchStrategyMerge:
 		// Strategic Merge Patch
+		// If resource doesn't exist, create it first (merge patch requires existing resource)
+		if !existsBeforeApply {
+			if err := a.client.Create(ctx, obj); err != nil {
+				return false, fmt.Errorf("failed to create resource for merge: %w", err)
+			}
+			return true, nil
+		}
 		if err := a.client.Patch(ctx, obj, client.Merge); err != nil {
 			return false, fmt.Errorf("failed to merge resource: %w", err)
 		}
