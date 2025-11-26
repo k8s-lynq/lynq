@@ -295,17 +295,6 @@ Tests run in CI on:
 - Every pull request
 - Manual workflow dispatch
 
-#### Detailed Guide
-
-📚 **For comprehensive E2E testing guide**: See [E2E Testing Guide](e2e-testing-guide.md)
-
-The full guide includes:
-- Detailed setup instructions
-- Advanced test scenarios
-- Policy test examples
-- Performance optimization
-- Complete troubleshooting section
-
 ## Code Quality
 
 ### Linting
