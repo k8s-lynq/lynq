@@ -180,7 +180,6 @@
             </svg>
           </div>
           <div class="node-title">Database</div>
-          <div class="node-subtitle">Node Rows</div>
         </div>
 
         <!-- Operator Node -->
@@ -196,7 +195,6 @@
             <img src="/logo.png" alt="Lynq" class="operator-logo" />
           </div>
           <div class="node-title">Lynq</div>
-          <div class="node-subtitle">3 Controllers</div>
         </div>
       </div>
 
@@ -223,8 +221,8 @@ import { ref } from "vue";
 
 // Node positions in percentage
 const nodePositions = ref({
-  database: { x: 12, y: 58 }, // Left: 12%, Center: 58%
-  operator: { x: 50, y: 58 }, // Center: 50%, Center: 58%
+  database: { x: 12, y: 54  }, // Left: 12%, Center: 54 %
+  operator: { x: 50, y: 54  }, // Center: 50%, Center: 54 %
 });
 
 // Resources to display
@@ -400,13 +398,6 @@ const outputPaths = ref([
   white-space: nowrap;
 }
 
-.node-subtitle {
-  font-size: 0.875rem;
-  color: var(--vp-c-text-2);
-  text-align: center;
-  white-space: nowrap;
-}
-
 /* Resource nodes */
 .resource-nodes {
   position: absolute;
@@ -513,8 +504,9 @@ const outputPaths = ref([
     font-size: 0.95rem;
   }
 
-  .node-subtitle {
-    font-size: 0.8rem;
+  .resource-nodes {
+    right: -5%;
+    transform: scale(0.9);
   }
 
   .resource-label {
@@ -546,12 +538,9 @@ const outputPaths = ref([
     font-size: 0.85rem;
   }
 
-  .node-subtitle {
-    font-size: 0.75rem;
-  }
-
   .resource-nodes {
-    display: none;
+    right: -5%;
+    transform: scale(0.45);
   }
 }
 </style>

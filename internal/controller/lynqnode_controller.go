@@ -579,7 +579,19 @@ func (r *LynqNodeReconciler) buildTemplateVariablesFromAnnotations(node *lynqv1.
 		}
 	}
 
-	return template.BuildVariables(node.Spec.UID, hostOrURL, activate, extraValues), nil
+	vars := template.BuildVariables(node.Spec.UID, hostOrURL, activate, extraValues)
+
+	// Add context variables: hubId and templateRef
+	// hubId is from annotation (set by LynqHub controller)
+	if hubId := node.Annotations["lynq.sh/hubId"]; hubId != "" {
+		vars["hubId"] = hubId
+	}
+	// templateRef is from spec
+	if node.Spec.TemplateRef != "" {
+		vars["templateRef"] = node.Spec.TemplateRef
+	}
+
+	return vars, nil
 }
 
 // collectResourcesFromLynqNode collects all resources from LynqNode.Spec
