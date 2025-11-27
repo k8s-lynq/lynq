@@ -472,7 +472,7 @@ func TestLynqFormValidation(t *testing.T) {
 		// Should have Valid condition set to False
 		var validCondition *metav1.Condition
 		for i := range updatedTemplate.Status.Conditions {
-			if updatedTemplate.Status.Conditions[i].Type == "Valid" {
+			if updatedTemplate.Status.Conditions[i].Type == ConditionTypeValid {
 				validCondition = &updatedTemplate.Status.Conditions[i]
 				break
 			}
