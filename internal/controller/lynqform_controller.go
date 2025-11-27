@@ -39,6 +39,13 @@ import (
 	"github.com/k8s-lynq/lynq/internal/graph"
 )
 
+const (
+	// ConditionTypeValid is the condition type for LynqForm validation status
+	ConditionTypeValid = "Valid"
+	// ConditionTypeApplied is the condition type for LynqForm applied status
+	ConditionTypeApplied = "Applied"
+)
+
 // LynqFormReconciler reconciles a LynqForm object
 type LynqFormReconciler struct {
 	client.Client
@@ -70,19 +77,32 @@ func (r *LynqFormReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	// Validate
 	validationErrors := r.validate(ctx, tmpl)
 
+	// Check previous validation state to avoid duplicate events
+	wasValid := false
+	for _, cond := range tmpl.Status.Conditions {
+		if cond.Type == ConditionTypeValid && cond.Status == metav1.ConditionTrue {
+			wasValid = true
+			break
+		}
+	}
+
 	if len(validationErrors) > 0 {
 		logger.Info("LynqForm validation failed", "errors", validationErrors)
 		// Update status with validation errors
 		r.updateStatus(ctx, tmpl, validationErrors, 0, 0)
-		// Emit warning event for validation failure
-		r.Recorder.Eventf(tmpl, corev1.EventTypeWarning, "ValidationFailed",
-			"Template validation failed: %v", validationErrors)
+		// Emit warning event for validation failure (only if state changed)
+		if wasValid {
+			r.Recorder.Eventf(tmpl, corev1.EventTypeWarning, "ValidationFailed",
+				"Template validation failed: %v", validationErrors)
+		}
 		return ctrl.Result{}, nil
 	}
 
-	// Emit normal event for validation success
-	r.Recorder.Event(tmpl, corev1.EventTypeNormal, "ValidationPassed",
-		"Template validation passed successfully")
+	// Emit normal event for validation success only if state changed (was invalid before)
+	if !wasValid {
+		r.Recorder.Event(tmpl, corev1.EventTypeNormal, "ValidationPassed",
+			"Template validation passed successfully")
+	}
 
 	// Check node statuses
 	totalLynqNodes, readyLynqNodes, err := r.checkLynqNodeStatuses(ctx, tmpl)
@@ -247,7 +267,7 @@ func (r *LynqFormReconciler) updateStatus(ctx context.Context, tmpl *lynqv1.Lynq
 
 		// Prepare Valid condition
 		validCondition := metav1.Condition{
-			Type:               "Valid",
+			Type:               ConditionTypeValid,
 			Status:             metav1.ConditionTrue,
 			Reason:             "ValidationPassed",
 			Message:            "Template validation passed",
@@ -281,7 +301,7 @@ func (r *LynqFormReconciler) updateStatus(ctx context.Context, tmpl *lynqv1.Lynq
 		// Update or append Valid condition
 		foundValid := false
 		for i := range latest.Status.Conditions {
-			if latest.Status.Conditions[i].Type == "Valid" {
+			if latest.Status.Conditions[i].Type == ConditionTypeValid {
 				latest.Status.Conditions[i] = validCondition
 				foundValid = true
 				break
@@ -294,7 +314,7 @@ func (r *LynqFormReconciler) updateStatus(ctx context.Context, tmpl *lynqv1.Lynq
 		// Update or append Applied condition
 		foundApplied := false
 		for i := range latest.Status.Conditions {
-			if latest.Status.Conditions[i].Type == "Applied" {
+			if latest.Status.Conditions[i].Type == ConditionTypeApplied {
 				latest.Status.Conditions[i] = appliedCondition
 				foundApplied = true
 				break

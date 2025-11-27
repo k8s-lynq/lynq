@@ -161,7 +161,7 @@ func (r *LynqNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	case ReconcileTypeSpec:
 		// Spec changed or template updated - full reconcile with apply
-		logger.Info("Using full reconcile path", "node", node.Name, "generation", node.Generation, "observedGeneration", node.Status.ObservedGeneration)
+		logger.V(1).Info("Using full reconcile path", "node", node.Name, "generation", node.Generation, "observedGeneration", node.Status.ObservedGeneration)
 		return r.reconcileSpec(ctx, node, startTime)
 
 	default:
@@ -225,7 +225,7 @@ func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.Ly
 
 			if exists && hasAnnotation {
 				// Resource already created with Once policy, skip
-				logger.Info("Skipping resource (CreationPolicy=Once, already created)", "id", resource.ID, "name", obj.GetName())
+				logger.V(1).Info("Skipping resource (CreationPolicy=Once, already created)", "id", resource.ID, "name", obj.GetName())
 				readyCount++ // Count as ready since it exists
 				continue
 			}
@@ -1420,14 +1420,27 @@ func (r *LynqNodeReconciler) determineReconcileType(node *lynqv1.LynqNode) Recon
 		return ReconcileTypeInit
 	}
 
-	// 3. Check if this was triggered by owned resource status change
+	// 3. Check if node is in Degraded state or has failed resources
+	// In these cases, we need full reconcile to retry failed resources
+	if node.Status.FailedResources > 0 {
+		return ReconcileTypeSpec
+	}
+
+	// Check for Degraded condition (includes conflicts)
+	for _, cond := range node.Status.Conditions {
+		if cond.Type == ConditionTypeDegraded && cond.Status == metav1.ConditionTrue {
+			return ReconcileTypeSpec
+		}
+	}
+
+	// 4. Check if this was triggered by owned resource status change
 	// We can infer this by checking if the node's generation matches status.observedGeneration
 	if node.Generation == node.Status.ObservedGeneration {
 		// Generation hasn't changed, likely triggered by child resource status change
 		return ReconcileTypeStatus
 	}
 
-	// 4. Default to full reconcile for spec changes
+	// 5. Default to full reconcile for spec changes
 	return ReconcileTypeSpec
 }
 
@@ -1515,7 +1528,7 @@ func (r *LynqNodeReconciler) reconcileInit(ctx context.Context, node *lynqv1.Lyn
 // This is triggered when spec changes or template updates
 func (r *LynqNodeReconciler) reconcileSpec(ctx context.Context, node *lynqv1.LynqNode, startTime time.Time) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-	logger.Info("Running full reconcile with resource application", "node", node.Name)
+	logger.V(1).Info("Running full reconcile with resource application", "node", node.Name)
 
 	// Build template variables from annotations
 	vars, err := r.buildTemplateVariablesFromAnnotations(node)
@@ -1597,6 +1610,10 @@ func (r *LynqNodeReconciler) reconcileSpec(ctx context.Context, node *lynqv1.Lyn
 		appliedResourceKeys,
 		false, // not progressing after reconciliation completes
 	)
+
+	// Update ObservedGeneration to mark this generation as reconciled
+	// This is critical to prevent repeated full reconciles
+	r.StatusManager.PublishObservedGeneration(node, node.Generation)
 
 	// Publish all status fields at once through StatusManager
 	r.StatusManager.PublishResourceCounts(node, statusUpdate.ReadyResources, statusUpdate.FailedResources, statusUpdate.DesiredResources, statusUpdate.ConflictedResources)

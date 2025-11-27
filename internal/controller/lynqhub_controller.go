@@ -336,21 +336,6 @@ func (r *LynqHubReconciler) getTemplatesForRegistry(ctx context.Context, registr
 	return templates, nil
 }
 
-// getTemplateForRegistry retrieves a single LynqForm for backward compatibility
-// Deprecated: Use getTemplatesForRegistry instead
-func (r *LynqHubReconciler) getTemplateForRegistry(ctx context.Context, registry *lynqv1.LynqHub) (*lynqv1.LynqForm, error) {
-	templates, err := r.getTemplatesForRegistry(ctx, registry)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(templates) == 0 {
-		return nil, fmt.Errorf("no template found for registry: %s", registry.Name)
-	}
-
-	return templates[0], nil
-}
-
 // renderAllTemplateResources renders all resources from a template with the given variables
 func (r *LynqHubReconciler) renderAllTemplateResources(
 	tmpl *lynqv1.LynqForm,
@@ -608,8 +593,12 @@ func (r *LynqHubReconciler) shouldUpdateLynqNode(ctx context.Context, registry *
 	}
 
 	// Check if template has been updated
-	tmpl, err := r.getTemplateForRegistry(ctx, registry)
-	if err != nil {
+	// Use node.Spec.TemplateRef to find the correct template for this node
+	tmpl := &lynqv1.LynqForm{}
+	if err := r.Get(ctx, types.NamespacedName{
+		Name:      node.Spec.TemplateRef,
+		Namespace: registry.Namespace,
+	}, tmpl); err != nil {
 		// If we can't get the template, assume update is needed
 		return true
 	}
@@ -718,14 +707,9 @@ func (r *LynqHubReconciler) updateLynqNode(ctx context.Context, registry *lynqv1
 			"node", node.Name,
 			"template", tmpl.Name,
 			"totalResources", totalResources)
-	} else {
-		// Extra values or other changes
-		r.Recorder.Eventf(node, corev1.EventTypeNormal, "NodeUpdated",
-			"LynqNode updated with new configuration from registry '%s'. "+
-				"Total %d resources managed. Template: %s (generation: %s)",
-			registry.Name, totalResources,
-			tmpl.Name, newTemplateGeneration)
 	}
+	// Note: Extra value changes don't need an event - the update is sufficient
+	// and logging at DEBUG level to reduce noise
 
 	return nil
 }
