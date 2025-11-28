@@ -31,6 +31,10 @@ spec:
       jsonPath: .status.desiredResources
       name: Desired
       type: integer
+    - description: Resources skipped due to dependency failures
+      jsonPath: .status.skippedResources
+      name: Skipped
+      type: integer
     - description: Conflict status
       jsonPath: .status.conditions[?(@.type=='Conflicted')].status
       name: Conflicted
@@ -150,6 +154,14 @@ spec:
                       - merge
                       - replace
                       type: string
+                    skipOnDependencyFailure:
+                      default: true
+                      description: |-
+                        SkipOnDependencyFailure determines whether to skip creating this resource when a dependency fails
+                        When true (default): This resource will be skipped if any of its dependencies fail
+                        When false: This resource will still be created even if dependencies fail (useful for cleanup resources)
+                        Default: true
+                      type: boolean
                     spec:
                       description: |-
                         Spec is the Kubernetes resource specification
@@ -263,6 +275,14 @@ spec:
                       - merge
                       - replace
                       type: string
+                    skipOnDependencyFailure:
+                      default: true
+                      description: |-
+                        SkipOnDependencyFailure determines whether to skip creating this resource when a dependency fails
+                        When true (default): This resource will be skipped if any of its dependencies fail
+                        When false: This resource will still be created even if dependencies fail (useful for cleanup resources)
+                        Default: true
+                      type: boolean
                     spec:
                       description: |-
                         Spec is the Kubernetes resource specification
@@ -376,6 +396,14 @@ spec:
                       - merge
                       - replace
                       type: string
+                    skipOnDependencyFailure:
+                      default: true
+                      description: |-
+                        SkipOnDependencyFailure determines whether to skip creating this resource when a dependency fails
+                        When true (default): This resource will be skipped if any of its dependencies fail
+                        When false: This resource will still be created even if dependencies fail (useful for cleanup resources)
+                        Default: true
+                      type: boolean
                     spec:
                       description: |-
                         Spec is the Kubernetes resource specification
@@ -489,6 +517,14 @@ spec:
                       - merge
                       - replace
                       type: string
+                    skipOnDependencyFailure:
+                      default: true
+                      description: |-
+                        SkipOnDependencyFailure determines whether to skip creating this resource when a dependency fails
+                        When true (default): This resource will be skipped if any of its dependencies fail
+                        When false: This resource will still be created even if dependencies fail (useful for cleanup resources)
+                        Default: true
+                      type: boolean
                     spec:
                       description: |-
                         Spec is the Kubernetes resource specification
@@ -602,6 +638,14 @@ spec:
                       - merge
                       - replace
                       type: string
+                    skipOnDependencyFailure:
+                      default: true
+                      description: |-
+                        SkipOnDependencyFailure determines whether to skip creating this resource when a dependency fails
+                        When true (default): This resource will be skipped if any of its dependencies fail
+                        When false: This resource will still be created even if dependencies fail (useful for cleanup resources)
+                        Default: true
+                      type: boolean
                     spec:
                       description: |-
                         Spec is the Kubernetes resource specification
@@ -715,6 +759,14 @@ spec:
                       - merge
                       - replace
                       type: string
+                    skipOnDependencyFailure:
+                      default: true
+                      description: |-
+                        SkipOnDependencyFailure determines whether to skip creating this resource when a dependency fails
+                        When true (default): This resource will be skipped if any of its dependencies fail
+                        When false: This resource will still be created even if dependencies fail (useful for cleanup resources)
+                        Default: true
+                      type: boolean
                     spec:
                       description: |-
                         Spec is the Kubernetes resource specification
@@ -828,6 +880,14 @@ spec:
                       - merge
                       - replace
                       type: string
+                    skipOnDependencyFailure:
+                      default: true
+                      description: |-
+                        SkipOnDependencyFailure determines whether to skip creating this resource when a dependency fails
+                        When true (default): This resource will be skipped if any of its dependencies fail
+                        When false: This resource will still be created even if dependencies fail (useful for cleanup resources)
+                        Default: true
+                      type: boolean
                     spec:
                       description: |-
                         Spec is the Kubernetes resource specification
@@ -941,6 +1001,14 @@ spec:
                       - merge
                       - replace
                       type: string
+                    skipOnDependencyFailure:
+                      default: true
+                      description: |-
+                        SkipOnDependencyFailure determines whether to skip creating this resource when a dependency fails
+                        When true (default): This resource will be skipped if any of its dependencies fail
+                        When false: This resource will still be created even if dependencies fail (useful for cleanup resources)
+                        Default: true
+                      type: boolean
                     spec:
                       description: |-
                         Spec is the Kubernetes resource specification
@@ -1054,6 +1122,14 @@ spec:
                       - merge
                       - replace
                       type: string
+                    skipOnDependencyFailure:
+                      default: true
+                      description: |-
+                        SkipOnDependencyFailure determines whether to skip creating this resource when a dependency fails
+                        When true (default): This resource will be skipped if any of its dependencies fail
+                        When false: This resource will still be created even if dependencies fail (useful for cleanup resources)
+                        Default: true
+                      type: boolean
                     spec:
                       description: |-
                         Spec is the Kubernetes resource specification
@@ -1167,6 +1243,14 @@ spec:
                       - merge
                       - replace
                       type: string
+                    skipOnDependencyFailure:
+                      default: true
+                      description: |-
+                        SkipOnDependencyFailure determines whether to skip creating this resource when a dependency fails
+                        When true (default): This resource will be skipped if any of its dependencies fail
+                        When false: This resource will still be created even if dependencies fail (useful for cleanup resources)
+                        Default: true
+                      type: boolean
                     spec:
                       description: |-
                         Spec is the Kubernetes resource specification
@@ -1280,6 +1364,14 @@ spec:
                       - merge
                       - replace
                       type: string
+                    skipOnDependencyFailure:
+                      default: true
+                      description: |-
+                        SkipOnDependencyFailure determines whether to skip creating this resource when a dependency fails
+                        When true (default): This resource will be skipped if any of its dependencies fail
+                        When false: This resource will still be created even if dependencies fail (useful for cleanup resources)
+                        Default: true
+                      type: boolean
                     spec:
                       description: |-
                         Spec is the Kubernetes resource specification
@@ -1393,6 +1485,14 @@ spec:
                       - merge
                       - replace
                       type: string
+                    skipOnDependencyFailure:
+                      default: true
+                      description: |-
+                        SkipOnDependencyFailure determines whether to skip creating this resource when a dependency fails
+                        When true (default): This resource will be skipped if any of its dependencies fail
+                        When false: This resource will still be created even if dependencies fail (useful for cleanup resources)
+                        Default: true
+                      type: boolean
                     spec:
                       description: |-
                         Spec is the Kubernetes resource specification
@@ -1506,6 +1606,14 @@ spec:
                       - merge
                       - replace
                       type: string
+                    skipOnDependencyFailure:
+                      default: true
+                      description: |-
+                        SkipOnDependencyFailure determines whether to skip creating this resource when a dependency fails
+                        When true (default): This resource will be skipped if any of its dependencies fail
+                        When false: This resource will still be created even if dependencies fail (useful for cleanup resources)
+                        Default: true
+                      type: boolean
                     spec:
                       description: |-
                         Spec is the Kubernetes resource specification
@@ -1619,6 +1727,14 @@ spec:
                       - merge
                       - replace
                       type: string
+                    skipOnDependencyFailure:
+                      default: true
+                      description: |-
+                        SkipOnDependencyFailure determines whether to skip creating this resource when a dependency fails
+                        When true (default): This resource will be skipped if any of its dependencies fail
+                        When false: This resource will still be created even if dependencies fail (useful for cleanup resources)
+                        Default: true
+                      type: boolean
                     spec:
                       description: |-
                         Spec is the Kubernetes resource specification
@@ -1732,6 +1848,14 @@ spec:
                       - merge
                       - replace
                       type: string
+                    skipOnDependencyFailure:
+                      default: true
+                      description: |-
+                        SkipOnDependencyFailure determines whether to skip creating this resource when a dependency fails
+                        When true (default): This resource will be skipped if any of its dependencies fail
+                        When false: This resource will still be created even if dependencies fail (useful for cleanup resources)
+                        Default: true
+                      type: boolean
                     spec:
                       description: |-
                         Spec is the Kubernetes resource specification
@@ -1845,6 +1969,14 @@ spec:
                       - merge
                       - replace
                       type: string
+                    skipOnDependencyFailure:
+                      default: true
+                      description: |-
+                        SkipOnDependencyFailure determines whether to skip creating this resource when a dependency fails
+                        When true (default): This resource will be skipped if any of its dependencies fail
+                        When false: This resource will still be created even if dependencies fail (useful for cleanup resources)
+                        Default: true
+                      type: boolean
                     spec:
                       description: |-
                         Spec is the Kubernetes resource specification
@@ -1972,6 +2104,17 @@ spec:
                 type: integer
               readyResources:
                 description: ReadyResources is the number of resources that are ready
+                format: int32
+                type: integer
+              skippedResourceIds:
+                description: SkippedResourceIds lists the IDs of resources that were
+                  skipped due to dependency failures
+                items:
+                  type: string
+                type: array
+              skippedResources:
+                description: SkippedResources is the number of resources skipped due
+                  to dependency failures
                 format: int32
                 type: integer
             type: object

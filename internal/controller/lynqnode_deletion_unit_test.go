@@ -170,7 +170,7 @@ func TestApplyResources_DeletionCheck(t *testing.T) {
 	start := time.Now()
 
 	// applyResources should detect deletion and return immediately
-	ready, failed, changed, conflicted := r.applyResources(ctx, node, nodes, vars)
+	ready, failed, changed, conflicted, skipped, skippedIds := r.applyResources(ctx, node, nodes, vars)
 
 	duration := time.Since(start)
 
@@ -182,6 +182,8 @@ func TestApplyResources_DeletionCheck(t *testing.T) {
 	assert.Equal(t, int32(0), failed, "failed count should be 0")
 	assert.Equal(t, int32(0), changed, "changed count should be 0")
 	assert.Equal(t, int32(0), conflicted, "conflicted count should be 0")
+	assert.Equal(t, int32(0), skipped, "skipped count should be 0")
+	assert.Empty(t, skippedIds, "skipped ids should be empty")
 }
 
 // TestCleanupWithDeletionPolicyRetain tests that Retain policy is respected

@@ -45,8 +45,8 @@ func TestEngine_Render(t *testing.T) {
 			wantErr:  false,
 		},
 		{
-			name:     "with default function",
-			template: "{{ default \"nginx:stable\" .deployImage }}",
+			name:     "with default function using index for optional variable",
+			template: `{{ index . "deployImage" | default "nginx:stable" }}`,
 			vars:     Variables{},
 			want:     "nginx:stable",
 			wantErr:  false,
@@ -60,7 +60,7 @@ func TestEngine_Render(t *testing.T) {
 		},
 		{
 			name:     "complex template",
-			template: "{{ .uid }}-{{ default \"api\" .service }}-{{ .host | trunc63 }}",
+			template: `{{ .uid }}-{{ index . "service" | default "api" }}-{{ .host | trunc63 }}`,
 			vars:     Variables{"uid": "123", "host": "very-long-hostname-example.com"},
 			want:     "123-api-very-long-hostname-example.com",
 			wantErr:  false,

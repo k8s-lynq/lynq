@@ -110,6 +110,7 @@ labelsTemplate:                      # Template-enabled labels (optional)
 annotationsTemplate:                 # Template-enabled annotations (optional)
   key: value
 dependIds: []string                  # Dependency IDs (optional)
+skipOnDependencyFailure: bool        # Skip if dependency fails (default: true)
 creationPolicy: string               # Once | WhenNeeded (default: WhenNeeded)
 deletionPolicy: string               # Delete | Retain (default: Delete)
 conflictPolicy: string               # Stuck | Force (default: Stuck)
@@ -179,6 +180,8 @@ status:
   desiredResources: int32            # Total resources
   readyResources: int32              # Ready resources
   failedResources: int32             # Failed resources
+  skippedResources: int32            # Resources skipped due to dependency failures
+  skippedResourceIds: []string       # IDs of skipped resources
   appliedResources: []string         # Tracked resource keys for orphan detection
                                      # Format: "kind/namespace/name@id"
                                      # Example: ["Deployment/default/app@deploy-1", "Service/default/app@svc-1"]

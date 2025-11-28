@@ -70,26 +70,28 @@ var _ = Describe("Template Engine - Core Behaviors", func() {
 		})
 
 		Describe("Missing variables", func() {
-			It("Should handle missing variable gracefully", func() {
+			It("Should return error when referencing missing variable", func() {
 				By("Given a template referencing non-existent variable")
 				template := "{{ .uid }}-{{ .missing }}"
 				vars := Variables{"uid": "test"}
 
 				By("When rendering the template")
-				result, err := engine.Render(template, vars)
+				_, err := engine.Render(template, vars)
 
-				By("Then missing variable should render as '<no value>'")
-				Expect(err).ToNot(HaveOccurred())
-				Expect(result).To(Equal("test-<no value>"))
+				By("Then an error should be returned")
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("missing"))
 			})
 		})
 	})
 
 	Context("Built-in Functions", func() {
 		Describe("default function", func() {
-			It("Should use default value when variable is missing", func() {
-				By("Given a template with default function")
-				template := "{{ default \"nginx:stable\" .deployImage }}"
+			It("Should use default value when variable is missing via index function", func() {
+				By("Given a template using index for safe access to optional key")
+				// With missingkey=error, direct access like .deployImage errors before default can catch it.
+				// Use index function which returns nil for missing keys, allowing default to work.
+				template := `{{ index . "deployImage" | default "nginx:stable" }}`
 				vars := Variables{} // No deployImage provided
 
 				By("When rendering without providing the variable")
@@ -237,8 +239,9 @@ var _ = Describe("Template Engine - Core Behaviors", func() {
 
 		Describe("Dynamic image selection with fallback", func() {
 			It("Should use environment-specific image or default", func() {
-				By("Given a template with conditional image selection")
-				template := `{{ default "nginx:stable" .image }}-{{ .uid }}`
+				By("Given a template with conditional image selection using index for optional variable")
+				// Use index function for optional "image" variable to avoid missingkey=error
+				template := `{{ index . "image" | default "nginx:stable" }}-{{ .uid }}`
 
 				By("When node provides custom image")
 				customVars := Variables{
@@ -306,10 +309,11 @@ var _ = Describe("Template Engine - Core Behaviors", func() {
 		Describe("Label template rendering", func() {
 			It("Should render all label values with variables", func() {
 				By("Given a map of label templates")
+				// Use index function for optional "version" variable to avoid missingkey=error
 				labelTemplates := map[string]string{
 					"app":         "{{ .uid }}-app",
 					"environment": "{{ .env }}",
-					"version":     "{{ default \"v1\" .version }}",
+					"version":     `{{ index . "version" | default "v1" }}`,
 				}
 				vars := Variables{
 					"uid": "acme",
@@ -678,8 +682,9 @@ var _ = Describe("Template Engine - Core Behaviors", func() {
 
 		Describe("Multi-region resource naming", func() {
 			It("Should create region-aware resource names", func() {
-				By("Given a template with region prefix")
-				template := `{{ if .region }}{{ .region }}-{{ end }}{{ .uid }}-app`
+				By("Given a template with region prefix using index for optional variable")
+				// Use index function for optional "region" variable to avoid missingkey=error
+				template := `{{ $region := index . "region" }}{{ if $region }}{{ $region }}-{{ end }}{{ .uid }}-app`
 
 				By("When region is provided")
 				withRegion := Variables{"uid": "acme", "region": "us-east-1"}
@@ -712,16 +717,18 @@ var _ = Describe("Template Engine - Core Behaviors", func() {
 			})
 
 			It("Should handle invalid JSON gracefully", func() {
-				By("Given a template with invalid JSON")
-				template := `{{ $cfg := fromJson .config }}{{ $cfg.key }}`
+				By("Given a template with invalid JSON using index for safe key access")
+				// fromJson returns empty map on invalid JSON
+				// Use index function to safely access keys without erroring on missingkey=error
+				template := `{{ $cfg := fromJson .config }}{{ index $cfg "key" | default "fallback" }}`
 				vars := Variables{"config": `{invalid json`}
 
 				By("When parsing invalid JSON")
 				result, err := engine.Render(template, vars)
 
-				By("Then empty map should be returned and template succeeds")
+				By("Then empty map should be returned and default value used")
 				Expect(err).ToNot(HaveOccurred())
-				Expect(result).To(Equal("<no value>"))
+				Expect(result).To(Equal("fallback"))
 			})
 		})
 
@@ -1034,16 +1041,17 @@ var _ = Describe("Template Engine - Core Behaviors", func() {
 			})
 
 			It("Should handle empty JSON object", func() {
-				By("Given an empty JSON object")
-				template := `{{ $obj := fromJson .json }}{{ $obj.missing }}`
+				By("Given an empty JSON object using index for safe key access")
+				// Use index function to safely access missing keys in parsed JSON
+				template := `{{ $obj := fromJson .json }}{{ index $obj "missing" | default "not-found" }}`
 				vars := Variables{"json": `{}`}
 
 				By("When parsing empty object")
 				result, err := engine.Render(template, vars)
 
-				By("Then missing keys should return no value")
+				By("Then missing keys should return default value")
 				Expect(err).ToNot(HaveOccurred())
-				Expect(result).To(Equal("<no value>"))
+				Expect(result).To(Equal("not-found"))
 			})
 
 			It("Should handle empty JSON array", func() {
@@ -1112,29 +1120,33 @@ var _ = Describe("Template Engine - Core Behaviors", func() {
 			})
 
 			It("Should return empty map for completely invalid JSON", func() {
-				By("Given completely invalid JSON")
-				template := `{{ $obj := fromJson .json }}{{ $obj.key }}`
+				By("Given completely invalid JSON using index for safe key access")
+				// fromJson returns empty map on invalid JSON
+				// Use index function to safely access keys without erroring on missingkey=error
+				template := `{{ $obj := fromJson .json }}{{ index $obj "key" | default "empty" }}`
 				vars := Variables{"json": `this is not json at all`}
 
 				By("When parsing invalid JSON")
 				result, err := engine.Render(template, vars)
 
-				By("Then empty map should be returned allowing template to continue")
+				By("Then empty map should be returned and default value used")
 				Expect(err).ToNot(HaveOccurred())
-				Expect(result).To(Equal("<no value>"))
+				Expect(result).To(Equal("empty"))
 			})
 
 			It("Should handle empty string as invalid JSON", func() {
-				By("Given an empty string")
-				template := `{{ $obj := fromJson .json }}{{ $obj.key }}`
+				By("Given an empty string using index for safe key access")
+				// fromJson returns empty map on empty string
+				// Use index function to safely access keys without erroring on missingkey=error
+				template := `{{ $obj := fromJson .json }}{{ index $obj "key" | default "none" }}`
 				vars := Variables{"json": ``}
 
 				By("When parsing empty string")
 				result, err := engine.Render(template, vars)
 
-				By("Then empty map should be returned")
+				By("Then empty map should be returned and default value used")
 				Expect(err).ToNot(HaveOccurred())
-				Expect(result).To(Equal("<no value>"))
+				Expect(result).To(Equal("none"))
 			})
 
 			It("Should handle JSON with escaped characters", func() {
@@ -1382,8 +1394,11 @@ spec:
 
 		Describe("Conditional environment variables", func() {
 			It("Should add environment variables conditionally", func() {
-				By("Given a template with conditional env vars")
-				template := `apiVersion: apps/v1
+				By("Given a template with conditional env vars using index for optional variables")
+				// Use index function for optional variables to avoid missingkey=error
+				template := `{{- $dbHost := index . "dbHost" -}}
+{{- $redisUrl := index . "redisUrl" -}}
+apiVersion: apps/v1
 kind: Deployment
 spec:
   template:
@@ -1393,13 +1408,13 @@ spec:
         env:
         - name: TENANT_ID
           value: "{{ .uid }}"
-        {{- if .dbHost }}
+        {{- if $dbHost }}
         - name: DATABASE_HOST
-          value: "{{ .dbHost }}"
+          value: "{{ $dbHost }}"
         {{- end }}
-        {{- if .redisUrl }}
+        {{- if $redisUrl }}
         - name: REDIS_URL
-          value: "{{ .redisUrl }}"
+          value: "{{ $redisUrl }}"
         {{- end }}
         {{- if eq .planId "enterprise" }}
         - name: ENABLE_PREMIUM_FEATURES
@@ -1992,14 +2007,16 @@ spec:
 
 		Describe("Region-based resource selection", func() {
 			It("Should include region-specific resources", func() {
-				By("Given a template with region-based conditionals")
-				template := `apiVersion: lynq.sh/v1
+				By("Given a template with region-based conditionals using index for optional variable")
+				// Use index function for optional "region" variable to avoid missingkey=error
+				template := `{{- $region := index . "region" -}}
+apiVersion: lynq.sh/v1
 kind: LynqForm
 spec:
   deployments:
   - id: app
     nameTemplate: "{{ .uid }}-app"
-  {{- if eq .region "us-east-1" }}
+  {{- if eq $region "us-east-1" }}
   configMaps:
   - id: aws-config
     nameTemplate: "{{ .uid }}-aws"
@@ -2009,7 +2026,7 @@ spec:
       data:
         region: us-east-1
         availability_zone: us-east-1a
-  {{- else if eq .region "eu-west-1" }}
+  {{- else if eq $region "eu-west-1" }}
   configMaps:
   - id: aws-config
     nameTemplate: "{{ .uid }}-aws"

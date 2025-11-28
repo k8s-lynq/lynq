@@ -216,7 +216,7 @@ spec:
         data:
           upper-uid: "{{ .uid | upper }}"
           lower-uid: "{{ .uid | lower }}"
-          default-val: "{{ .nonexistent | default \"fallback\" }}"
+          default-val: "{{ \"\" | default \"fallback\" }}"
           b64-encoded: "{{ .uid | b64enc }}"
           trimmed: "{{ \"  spaces  \" | trim }}"
 `)
@@ -248,7 +248,7 @@ spec:
 				Expect(err).NotTo(HaveOccurred())
 				Expect(output).To(Equal("func-test-uid"))
 
-				// Check default
+				// Check default with empty string (tests default function behavior with empty values)
 				cmd = exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
 					"-o", "jsonpath={.data.default-val}")
 				output, err = utils.Run(cmd)

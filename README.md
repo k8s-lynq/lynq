@@ -17,6 +17,8 @@
 
 [Documentation](https://lynq.sh/) • [Quick Start](https://lynq.sh/quickstart) • [Architecture](https://lynq.sh/architecture) • [Contributing](#-contributing)
 
+[![Try Interactive Demo](https://img.shields.io/badge/🎮_Try_Demo-Killercoda-10b981?style=for-the-badge)](https://killercoda.com/lynq-operator/course/killercoda/lynq-quickstart)
+
 </div>
 
 ---

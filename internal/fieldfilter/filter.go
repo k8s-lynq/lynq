@@ -121,3 +121,56 @@ func (f *Filter) GetMatchingFields(obj *unstructured.Unstructured) (map[string][
 
 	return results, nil
 }
+
+// PreserveIgnoredFields copies values from existing object to desired object for ignored fields
+// This ensures that SSA doesn't remove fields that are being preserved.
+// For each ignoreFields path:
+// - If the path exists in 'existing', copy its value to 'desired'
+// - If the path doesn't exist in 'existing', remove it from 'desired'
+// This modifies the desired object in-place.
+func (f *Filter) PreserveIgnoredFields(desired, existing *unstructured.Unstructured) error {
+	if desired == nil {
+		return fmt.Errorf("desired object cannot be nil")
+	}
+
+	// No-op if no ignore fields
+	if len(f.parsedPaths) == 0 {
+		return nil
+	}
+
+	desiredData := desired.Object
+
+	// If existing is nil, just remove the ignored fields from desired
+	// (this handles initial creation case)
+	if existing == nil {
+		for _, path := range f.parsedPaths {
+			_, _ = path.Remove(desiredData)
+		}
+		return nil
+	}
+
+	existingData := existing.Object
+
+	// For each ignored field, copy value from existing to desired
+	for _, path := range f.parsedPaths {
+		// Get value from existing resource
+		existingValues := path.Get(existingData)
+
+		if len(existingValues) > 0 {
+			// Value exists in existing resource - copy it to desired
+			// Use Set() to overwrite the value in desired
+			err := path.Set(desiredData, existingValues[0])
+			if err != nil {
+				// If Set fails, try to at least preserve by not changing
+				// This can happen with complex paths
+				continue
+			}
+		} else {
+			// Value doesn't exist in existing resource - remove from desired
+			// This ensures we don't accidentally set a new value for an ignored field
+			_, _ = path.Remove(desiredData)
+		}
+	}
+
+	return nil
+}

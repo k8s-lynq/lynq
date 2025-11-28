@@ -129,6 +129,19 @@ func (m *Manager) PublishAppliedResources(node *lynqv1.LynqNode, keys []string) 
 	})
 }
 
+// PublishSkippedResources is a helper to publish skipped resources due to dependency failures
+func (m *Manager) PublishSkippedResources(node *lynqv1.LynqNode, count int32, ids []string) {
+	m.Publish(StatusEvent{
+		Type:    EventSkippedResourcesUpdated,
+		NodeKey: client.ObjectKeyFromObject(node),
+		Payload: SkippedResourcesPayload{
+			Count: count,
+			Ids:   ids,
+		},
+		Timestamp: time.Now(),
+	})
+}
+
 // PublishMetrics is a helper to publish all metrics at once
 func (m *Manager) PublishMetrics(node *lynqv1.LynqNode, ready, failed, desired, conflicted int32, conditions []metav1.Condition, isDegraded bool, degradedReason string) {
 	m.Publish(StatusEvent{

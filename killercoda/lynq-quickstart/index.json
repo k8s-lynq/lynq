@@ -1,0 +1,44 @@
+{
+  "title": "Lynq Operator Quick Start",
+  "description": "Database-driven Kubernetes automation in 10 minutes",
+  "details": {
+    "intro": {
+      "text": "intro.md"
+    },
+    "steps": [
+      {
+        "title": "Install Prerequisites",
+        "text": "step1.md"
+      },
+      {
+        "title": "Deploy Lynq Operator",
+        "text": "step2.md"
+      },
+      {
+        "title": "Setup MySQL Database",
+        "text": "step3.md"
+      },
+      {
+        "title": "Create LynqHub",
+        "text": "step4.md"
+      },
+      {
+        "title": "Create LynqForm Template",
+        "text": "step5.md"
+      },
+      {
+        "title": "Test Node Lifecycle",
+        "text": "step6.md"
+      }
+    ],
+    "finish": {
+      "text": "finish.md"
+    }
+  },
+  "backend": {
+    "imageid": "kubernetes-kubeadm-1node"
+  },
+  "interface": {
+    "layout": "terminal-iframe"
+  }
+}

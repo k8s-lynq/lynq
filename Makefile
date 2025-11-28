@@ -134,8 +134,36 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
-	KIND_CLUSTER=$(KIND_CLUSTER) go test ./test/e2e/ -v -ginkgo.v -timeout 30m
+	KIND_CLUSTER=$(KIND_CLUSTER) go test ./test/e2e/ -v -ginkgo.v -timeout 60m
 	$(MAKE) cleanup-test-e2e
+
+# FOCUS is the ginkgo focus pattern for filtering tests (supports regex)
+# Example: make test-e2e-focus FOCUS="should update lynqnode_resources_ready"
+# Example: make test-e2e-focus FOCUS="Metrics Collection"
+FOCUS ?=
+
+.PHONY: test-e2e-focus
+test-e2e-focus: setup-test-e2e manifests generate fmt vet reset-test-e2e ## Run specific e2e tests by FOCUS pattern. Usage: make test-e2e-focus FOCUS="test pattern"
+	@if [ -z "$(FOCUS)" ]; then \
+		echo "Error: FOCUS is required. Usage: make test-e2e-focus FOCUS=\"test pattern\""; \
+		exit 1; \
+	fi
+	KIND_CLUSTER=$(KIND_CLUSTER) go test ./test/e2e/ -v -ginkgo.v -ginkgo.focus="$(FOCUS)" -timeout 15m
+
+.PHONY: reset-test-e2e
+reset-test-e2e: ## Reset the e2e test environment by cleaning up namespaces and resources (keeps cluster)
+	@echo "Cleaning up e2e test environment..."
+	@$(KUBECTL) --context kind-$(KIND_CLUSTER) delete ns lynq-system policy-test lynq-test --ignore-not-found=true --wait=false 2>/dev/null || true
+	@echo "Waiting for namespaces to be deleted..."
+	@for ns in lynq-system policy-test lynq-test; do \
+		while $(KUBECTL) --context kind-$(KIND_CLUSTER) get ns $$ns >/dev/null 2>&1; do \
+			$(KUBECTL) --context kind-$(KIND_CLUSTER) get ns $$ns -o json 2>/dev/null | \
+				sed 's/"finalizers": \[[^]]*\]/"finalizers": []/' | \
+				$(KUBECTL) --context kind-$(KIND_CLUSTER) replace --raw "/api/v1/namespaces/$$ns/finalize" -f - 2>/dev/null || true; \
+			sleep 1; \
+		done; \
+	done
+	@echo "Cleanup complete."
 
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests

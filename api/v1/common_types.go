@@ -71,6 +71,14 @@ type TResource struct {
 	// +optional
 	DependIds []string `json:"dependIds,omitempty"`
 
+	// SkipOnDependencyFailure determines whether to skip creating this resource when a dependency fails
+	// When true (default): This resource will be skipped if any of its dependencies fail
+	// When false: This resource will still be created even if dependencies fail (useful for cleanup resources)
+	// Default: true
+	// +optional
+	// +kubebuilder:default=true
+	SkipOnDependencyFailure *bool `json:"skipOnDependencyFailure,omitempty"`
+
 	// CreationPolicy determines when the resource should be created
 	// Default: WhenNeeded
 	// +optional

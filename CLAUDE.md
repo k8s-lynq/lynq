@@ -163,19 +163,20 @@ Every resource in a template is a `TResource` with:
 
 ```go
 type TResource struct {
-    ID                  string              // Unique within template (for dependencies)
-    Spec                runtime.RawExtension // K8s resource spec
-    DependIds           []string            // IDs of resources to wait for
-    CreationPolicy      CreationPolicy      // Once | WhenNeeded (default)
-    DeletionPolicy      DeletionPolicy      // Delete (default) | Retain
-    ConflictPolicy      ConflictPolicy      // Stuck (default) | Force
-    NameTemplate        string              // Go template for name
-    TargetNamespace     string              // Target namespace for cross-namespace resources
-    LabelsTemplate      map[string]string   // Template-enabled labels
-    AnnotationsTemplate map[string]string   // Template-enabled annotations
-    WaitForReady        *bool               // Default: true
-    TimeoutSeconds      int32               // Default: 300, max: 3600
-    PatchStrategy       PatchStrategy       // apply (default) | merge | replace
+    ID                      string              // Unique within template (for dependencies)
+    Spec                    runtime.RawExtension // K8s resource spec
+    DependIds               []string            // IDs of resources to wait for
+    SkipOnDependencyFailure *bool               // Skip this resource if dependency fails (default: true)
+    CreationPolicy          CreationPolicy      // Once | WhenNeeded (default)
+    DeletionPolicy          DeletionPolicy      // Delete (default) | Retain
+    ConflictPolicy          ConflictPolicy      // Stuck (default) | Force
+    NameTemplate            string              // Go template for name
+    TargetNamespace         string              // Target namespace for cross-namespace resources
+    LabelsTemplate          map[string]string   // Template-enabled labels
+    AnnotationsTemplate     map[string]string   // Template-enabled annotations
+    WaitForReady            *bool               // Default: true
+    TimeoutSeconds          int32               // Default: 300, max: 3600
+    PatchStrategy           PatchStrategy       // apply (default) | merge | replace
 }
 ```
 
@@ -199,6 +200,33 @@ type TResource struct {
 - `replace` ✅: Full replacement via Update (Priority 2 implementation)
   - Handles create-if-not-exists
   - Preserves resourceVersion for conflict-free updates
+
+**SkipOnDependencyFailure** ✅ (Implemented):
+- `true` (default): Skip creating this resource if any of its dependencies failed
+  - Emits `DependencySkipped` event with details about which dependency failed
+  - Resource is tracked in `status.skippedResources` and `status.skippedResourceIds`
+  - Dependent resources are also marked as failed to cascade the skip behavior
+- `false`: Create this resource even if dependencies failed
+  - Useful for cleanup resources, logging, or notification resources that should run regardless
+  - Emits `DependencyFailedButProceeding` warning event
+  - Example use case: ConfigMap for debugging that captures state even when main deployment fails
+
+**Dependency Blocking vs Failure** (Important distinction):
+- **Failed dependencies**: Resources that encountered apply errors OR timed out. Triggers `skipOnDependencyFailure` logic.
+- **Not-ready dependencies** (within timeout): Resources still progressing (e.g., Deployment starting pods).
+  - Blocks dependents silently (no event, no skip count)
+  - Does NOT trigger `skipOnDependencyFailure` logic
+  - Dependents will be applied on next reconcile when dependency becomes ready
+- **Timed-out dependencies**: Resources not ready after `timeoutSeconds` (default: 300s).
+  - Transitions to **failed** state
+  - Emits `ReadinessTimeout` event
+  - Triggers `skipOnDependencyFailure` logic for dependents
+- This distinction ensures Deployments starting up don't cause misleading "DependencySkipped" events
+
+**LynqNode Status Fields for Dependency Tracking**:
+- `status.skippedResources`: Count of resources skipped due to dependency failures
+- `status.skippedResourceIds`: List of resource IDs that were skipped
+- Visible in `kubectl get lynqnodes` via the "Skipped" column
 
 ### Cross-Namespace Resource Support ✅
 
@@ -311,6 +339,10 @@ spec:
    - Easy identification of retained orphan resources via label selectors
 
 7. **For Each Resource in Order**:
+   - **Check Dependency Failures** ✅ (Implemented):
+     - If any dependency failed/timed out, check `skipOnDependencyFailure` flag
+     - `true` (default): Skip this resource, emit `DependencySkipped` event, track in status
+     - `false`: Proceed with creation despite failed dependency, emit `DependencyFailedButProceeding` event
    - **Check CreationPolicy** ✅:
      - `Once`: Skip if already created (check annotation `lynq.sh/created-once`)
      - `WhenNeeded` (default): Proceed with apply
@@ -329,6 +361,7 @@ spec:
 8. **Update LynqNode Status**:
    - Aggregate resource states
    - Update `readyResources`, `failedResources`, `desiredResources`
+   - Update `skippedResources`, `skippedResourceIds` for dependency-skipped resources
    - Update `appliedResources` with successfully applied resource keys
    - Set `Ready` condition
 
@@ -488,6 +521,8 @@ Emit events for:
 - Template rendering error
 - LynqNode Ready transition
 - Dependency cycle detected
+- **DependencySkipped** ✅: Resource skipped because a dependency failed (includes failed dependency ID)
+- **DependencyFailedButProceeding** ✅: Resource created despite dependency failure (when `skipOnDependencyFailure=false`)
 
 ### Metrics (Prometheus)
 
