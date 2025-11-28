@@ -209,4 +209,287 @@ var _ = Describe("DeletionPolicy", Ordered, func() {
 			}, policyTestTimeout, policyTestInterval).Should(Succeed())
 		})
 	})
+
+	Describe("Retain policy with LynqForm/LynqHub deletion and re-adoption", func() {
+		const (
+			hubName       = "policy-hub-readopt"
+			formName      = "policy-form-readopt"
+			uid           = "test-uid-readopt"
+			configMapName = "test-uid-readopt-config-readopt"
+		)
+
+		AfterEach(func() {
+			By("cleaning up test data and resources (manual cleanup for Retain policy)")
+			cmd := exec.Command("kubectl", "delete", "configmap", configMapName, "-n", policyTestNamespace, "--ignore-not-found=true")
+			_, _ = utils.Run(cmd)
+
+			deleteTestData(uid)
+
+			cmd = exec.Command("kubectl", "delete", "lynqform", formName, "-n", policyTestNamespace, "--ignore-not-found=true")
+			_, _ = utils.Run(cmd)
+
+			cmd = exec.Command("kubectl", "delete", "lynqhub", hubName, "-n", policyTestNamespace, "--ignore-not-found=true")
+			_, _ = utils.Run(cmd)
+
+			time.Sleep(5 * time.Second)
+		})
+
+		It("should preserve retained resource after LynqForm/LynqHub deletion and re-adopt on recreation", func() {
+			By("Given a LynqHub and LynqForm with DeletionPolicy:Retain")
+			createHub(hubName)
+			createForm(formName, hubName, `
+  configMaps:
+    - id: config-readopt
+      nameTemplate: "{{ .uid }}-config-readopt"
+      deletionPolicy: Retain
+      spec:
+        apiVersion: v1
+        kind: ConfigMap
+        data:
+          key: original-value
+`)
+
+			By("And active data in MySQL")
+			insertTestData(uid, true)
+
+			By("When LynqHub controller creates LynqNode automatically")
+			expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
+			waitForLynqNode(expectedNodeName)
+
+			By("Then the ConfigMap resource should be created")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace)
+				_, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+			}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+			By("And wait for LynqNode to be Ready")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "lynqnode", expectedNodeName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("True"))
+			}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+			By("And the resource should have tracking labels (no ownerReference for Retain policy)")
+			cmd := exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
+				"-o", "jsonpath={.metadata.labels.lynq\\.sh/node}")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).To(Equal(expectedNodeName))
+
+			// Verify data content
+			cmd = exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
+				"-o", "jsonpath={.data.key}")
+			output, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).To(Equal("original-value"))
+
+			By("When the LynqForm is deleted (but MySQL data remains)")
+			cmd = exec.Command("kubectl", "delete", "lynqform", formName, "-n", policyTestNamespace)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Then the LynqNode should be deleted")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "lynqnode", expectedNodeName, "-n", policyTestNamespace)
+				_, err := utils.Run(cmd)
+				g.Expect(err).To(HaveOccurred()) // Should not exist
+			}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+			By("But the ConfigMap should still exist (retained)")
+			Consistently(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace)
+				_, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+			}, 10*time.Second, policyTestInterval).Should(Succeed())
+
+			By("And the ConfigMap should be marked as orphaned")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.metadata.labels.lynq\\.sh/orphaned}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("true"))
+			}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+			By("And should have orphaned-at annotation")
+			cmd = exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
+				"-o", "jsonpath={.metadata.annotations.lynq\\.sh/orphaned-at}")
+			output, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).NotTo(BeEmpty())
+
+			By("When the LynqForm is recreated with the same configuration")
+			createForm(formName, hubName, `
+  configMaps:
+    - id: config-readopt
+      nameTemplate: "{{ .uid }}-config-readopt"
+      deletionPolicy: Retain
+      spec:
+        apiVersion: v1
+        kind: ConfigMap
+        data:
+          key: updated-value
+`)
+
+			By("Then LynqNode should be recreated")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "lynqnode", expectedNodeName, "-n", policyTestNamespace)
+				_, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+			}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+			By("And the ConfigMap should be re-adopted (orphan markers removed)")
+			Eventually(func(g Gomega) {
+				// Orphan label should be removed
+				cmd := exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.metadata.labels.lynq\\.sh/orphaned}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(BeEmpty())
+			}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+			By("And the tracking labels should be updated")
+			cmd = exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
+				"-o", "jsonpath={.metadata.labels.lynq\\.sh/node}")
+			output, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).To(Equal(expectedNodeName))
+
+			By("And the ConfigMap data should be updated to the new value")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.data.key}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("updated-value"))
+			}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+			By("And the LynqNode should become Ready")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "lynqnode", expectedNodeName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("True"))
+			}, policyTestTimeout, policyTestInterval).Should(Succeed())
+		})
+
+		It("should preserve retained resource after LynqHub deletion and re-adopt on recreation", func() {
+			By("Given a LynqHub and LynqForm with DeletionPolicy:Retain")
+			createHub(hubName)
+			createForm(formName, hubName, `
+  configMaps:
+    - id: config-readopt
+      nameTemplate: "{{ .uid }}-config-readopt"
+      deletionPolicy: Retain
+      spec:
+        apiVersion: v1
+        kind: ConfigMap
+        data:
+          key: hub-test-value
+`)
+
+			By("And active data in MySQL")
+			insertTestData(uid, true)
+
+			By("When LynqHub controller creates LynqNode automatically")
+			expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
+			waitForLynqNode(expectedNodeName)
+
+			By("Then the ConfigMap resource should be created")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace)
+				_, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+			}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+			By("And wait for LynqNode to be Ready")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "lynqnode", expectedNodeName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("True"))
+			}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+			By("When the LynqHub is deleted (this cascades to LynqForm and LynqNode)")
+			cmd := exec.Command("kubectl", "delete", "lynqhub", hubName, "-n", policyTestNamespace)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Then the LynqNode should be deleted")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "lynqnode", expectedNodeName, "-n", policyTestNamespace)
+				_, err := utils.Run(cmd)
+				g.Expect(err).To(HaveOccurred()) // Should not exist
+			}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+			By("But the ConfigMap should still exist (retained)")
+			Consistently(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace)
+				_, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+			}, 10*time.Second, policyTestInterval).Should(Succeed())
+
+			By("And the ConfigMap should be marked as orphaned")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.metadata.labels.lynq\\.sh/orphaned}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("true"))
+			}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+			By("When both LynqHub and LynqForm are recreated")
+			createHub(hubName)
+			createForm(formName, hubName, `
+  configMaps:
+    - id: config-readopt
+      nameTemplate: "{{ .uid }}-config-readopt"
+      deletionPolicy: Retain
+      spec:
+        apiVersion: v1
+        kind: ConfigMap
+        data:
+          key: hub-recreated-value
+`)
+
+			By("Then LynqNode should be recreated")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "lynqnode", expectedNodeName, "-n", policyTestNamespace)
+				_, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+			}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+			By("And the ConfigMap should be re-adopted (orphan markers removed)")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.metadata.labels.lynq\\.sh/orphaned}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(BeEmpty())
+			}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+			By("And the ConfigMap data should be updated")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.data.key}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("hub-recreated-value"))
+			}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+			By("And the LynqNode should become Ready")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "lynqnode", expectedNodeName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("True"))
+			}, policyTestTimeout, policyTestInterval).Should(Succeed())
+		})
+	})
 })

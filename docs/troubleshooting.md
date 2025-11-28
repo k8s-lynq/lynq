@@ -145,6 +145,33 @@ kubectl describe lynqnode <name> | grep "ResourceConflict"
 
 Solution: Delete conflicting resource or use `conflictPolicy: Force`
 
+**D. Dependency Blocking vs Skipping (v1.1.14+)**
+
+If some resources aren't being created, check if they're waiting for dependencies:
+
+```bash
+# Check for DependencySkipped events (actual failure)
+kubectl describe lynqnode <name> | grep "DependencySkipped"
+
+# Check skippedResources in status
+kubectl get lynqnode <name> -o jsonpath='{.status.skippedResources}'
+```
+
+**Blocked (No Event):** If there's no `DependencySkipped` event, the dependency is simply still starting up. Lynq silently blocks dependent resources until dependencies become ready. This is normal behavior.
+
+```bash
+# Check dependency status
+kubectl get deployment <dependency-name> -o jsonpath='{.status.conditions[?(@.type=="Available")].status}'
+```
+
+**Skipped (DependencySkipped Event):** If you see a `DependencySkipped` event, the dependency actually **failed** (apply error or timeout).
+
+Solutions:
+- For **blocked** (not ready): Wait for dependency to become ready, or check why it's not progressing
+- For **skipped** (failed): Fix the failed dependency, or set `skipOnDependencyFailure: false` if the resource should be created anyway
+
+See [Dependency Management Guide](dependencies.md#understanding-blocking-vs-failed-dependencies) for more details.
+
 ### 3. Database Connection Failures
 
 **Error:**

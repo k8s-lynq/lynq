@@ -118,6 +118,14 @@ type LynqNodeStatus struct {
 	// +optional
 	FailedResources int32 `json:"failedResources,omitempty"`
 
+	// SkippedResources is the number of resources skipped due to dependency failures
+	// +optional
+	SkippedResources int32 `json:"skippedResources,omitempty"`
+
+	// SkippedResourceIds lists the IDs of resources that were skipped due to dependency failures
+	// +optional
+	SkippedResourceIds []string `json:"skippedResourceIds,omitempty"`
+
 	// AppliedResources tracks the keys of resources that were successfully applied
 	// Format: "kind/namespace/name@id" (e.g., "Deployment/default/myapp@app-deployment")
 	// This enables detection and cleanup of orphaned resources when removed from form
@@ -137,6 +145,7 @@ type LynqNodeStatus struct {
 // +kubebuilder:printcolumn:name="Form",type="string",JSONPath=".spec.templateRef",description="LynqForm reference"
 // +kubebuilder:printcolumn:name="Ready",type="integer",JSONPath=".status.readyResources",description="Number of ready resources"
 // +kubebuilder:printcolumn:name="Desired",type="integer",JSONPath=".status.desiredResources",description="Total number of resources"
+// +kubebuilder:printcolumn:name="Skipped",type="integer",JSONPath=".status.skippedResources",description="Resources skipped due to dependency failures"
 // +kubebuilder:printcolumn:name="Conflicted",type="string",JSONPath=".status.conditions[?(@.type=='Conflicted')].status",description="Conflict status"
 // +kubebuilder:printcolumn:name="Conditions",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].reason",description="Condition reason"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"

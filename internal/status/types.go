@@ -36,6 +36,9 @@ const (
 	// EventAppliedResourcesUpdated indicates the list of applied resources has changed
 	EventAppliedResourcesUpdated EventType = "AppliedResourcesUpdated"
 
+	// EventSkippedResourcesUpdated indicates skipped resources have changed
+	EventSkippedResourcesUpdated EventType = "SkippedResourcesUpdated"
+
 	// EventObservedGenerationUpdated indicates ObservedGeneration has changed
 	EventObservedGenerationUpdated EventType = "ObservedGenerationUpdated"
 
@@ -76,6 +79,12 @@ type AppliedResourcesPayload struct {
 	Keys []string
 }
 
+// SkippedResourcesPayload contains information about skipped resources
+type SkippedResourcesPayload struct {
+	Count int32
+	Ids   []string
+}
+
 // ObservedGenerationPayload contains ObservedGeneration information
 type ObservedGenerationPayload struct {
 	ObservedGeneration int64
@@ -107,6 +116,10 @@ type StatusUpdate struct {
 
 	// Applied resources (nil means no update)
 	AppliedResources []string
+
+	// Skipped resources (nil means no update)
+	SkippedResources   *int32
+	SkippedResourceIds []string
 
 	// Conditions to update (map by type for deduplication)
 	Conditions map[string]metav1.Condition
@@ -146,6 +159,11 @@ func (u *StatusUpdate) Apply(event StatusEvent) {
 		payload := event.Payload.(AppliedResourcesPayload)
 		u.AppliedResources = payload.Keys
 
+	case EventSkippedResourcesUpdated:
+		payload := event.Payload.(SkippedResourcesPayload)
+		u.SkippedResources = &payload.Count
+		u.SkippedResourceIds = payload.Ids
+
 	case EventObservedGenerationUpdated:
 		payload := event.Payload.(ObservedGenerationPayload)
 		u.ObservedGeneration = &payload.ObservedGeneration
@@ -163,6 +181,8 @@ func (u *StatusUpdate) HasChanges() bool {
 		u.FailedResources != nil ||
 		u.DesiredResources != nil ||
 		u.AppliedResources != nil ||
+		u.SkippedResources != nil ||
+		u.SkippedResourceIds != nil ||
 		len(u.Conditions) > 0 ||
 		u.Metrics != nil
 }

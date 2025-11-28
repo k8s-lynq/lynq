@@ -278,11 +278,14 @@ func (v *LynqFormValidator) validateTemplateSyntax(tmpl *LynqForm) error {
 	engine := template.NewEngine()
 
 	// Sample variables for validation
+	// Include all documented template variables: required, deprecated, and context variables
 	sampleVars := template.Variables{
-		"uid":       "test-node",
-		"hostOrUrl": "https://example.com",
-		"host":      "example.com",
-		"activate":  "true",
+		"uid":         "test-node",
+		"hostOrUrl":   "https://example.com",
+		"host":        "example.com",
+		"activate":    "true",
+		"hubId":       "test-hub",
+		"templateRef": "test-template",
 	}
 
 	allResources := v.collectAllResources(tmpl)

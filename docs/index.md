@@ -254,8 +254,9 @@ Automatically.
 </p>
 
 <div class="hero-actions">
-<a href="/quickstart" class="hero-action brand">Get Started</a>
-<a href="https://github.com/k8s-lynq/lynq" class="hero-action alt" target="_blank" rel="noopener noreferrer">View on GitHub</a>
+<a href="https://killercoda.com/lynq-operator/course/killercoda/lynq-quickstart" class="hero-action brand" target="_blank" rel="noopener noreferrer">🎮 Try Demo</a>
+<a href="/quickstart" class="hero-action alt">Get Started</a>
+<a href="https://github.com/k8s-lynq/lynq" class="hero-action alt" target="_blank" rel="noopener noreferrer">GitHub</a>
 </div>
 
 <div class="hero-diagram">
@@ -292,6 +293,23 @@ Watch how a simple database change instantly triggers infrastructure updates acr
 ::: tip Start in 5 minutes
 Follow the [Quick Start Guide](/quickstart) to see this in action with a working MySQL database and sample templates.
 :::
+
+## Try It Now — No Setup Required
+
+<div style="display: flex; flex-direction: column; align-items: center; padding: 2rem; background: linear-gradient(135deg, var(--vp-c-bg-soft) 0%, var(--vp-c-bg-elv) 100%); border-radius: 16px; border: 1px solid var(--vp-c-divider); margin: 2.5rem 0; text-align: center;">
+  <div style="font-size: 3rem; margin-bottom: 1rem;">🎮</div>
+  <h3 style="margin: 0 0 0.75rem; font-size: 1.5rem; font-weight: 700; color: var(--vp-c-text-1);">Interactive Playground</h3>
+  <p style="margin: 0 0 1.5rem; color: var(--vp-c-text-2); max-width: 600px; line-height: 1.6;">
+    Experience Lynq hands-on in our browser-based Kubernetes environment. Add tenants, watch resources appear, and see automated cleanup — all in 10 minutes.
+  </p>
+  <a href="https://killercoda.com/lynq-operator/course/killercoda/lynq-quickstart" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.875rem 2rem; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border-radius: 10px; text-decoration: none; font-weight: 600; font-size: 1.05rem; transition: all 0.2s ease; box-shadow: 0 4px 14px rgba(16, 185, 129, 0.3);">
+    <span>Launch Interactive Demo</span>
+    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+  </a>
+  <p style="margin: 1rem 0 0; font-size: 0.85rem; color: var(--vp-c-text-3);">
+    Powered by Killercoda • Free to use
+  </p>
+</div>
 
 ## Fine-Grained Control with Policies
 

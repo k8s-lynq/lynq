@@ -171,8 +171,9 @@ func (r *LynqNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 }
 
-// applyResources applies all resources and returns counts for ready, failed, changed, and conflicted resources
-func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.LynqNode, sortedNodes []*graph.Node, vars template.Variables) (readyCount, failedCount, changedCount, conflictedCount int32) {
+// applyResources applies all resources and returns counts for ready, failed, changed, conflicted, and skipped resources
+// skippedIds contains the IDs of resources that were skipped due to dependency failures
+func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.LynqNode, sortedNodes []*graph.Node, vars template.Variables) (readyCount, failedCount, changedCount, conflictedCount, skippedCount int32, skippedIds []string) {
 	logger := log.FromContext(ctx)
 	applier := apply.NewApplier(r.Client, r.Scheme)
 	checker := readiness.NewChecker(r.Client)
@@ -182,8 +183,79 @@ func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.Ly
 	progressingSet := false
 	templateAppliedEventEmitted := false
 
+	// Track failed resource IDs to skip dependent resources (actual failures)
+	failedResourceIds := make(map[string]bool)
+	// Track not-ready resource IDs to block dependent resources (still progressing, not failed)
+	notReadyResourceIds := make(map[string]bool)
+
 	for _, graphNode := range sortedNodes {
 		resource := graphNode.Resource
+
+		// Check if any dependency has failed (actual failure)
+		var failedDepId string
+		for _, depId := range graphNode.DependsOn {
+			if failedResourceIds[depId] {
+				failedDepId = depId
+				break
+			}
+		}
+
+		// Check if any dependency is not ready yet (still progressing)
+		var notReadyDepId string
+		if failedDepId == "" {
+			for _, depId := range graphNode.DependsOn {
+				if notReadyResourceIds[depId] {
+					notReadyDepId = depId
+					break
+				}
+			}
+		}
+
+		// If dependency failed, check skipOnDependencyFailure flag
+		if failedDepId != "" {
+			// Default is true (skip when dependency fails)
+			skipOnFailure := resource.SkipOnDependencyFailure == nil || *resource.SkipOnDependencyFailure
+
+			if skipOnFailure {
+				// Mark as failed so dependents of this resource will also be skipped
+				failedResourceIds[resource.ID] = true
+				skippedCount++
+				skippedIds = append(skippedIds, resource.ID)
+
+				logger.Info("Skipping resource due to failed dependency",
+					"id", resource.ID,
+					"failedDependency", failedDepId,
+					"skipOnDependencyFailure", skipOnFailure)
+
+				r.Recorder.Eventf(node, corev1.EventTypeWarning, "DependencySkipped",
+					"Resource '%s' skipped because dependency '%s' failed. Set skipOnDependencyFailure=false to create anyway.",
+					resource.ID, failedDepId)
+				continue
+			} else {
+				// skipOnDependencyFailure=false: proceed with creation despite failed dependency
+				logger.Info("Creating resource despite failed dependency (skipOnDependencyFailure=false)",
+					"id", resource.ID,
+					"failedDependency", failedDepId)
+
+				r.Recorder.Eventf(node, corev1.EventTypeWarning, "DependencyFailedButProceeding",
+					"Dependency '%s' failed, but creating resource '%s' anyway (skipOnDependencyFailure=false)",
+					failedDepId, resource.ID)
+				// Don't continue - proceed with creation
+			}
+		}
+
+		// If dependency is not ready yet, block this resource silently (no skip event)
+		// This ensures proper ordering: dependents wait for dependencies to be ready
+		// Unlike failed dependencies, this doesn't trigger skipOnDependencyFailure logic
+		if notReadyDepId != "" {
+			// Mark as not-ready so dependents of this resource will also be blocked
+			notReadyResourceIds[resource.ID] = true
+
+			logger.V(1).Info("Blocking resource until dependency is ready",
+				"id", resource.ID,
+				"notReadyDependency", notReadyDepId)
+			continue
+		}
 
 		// Check if node is being deleted before processing each resource
 		// This allows quick exit when node is deleted during reconciliation
@@ -192,7 +264,7 @@ func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.Ly
 			if errors.IsNotFound(err) {
 				// LynqNode was deleted, stop processing
 				logger.Info("LynqNode deleted during reconciliation, stopping resource application")
-				return readyCount, failedCount, changedCount, conflictedCount
+				return readyCount, failedCount, changedCount, conflictedCount, skippedCount, skippedIds
 			}
 			// Continue on other errors
 		} else if !currentLynqNode.DeletionTimestamp.IsZero() {
@@ -200,7 +272,7 @@ func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.Ly
 			logger.Info("LynqNode deletion in progress, stopping resource application",
 				"node", node.Name,
 				"processedResources", readyCount+failedCount)
-			return readyCount, failedCount, changedCount, conflictedCount
+			return readyCount, failedCount, changedCount, conflictedCount, skippedCount, skippedIds
 		}
 
 		// Render templates
@@ -209,6 +281,7 @@ func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.Ly
 			logger.Error(err, "Failed to render resource", "id", resource.ID)
 			r.Recorder.Eventf(node, corev1.EventTypeWarning, "TemplateRenderError",
 				"Failed to render resource %s: %v", resource.ID, err)
+			failedResourceIds[resource.ID] = true
 			failedCount++
 			continue
 		}
@@ -219,6 +292,7 @@ func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.Ly
 			exists, hasAnnotation, err := r.checkOnceCreated(ctx, obj)
 			if err != nil {
 				logger.Error(err, "Failed to check Once policy", "id", resource.ID)
+				failedResourceIds[resource.ID] = true
 				failedCount++
 				continue
 			}
@@ -306,6 +380,7 @@ func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.Ly
 					"Failed to apply resource %s: %v", resource.ID, applyErr)
 			}
 
+			failedResourceIds[resource.ID] = true
 			failedCount++
 			continue
 		}
@@ -322,6 +397,7 @@ func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.Ly
 			}, current)
 			if err != nil {
 				logger.Error(err, "Failed to get resource for readiness check", "id", resource.ID, "name", obj.GetName())
+				failedResourceIds[resource.ID] = true
 				failedCount++
 				continue
 			}
@@ -331,10 +407,35 @@ func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.Ly
 				logger.V(1).Info("Resource is ready", "id", resource.ID, "name", obj.GetName())
 				readyCount++
 			} else {
-				// Not ready yet - fast status reconcile will check again in 30s
-				logger.V(1).Info("Resource not ready yet, will check again in next reconcile",
-					"id", resource.ID, "name", obj.GetName())
-				// Don't count as failed - just not ready yet
+				// Not ready yet - check if timeout has expired
+				timeoutSeconds := resource.TimeoutSeconds
+				if timeoutSeconds <= 0 {
+					timeoutSeconds = 300 // Default 5 minutes
+				}
+
+				// Check resource creation time to determine if timeout expired
+				creationTime := current.GetCreationTimestamp().Time
+				elapsed := time.Since(creationTime)
+				timeoutDuration := time.Duration(timeoutSeconds) * time.Second
+
+				if elapsed >= timeoutDuration {
+					// Timeout expired - mark as FAILED (triggers DependencySkipped)
+					logger.Info("Resource not ready after timeout, marking as failed",
+						"id", resource.ID, "name", obj.GetName(),
+						"elapsed", elapsed.String(), "timeout", timeoutDuration.String())
+					r.Recorder.Eventf(node, corev1.EventTypeWarning, "ReadinessTimeout",
+						"Resource '%s' not ready after %s (timeout: %s)", resource.ID, elapsed.Round(time.Second), timeoutDuration)
+					failedResourceIds[resource.ID] = true
+					failedCount++
+				} else {
+					// Still within timeout - mark as "not ready" to block dependents silently
+					logger.V(1).Info("Resource not ready yet, will check again in next reconcile",
+						"id", resource.ID, "name", obj.GetName(),
+						"elapsed", elapsed.String(), "timeout", timeoutDuration.String())
+					// Mark as "not ready" to block dependents, but NOT as failed
+					// This ensures proper ordering without triggering DependencySkipped events
+					notReadyResourceIds[resource.ID] = true
+				}
 			}
 		} else {
 			// No readiness check required, count as ready
@@ -342,7 +443,7 @@ func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.Ly
 		}
 	}
 
-	return readyCount, failedCount, changedCount, conflictedCount
+	return readyCount, failedCount, changedCount, conflictedCount, skippedCount, skippedIds
 }
 
 // emitTemplateAppliedEvent emits a detailed event when template changes are being applied
@@ -685,10 +786,10 @@ func (r *LynqNodeReconciler) renderResource(ctx context.Context, engine *templat
 }
 
 // renderUnstructured recursively renders template variables in unstructured data
+// Returns an error if any template rendering fails (e.g., missing variable references)
 //
-//nolint:unparam // error return kept for future template rendering errors
+//nolint:unparam // ctx is passed through for recursive calls
 func (r *LynqNodeReconciler) renderUnstructured(ctx context.Context, data map[string]interface{}, engine *template.Engine, vars template.Variables) (map[string]interface{}, error) {
-	logger := log.FromContext(ctx)
 	result := make(map[string]interface{})
 
 	for k, v := range data {
@@ -697,26 +798,17 @@ func (r *LynqNodeReconciler) renderUnstructured(ctx context.Context, data map[st
 			// Try to render as template
 			rendered, err := engine.Render(val, vars)
 			if err != nil {
-				// Log warning but keep original value to allow reconciliation to continue
-				logger.V(1).Info("Template rendering failed for field, keeping original value",
-					"field", k,
-					"template", val,
-					"error", err.Error())
-				result[k] = val
-			} else {
-				result[k] = rendered
+				// Return error to mark resource as failed (e.g., missing variable reference)
+				return nil, fmt.Errorf("template rendering failed for field %q: %w", k, err)
 			}
+			result[k] = rendered
 		case map[string]interface{}:
 			// Recurse into nested maps
 			rendered, err := r.renderUnstructured(ctx, val, engine, vars)
 			if err != nil {
-				logger.V(1).Info("Template rendering failed for nested object, keeping original",
-					"field", k,
-					"error", err.Error())
-				result[k] = val
-			} else {
-				result[k] = rendered
+				return nil, fmt.Errorf("template rendering failed in nested field %q: %w", k, err)
 			}
+			result[k] = rendered
 		case []interface{}:
 			// Recurse into arrays
 			renderedArray := make([]interface{}, len(val))
@@ -724,26 +816,15 @@ func (r *LynqNodeReconciler) renderUnstructured(ctx context.Context, data map[st
 				if itemMap, ok := item.(map[string]interface{}); ok {
 					rendered, err := r.renderUnstructured(ctx, itemMap, engine, vars)
 					if err != nil {
-						logger.V(1).Info("Template rendering failed for array item, keeping original",
-							"field", k,
-							"index", i,
-							"error", err.Error())
-						renderedArray[i] = item
-					} else {
-						renderedArray[i] = rendered
+						return nil, fmt.Errorf("template rendering failed for array item %q[%d]: %w", k, i, err)
 					}
+					renderedArray[i] = rendered
 				} else if itemStr, ok := item.(string); ok {
 					rendered, err := engine.Render(itemStr, vars)
 					if err != nil {
-						logger.V(1).Info("Template rendering failed for array string, keeping original",
-							"field", k,
-							"index", i,
-							"template", itemStr,
-							"error", err.Error())
-						renderedArray[i] = item
-					} else {
-						renderedArray[i] = rendered
+						return nil, fmt.Errorf("template rendering failed for array string %q[%d]: %w", k, i, err)
 					}
+					renderedArray[i] = rendered
 				} else {
 					renderedArray[i] = item
 				}
@@ -1592,7 +1673,7 @@ func (r *LynqNodeReconciler) reconcileSpec(ctx context.Context, node *lynqv1.Lyn
 	}
 
 	// Apply resources and track changes
-	readyCount, failedCount, changedCount, conflictedCount := r.applyResources(ctx, node, sortedNodes, vars)
+	readyCount, failedCount, changedCount, conflictedCount, skippedCount, skippedIds := r.applyResources(ctx, node, sortedNodes, vars)
 	totalResources := int32(len(sortedNodes))
 
 	// Build applied resource keys
@@ -1618,6 +1699,9 @@ func (r *LynqNodeReconciler) reconcileSpec(ctx context.Context, node *lynqv1.Lyn
 	// Publish all status fields at once through StatusManager
 	r.StatusManager.PublishResourceCounts(node, statusUpdate.ReadyResources, statusUpdate.FailedResources, statusUpdate.DesiredResources, statusUpdate.ConflictedResources)
 	r.StatusManager.PublishAppliedResources(node, statusUpdate.AppliedResources)
+
+	// Publish skipped resources (due to dependency failures)
+	r.StatusManager.PublishSkippedResources(node, skippedCount, skippedIds)
 	for _, cond := range statusUpdate.Conditions {
 		switch cond.Type {
 		case ConditionTypeReady:
@@ -1713,6 +1797,18 @@ func (r *LynqNodeReconciler) reconcileStatus(ctx context.Context, node *lynqv1.L
 			r.StatusManager.PublishDegradedCondition(node, statusUpdate.IsDegraded, cond.Reason, cond.Message)
 		}
 	}
+
+	// Find degraded reason for metrics
+	var degradedReason string
+	for _, cond := range statusUpdate.Conditions {
+		if cond.Type == ConditionTypeDegraded {
+			degradedReason = cond.Reason
+			break
+		}
+	}
+
+	// Publish metrics - critical for Prometheus scraping even during status-only reconciles
+	r.StatusManager.PublishMetrics(node, readyCount, failedCount, totalResources, conflictedCount, statusUpdate.Conditions, statusUpdate.IsDegraded, degradedReason)
 
 	// Record metrics
 	metrics.LynqNodeReconcileDuration.WithLabelValues("status_only").Observe(time.Since(startTime).Seconds())

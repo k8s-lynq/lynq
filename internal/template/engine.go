@@ -58,8 +58,14 @@ func (e *Engine) Render(templateStr string, vars Variables) (string, error) {
 		return "", nil
 	}
 
-	// Create template
-	tmpl, err := template.New("template").Funcs(e.funcMap).Parse(templateStr)
+	// Create template with missingkey=error to detect missing variable references
+	// This ensures typos in variable names are caught as errors rather than silently
+	// producing empty values. Users should use the `default` function for optional
+	// variables that may have empty values, not for truly undefined variables.
+	tmpl, err := template.New("template").
+		Option("missingkey=error").
+		Funcs(e.funcMap).
+		Parse(templateStr)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse template: %w", err)
 	}

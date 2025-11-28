@@ -159,20 +159,22 @@ func (a *Applier) ApplyResource(
 	}
 
 	// Apply ignoreFields filtering if resource already exists
-	// On initial creation, all fields (including those in ignoreFields) should be applied
+	// Instead of removing ignored fields, we COPY values from the existing resource.
+	// This ensures SSA doesn't delete fields that should be preserved.
 	if existsBeforeApply && len(ignoreFields) > 0 {
 		filter, err := fieldfilter.NewFilter(ignoreFields)
 		if err != nil {
 			return false, fmt.Errorf("failed to create field filter: %w", err)
 		}
 
-		// Remove ignored fields from desired state before applying
-		if err := filter.RemoveIgnoredFields(obj); err != nil {
-			return false, fmt.Errorf("failed to remove ignored fields: %w", err)
+		// Preserve ignored fields by copying values from existing resource
+		// This ensures SSA doesn't delete fields that are externally controlled
+		if err := filter.PreserveIgnoredFields(obj, existing); err != nil {
+			return false, fmt.Errorf("failed to preserve ignored fields: %w", err)
 		}
 
 		logger := log.FromContext(ctx)
-		logger.V(1).Info("Applied field filter before resource apply",
+		logger.V(1).Info("Preserved ignored fields from existing resource",
 			"resource", fmt.Sprintf("%s/%s", obj.GetNamespace(), obj.GetName()),
 			"kind", obj.GetKind(),
 			"ignoreFields", ignoreFields)

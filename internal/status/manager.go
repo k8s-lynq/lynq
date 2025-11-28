@@ -302,6 +302,16 @@ func (m *Manager) applyUpdate(ctx context.Context, update *StatusUpdate) error {
 			statusChanged = true
 		}
 
+		if update.SkippedResources != nil {
+			node.Status.SkippedResources = *update.SkippedResources
+			statusChanged = true
+		}
+
+		if update.SkippedResourceIds != nil {
+			node.Status.SkippedResourceIds = update.SkippedResourceIds
+			statusChanged = true
+		}
+
 		// Update conditions
 		for _, cond := range update.Conditions {
 			if m.updateCondition(&node.Status, cond) {
@@ -311,6 +321,8 @@ func (m *Manager) applyUpdate(ctx context.Context, update *StatusUpdate) error {
 
 		// Only call Update if something changed
 		if !statusChanged {
+			// Even if status didn't change, we still need to update metrics
+			// Return nil to skip the K8s API call, but continue to metrics update
 			return nil
 		}
 
@@ -318,13 +330,15 @@ func (m *Manager) applyUpdate(ctx context.Context, update *StatusUpdate) error {
 		return m.client.Status().Update(ctx, node)
 	})
 
-	if err != nil {
-		return fmt.Errorf("failed to update node status: %w", err)
-	}
-
 	// Update metrics if provided (metrics don't require retry)
+	// CRITICAL: Always update metrics regardless of status changes
+	// This ensures Prometheus always gets the latest values during scraping
 	if update.Metrics != nil {
 		m.updateMetrics(update.Key, update.Metrics)
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to update node status: %w", err)
 	}
 
 	return nil

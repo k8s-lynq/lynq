@@ -278,56 +278,22 @@ func cleanupPolicyTestNamespace() {
 	_ = utils.CleanupNamespace(policyTestNamespace)
 }
 
-// insertTestData inserts a test data row into MySQL
+// insertTestData inserts a test data row into MySQL using the adapter
 func insertTestData(uid string, active bool) {
-	activeValue := "0"
-	if active {
-		activeValue = "1"
-	}
-	insertSQL := fmt.Sprintf("INSERT INTO nodes (id, active) VALUES ('%s', %s) ON DUPLICATE KEY UPDATE active=%s;",
-		uid, activeValue, activeValue)
-	cmd := exec.Command("kubectl", "exec", "-n", policyTestNamespace, "deployment/mysql", "--",
-		"mysql", "-h", "127.0.0.1", "-uroot", "-ptest-password", "testdb", "-e", insertSQL)
-	_, err := utils.Run(cmd)
+	adapter := GetTestDatasource()
+	err := InsertTestNode(adapter, policyTestNamespace, uid, active)
 	Expect(err).NotTo(HaveOccurred())
 }
 
-// deleteTestData deletes a test data row from MySQL
+// deleteTestData deletes a test data row from MySQL using the adapter
 func deleteTestData(uid string) {
-	deleteSQL := fmt.Sprintf("DELETE FROM nodes WHERE id='%s';", uid)
-	cmd := exec.Command("kubectl", "exec", "-n", policyTestNamespace, "deployment/mysql", "--",
-		"mysql", "-h", "127.0.0.1", "-uroot", "-ptest-password", "testdb", "-e", deleteSQL)
-	_, _ = utils.Run(cmd)
+	adapter := GetTestDatasource()
+	_ = DeleteTestNode(adapter, policyTestNamespace, uid)
 }
 
-// createHub creates a LynqHub pointing to MySQL
+// createHub creates a LynqHub pointing to the configured datasource
 func createHub(name string) {
-	hubYAML := fmt.Sprintf(`
-apiVersion: operator.lynq.sh/v1
-kind: LynqHub
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  source:
-    type: mysql
-    syncInterval: 5s
-    mysql:
-      host: mysql.%s.svc.cluster.local
-      port: 3306
-      database: testdb
-      table: nodes
-      username: root
-      passwordRef:
-        name: mysql-root-password
-        key: password
-  valueMappings:
-    uid: id
-    activate: active
-`, name, policyTestNamespace, policyTestNamespace)
-	cmd := exec.Command("kubectl", "apply", "-f", "-")
-	cmd.Stdin = utils.StringReader(hubYAML)
-	_, err := utils.Run(cmd)
+	err := ApplyHub(GetTestDatasource(), name, policyTestNamespace, "5s")
 	Expect(err).NotTo(HaveOccurred())
 }
 
