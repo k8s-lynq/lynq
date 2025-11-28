@@ -68,6 +68,99 @@ entries:
       artifacthub.io/recommendations: |
         - url: https://cert-manager.io
     apiVersion: v2
+    appVersion: 1.1.14-alpha.1
+    created: "2025-11-28T14:25:42.122038082Z"
+    description: 'Lynq - Kubernetes-Native Database-Driven Automation. Automates infrastructure
+      provisioning from database to production with template-based resource generation.  IMPORTANT:
+      Requires cert-manager for ALL installations (including local development). Install
+      cert-manager before installing this chart. See chart/CERT-MANAGER.md for details. '
+    digest: d59d592c37e03ee5f372b6f74dc89e5cda8a55fb4020beff52c96dd8704d4db5
+    home: https://github.com/k8s-lynq/lynq
+    icon: https://raw.githubusercontent.com/k8s-lynq/lynq/main/docs/public/logo.png
+    keywords:
+    - kubernetes
+    - operator
+    - database-driven
+    - automation
+    - saas
+    - provisioning
+    maintainers:
+    - name: Tim Kang
+      url: https://github.com/selenehyun
+    name: lynq
+    sources:
+    - https://github.com/k8s-lynq/lynq
+    type: application
+    urls:
+    - https://github.com/k8s-lynq/lynq/releases/download/v1.1.14-alpha.1/lynq-1.1.14-alpha.1.tgz
+    version: 1.1.14-alpha.1
+  - annotations:
+      artifacthub.io/category: integration-delivery
+      artifacthub.io/changes: |
+        - kind: added
+          description: Initial Helm chart release with full operator support
+        - kind: added
+          description: Support for LynqHub, LynqForm, and LynqNode CRDs
+        - kind: added
+          description: Webhook validation and defaulting
+        - kind: added
+          description: Prometheus metrics and ServiceMonitor support
+      artifacthub.io/containsSecurityUpdates: "false"
+      artifacthub.io/crds: |
+        - kind: LynqHub
+          version: v1
+          name: lynqhubs.operator.lynq.sh
+          displayName: LynqHub
+          description: Defines external datasource configuration for node data
+        - kind: LynqForm
+          version: v1
+          name: lynqforms.operator.lynq.sh
+          displayName: LynqForm
+          description: Blueprint for Kubernetes resources to create per node
+        - kind: LynqNode
+          version: v1
+          name: lynqnodes.operator.lynq.sh
+          displayName: Lynq Node
+          description: Represents a single node instance with its resources
+      artifacthub.io/install: |
+        # Prerequisites
+
+        ## cert-manager (REQUIRED)
+
+        This chart requires cert-manager to be installed in your cluster:
+
+        ```bash
+        kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.yaml
+        ```
+
+        ## Installation
+
+        ```bash
+        helm repo add lynq-operator https://k8s-lynq.github.io/lynq
+        helm repo update
+        helm install lynq-operator k8s-lynq/lynq
+        ```
+
+        See the [installation guide](https://lynq.sh/installation.html#installation-methods) for more details.
+      artifacthub.io/license: Apache-2.0
+      artifacthub.io/links: |
+        - name: Documentation
+          url: https://lynq.sh/
+        - name: GitHub Repository
+          url: https://github.com/k8s-lynq/lynq
+        - name: Issues
+          url: https://github.com/k8s-lynq/lynq/issues
+        - name: Discussions
+          url: https://github.com/k8s-lynq/lynq/discussions
+      artifacthub.io/maintainers: |
+        - name: Tim Kang
+          email: rationlunas@gmail.com
+      artifacthub.io/operator: "true"
+      artifacthub.io/operatorCapabilities: Deep Insights
+      artifacthub.io/prerelease: "true"
+      artifacthub.io/recommendations: |
+        - url: https://cert-manager.io
+    apiVersion: v2
     appVersion: 1.1.13
     created: "2025-11-27T01:30:42.473452016Z"
     description: 'Lynq - Kubernetes-Native Database-Driven Automation. Automates infrastructure
@@ -931,4 +1024,4 @@ entries:
     urls:
     - https://github.com/k8s-lynq/lynq/releases/download/v1.1.9-alpha.1/lynq-1.1.9-alpha.1.tgz
     version: 1.1.9-alpha.1
-generated: "2025-11-27T01:30:42.473513762Z"
+generated: "2025-11-28T14:25:42.122092454Z"
