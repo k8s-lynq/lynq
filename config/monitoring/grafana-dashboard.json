@@ -355,7 +355,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "histogram_quantile(0.50, rate(lynqnode_reconcile_duration_seconds_bucket[5m]))",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(lynqnode_reconcile_duration_seconds_bucket[5m])))",
           "legendFormat": "P50",
           "refId": "A"
         },
@@ -364,7 +364,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "histogram_quantile(0.95, rate(lynqnode_reconcile_duration_seconds_bucket[5m]))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(lynqnode_reconcile_duration_seconds_bucket[5m])))",
           "legendFormat": "P95",
           "refId": "B"
         },
@@ -373,7 +373,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "histogram_quantile(0.99, rate(lynqnode_reconcile_duration_seconds_bucket[5m]))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(lynqnode_reconcile_duration_seconds_bucket[5m])))",
           "legendFormat": "P99",
           "refId": "C"
         }
@@ -463,7 +463,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "rate(lynqnode_reconcile_duration_seconds_count{result=\"success\"}[5m])",
+          "expr": "sum(rate(lynqnode_reconcile_duration_seconds_count{result=\"success\"}[5m]))",
           "legendFormat": "Success",
           "refId": "A"
         },
@@ -472,7 +472,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "rate(lynqnode_reconcile_duration_seconds_count{result=\"error\"}[5m])",
+          "expr": "sum(rate(lynqnode_reconcile_duration_seconds_count{result=\"error\"}[5m]))",
           "legendFormat": "Error",
           "refId": "B"
         }
@@ -539,7 +539,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "(rate(lynqnode_reconcile_duration_seconds_count{result=\"error\"}[5m]) / rate(lynqnode_reconcile_duration_seconds_count[5m])) or vector(0)",
+          "expr": "(sum(rate(lynqnode_reconcile_duration_seconds_count{result=\"error\"}[5m])) / sum(rate(lynqnode_reconcile_duration_seconds_count[5m]))) or vector(0)",
           "refId": "A"
         }
       ],
@@ -640,7 +640,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "lynqnode_condition_status{type=\"Ready\"}",
+          "expr": "max by (lynqnode, namespace) (lynqnode_condition_status{type=\"Ready\"})",
           "format": "table",
           "instant": true,
           "legendFormat": "",
@@ -852,23 +852,27 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 6,
         "w": 12,
         "x": 0,
         "y": 18
       },
       "id": 10,
       "options": {
-        "legend": {
-          "calcs": ["mean", "lastNotNull", "max"],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": ["sum"],
+          "show": true
         },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": false,
+            "displayName": "LynqNode"
+          }
+        ]
       },
       "pluginVersion": "11.0.0",
       "targets": [
@@ -877,31 +881,69 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "lynqnode_resources_desired",
-          "legendFormat": "{{lynqnode}} - Desired",
-          "refId": "A"
+          "expr": "sum by (lynqnode) (lynqnode_resources_desired)",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "__auto",
+          "refId": "desired"
         },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "lynqnode_resources_ready",
-          "legendFormat": "{{lynqnode}} - Ready",
-          "refId": "B"
+          "expr": "sum by (lynqnode) (lynqnode_resources_ready)",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "__auto",
+          "refId": "ready"
         },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "lynqnode_resources_failed",
-          "legendFormat": "{{lynqnode}} - Failed",
-          "refId": "C"
+          "expr": "sum by (lynqnode) (lynqnode_resources_failed)",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "__auto",
+          "refId": "failed"
         }
       ],
       "title": "Resource Counts by Node",
-      "type": "timeseries"
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "lynqnode",
+            "mode": "outer"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Time 1": true,
+              "Time 2": true,
+              "Time 3": true
+            },
+            "indexByName": {
+              "lynqnode": 0,
+              "Value #desired": 1,
+              "Value #ready": 2,
+              "Value #failed": 3
+            },
+            "renameByName": {
+              "lynqnode": "LynqNode",
+              "Value #desired": "Desired",
+              "Value #ready": "Ready",
+              "Value #failed": "Failed"
+            }
+          }
+        }
+      ],
+      "type": "table"
     },
     {
       "datasource": {
@@ -960,22 +1002,22 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 6,
         "w": 12,
-        "x": 12,
-        "y": 18
+        "x": 0,
+        "y": 24
       },
-      "id": 11,
+      "id": 16,
       "options": {
         "legend": {
-          "calcs": ["mean", "lastNotNull"],
-          "displayMode": "table",
+          "calcs": [],
+          "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
-          "sort": "none"
+          "sort": "desc"
         }
       },
       "pluginVersion": "11.0.0",
@@ -985,12 +1027,224 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "lynqnode_resources_conflicted",
-          "legendFormat": "{{lynqnode}} ({{namespace}})",
+          "expr": "sum(lynqnode_resources_ready)",
+          "legendFormat": "Ready",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(lynqnode_resources_failed)",
+          "legendFormat": "Failed",
+          "refId": "B"
+        }
+      ],
+      "title": "Resource Counts (Total)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Conflicted"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 18
+      },
+      "id": 11,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": ["sum"],
+          "show": true
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Conflicted"
+          }
+        ]
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (lynqnode, namespace) (lynqnode_resources_conflicted) > 0",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "__auto",
           "refId": "A"
         }
       ],
       "title": "Conflicted Resources by Node",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "indexByName": {
+              "lynqnode": 0,
+              "namespace": 1,
+              "Value": 2
+            },
+            "renameByName": {
+              "lynqnode": "LynqNode",
+              "namespace": "Namespace",
+              "Value": "Conflicted"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "id": 17,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(lynqnode_resources_conflicted)",
+          "legendFormat": "Total Conflicted",
+          "refId": "A"
+        }
+      ],
+      "title": "Conflicted Resources (Total)",
       "type": "timeseries"
     },
     {
@@ -1078,10 +1332,10 @@
         ]
       },
       "gridPos": {
-        "h": 8,
+        "h": 6,
         "w": 24,
         "x": 0,
-        "y": 26
+        "y": 30
       },
       "id": 12,
       "options": {
@@ -1101,7 +1355,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "hub_ready / hub_desired",
+          "expr": "sum by (hub, namespace) (hub_ready) / sum by (hub, namespace) (hub_desired)",
           "format": "table",
           "instant": true,
           "legendFormat": "{{hub}}",
@@ -1195,7 +1449,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 34
+        "y": 36
       },
       "id": 13,
       "options": {
@@ -1217,7 +1471,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "rate(apply_attempts_total{result=\"success\"}[5m])",
+          "expr": "sum by (kind) (rate(apply_attempts_total{result=\"success\"}[5m]))",
           "legendFormat": "{{kind}} - Success",
           "refId": "A"
         },
@@ -1226,7 +1480,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "rate(apply_attempts_total{result=\"error\"}[5m])",
+          "expr": "sum by (kind) (rate(apply_attempts_total{result=\"error\"}[5m]))",
           "legendFormat": "{{kind}} - Error",
           "refId": "B"
         }
@@ -1294,7 +1548,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 34
+        "y": 36
       },
       "id": 14,
       "options": {
@@ -1316,7 +1570,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "rate(lynqnode_conflicts_total[5m])",
+          "expr": "sum by (lynqnode, resource_kind, conflict_policy) (rate(lynqnode_conflicts_total[5m]))",
           "legendFormat": "{{lynqnode}} - {{resource_kind}} ({{conflict_policy}})",
           "refId": "A"
         }
@@ -1384,7 +1638,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 42
+        "y": 44
       },
       "id": 15,
       "options": {
@@ -1406,7 +1660,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "workqueue_depth{name=\"lynqnode\"}",
+          "expr": "sum(workqueue_depth{name=\"lynqnode\"})",
           "legendFormat": "LynqNode Queue",
           "refId": "A"
         },
@@ -1415,7 +1669,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "workqueue_depth{name=\"lynqhub\"}",
+          "expr": "sum(workqueue_depth{name=\"lynqhub\"})",
           "legendFormat": "Hub Queue",
           "refId": "B"
         },
@@ -1424,7 +1678,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "workqueue_depth{name=\"lynqform\"}",
+          "expr": "sum(workqueue_depth{name=\"lynqform\"})",
           "legendFormat": "Template Queue",
           "refId": "C"
         }
