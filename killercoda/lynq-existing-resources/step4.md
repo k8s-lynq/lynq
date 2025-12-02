@@ -1,4 +1,3 @@
-````markdown
 # Step 4: Deploy Lynq Operator
 
 Now let's deploy the Lynq operator that will manage our existing resources.
@@ -78,5 +77,3 @@ Should show: `postgres://old-db:5432/alpha`
 - Ready to adopt resources with Lynq
 
 Click **Continue** to create the LynqHub.
-
-````

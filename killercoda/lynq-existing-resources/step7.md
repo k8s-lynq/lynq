@@ -1,4 +1,3 @@
-````markdown
 # Step 7: Test Database-Driven Updates
 
 Now let's see the real power of Lynq - **automatic synchronization** when database values change!
@@ -161,5 +160,3 @@ kubectl get configmaps -n lynq-demo -l managed-by=lynq
 - Drift correction (manual change protection)
 
 Click **Continue** to see what you've learned!
-
-````

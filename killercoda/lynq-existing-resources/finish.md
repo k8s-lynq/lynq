@@ -1,4 +1,3 @@
-````markdown
 # 🎉 Congratulations!
 
 You've successfully completed the Lynq "Adopt Existing Resources" tutorial!
@@ -114,5 +113,3 @@ The `Force` policy enables Lynq to:
 **Thank you for trying Lynq!** 🙏
 
 Make your database the single source of truth for Kubernetes resources.
-
-````

@@ -1,4 +1,3 @@
-````markdown
 # Lynq: Adopting Existing Kubernetes Resources
 
 Welcome to the Lynq Operator advanced tutorial! 🚀
@@ -76,5 +75,3 @@ In this hands-on scenario, you will:
 The `Force` policy enables Lynq to **adopt and manage existing resources** without deleting and recreating them!
 
 Let's get started! Click **Start** to begin.
-
-````

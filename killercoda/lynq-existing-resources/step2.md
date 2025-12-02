@@ -1,4 +1,3 @@
-````markdown
 # Step 2: Create Existing Resources
 
 Let's simulate a common scenario: you already have ConfigMaps deployed that contain application configuration. These were created manually or by another automation tool.
@@ -101,5 +100,3 @@ Imagine you need to update `DATABASE_URL` for all apps to point to a new databas
 - `app-gamma-config`
 
 Click **Continue** to set up the MySQL database as the central configuration store.
-
-````

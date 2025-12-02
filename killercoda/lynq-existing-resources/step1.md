@@ -1,4 +1,3 @@
-````markdown
 # Step 1: Install Prerequisites
 
 First, let's verify our Kubernetes cluster and install **cert-manager**, which is required for Lynq's webhook certificates.
@@ -50,5 +49,3 @@ kubectl create namespace lynq-demo
 - `lynq-demo` namespace created
 
 Click **Continue** to create the existing resources that we'll adopt with Lynq.
-
-````

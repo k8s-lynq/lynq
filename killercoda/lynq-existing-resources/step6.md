@@ -1,4 +1,3 @@
-````markdown
 # Step 6: Create LynqForm with Force Policy
 
 This is the key step! We'll create a **LynqForm** that uses `conflictPolicy: Force` to adopt existing ConfigMaps.
@@ -130,5 +129,3 @@ kubectl get configmap app-alpha-config -n lynq-demo -o jsonpath='{.metadata.owne
 - Values updated from database
 
 Click **Continue** to test database-driven updates!
-
-````

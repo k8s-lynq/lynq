@@ -1,4 +1,3 @@
-````markdown
 # Step 3: Setup MySQL Database
 
 Now let's deploy a MySQL database that will become the **single source of truth** for our application configurations.
@@ -147,5 +146,3 @@ The database contains the **desired state**. Lynq will sync these values to the 
 ✅ **Checkpoint**: MySQL is running with configuration data that will be synced to existing ConfigMaps.
 
 Click **Continue** to install the Lynq operator.
-
-````

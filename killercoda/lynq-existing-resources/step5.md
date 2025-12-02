@@ -1,4 +1,3 @@
-````markdown
 # Step 5: Create LynqHub
 
 Now let's create a **LynqHub** that connects to our MySQL database and syncs the configuration data.
@@ -82,5 +81,3 @@ These variables will be used in our LynqForm template!
 > **Note**: No LynqNodes are created yet because we haven't defined a template (LynqForm).
 
 Click **Continue** to create the LynqForm with the Force policy.
-
-````
