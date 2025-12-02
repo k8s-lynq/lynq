@@ -6,8 +6,19 @@ on:
 
 jobs:
   test-e2e:
-    name: Run on Ubuntu
+    name: Run on K8s ${{ matrix.k8s-version }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        k8s-version:
+          - "1.28"
+          - "1.29"
+          - "1.30"
+          - "1.31"
+          - "1.32"
+          - "1.33"
+          - "1.34"
     steps:
       - name: Clone the code
         uses: actions/checkout@v4
@@ -25,6 +36,19 @@ jobs:
 
       - name: Verify kind installation
         run: kind version
+
+      - name: Create kind cluster with K8s ${{ matrix.k8s-version }}
+        run: |
+          cat <<EOF | kind create cluster --config=-
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          nodes:
+          - role: control-plane
+            image: kindest/node:v${{ matrix.k8s-version }}.0
+          EOF
+
+      - name: Verify cluster info
+        run: kubectl cluster-info
 
       - name: Running Test e2e
         run: |
