@@ -18,6 +18,30 @@ A hands-on tutorial that walks users through:
 **Duration**: ~10 minutes
 **Environment**: Kubernetes (kubeadm 1-node)
 
+---
+
+### [lynq-existing-resources](./lynq-existing-resources/)
+
+**Adopt Existing Resources with Database Sync**
+
+An advanced tutorial demonstrating how to use Lynq to take over management of existing Kubernetes resources:
+1. Creating existing ConfigMaps (simulating pre-existing infrastructure)
+2. Setting up a MySQL database as the central configuration store
+3. Installing Lynq Operator
+4. Using `conflictPolicy: Force` to adopt existing resources
+5. Testing automatic synchronization when database values change
+6. Verifying drift correction when resources are manually modified
+
+**Key Concept**: The `Force` conflict policy enables Lynq to adopt existing resources using Server-Side Apply (SSA), making the database the single source of truth without disrupting running workloads.
+
+**Use Cases**:
+- Migrating from manual kubectl management to database-driven automation
+- Centralizing configuration management across multiple apps
+- Implementing configuration drift protection
+
+**Duration**: ~15 minutes
+**Environment**: Kubernetes (kubeadm 1-node)
+
 ## Publishing to Killercoda
 
 ### Prerequisites

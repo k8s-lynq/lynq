@@ -1,0 +1,48 @@
+{
+  "title": "Lynq: Adopt Existing Resources",
+  "description": "Sync existing Kubernetes resources with database using Lynq's Force policy",
+  "details": {
+    "intro": {
+      "text": "intro.md"
+    },
+    "steps": [
+      {
+        "title": "Install Prerequisites",
+        "text": "step1.md"
+      },
+      {
+        "title": "Create Existing Resources",
+        "text": "step2.md"
+      },
+      {
+        "title": "Setup MySQL Database",
+        "text": "step3.md"
+      },
+      {
+        "title": "Deploy Lynq Operator",
+        "text": "step4.md"
+      },
+      {
+        "title": "Create LynqHub",
+        "text": "step5.md"
+      },
+      {
+        "title": "Create LynqForm with Force Policy",
+        "text": "step6.md"
+      },
+      {
+        "title": "Test Database-Driven Updates",
+        "text": "step7.md"
+      }
+    ],
+    "finish": {
+      "text": "finish.md"
+    }
+  },
+  "backend": {
+    "imageid": "kubernetes-kubeadm-1node"
+  },
+  "interface": {
+    "layout": "terminal-iframe"
+  }
+}
