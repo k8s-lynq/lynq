@@ -674,6 +674,97 @@ pkg/datasource/       # External datasource integrations
 - Integration tests: Controller reconciliation against real API server
 - E2E tests: Full workflow with MySQL datasource
 
+#### E2E Test Execution Guidelines
+
+**IMPORTANT**: Always prefer focused test execution over running the full test suite to maximize development efficiency.
+
+**Running Focused Tests (RECOMMENDED)**:
+```bash
+# Run specific test by description (substring match)
+make test-e2e-focus FOCUS="should convert string values to proper integer types"
+
+# Run tests matching a pattern
+make test-e2e-focus FOCUS="Template Functions"
+
+# Run multiple related tests
+make test-e2e-focus FOCUS="metrics update"
+```
+
+**Running Full Test Suite (USE SPARINGLY)**:
+```bash
+# Only run when necessary (e.g., pre-commit, CI validation)
+# Takes 30-45 minutes to complete
+make test-e2e
+```
+
+**Critical Rules**:
+1. **Always use 60-minute timeout minimum**: E2E tests build Docker images, create Kind clusters, install cert-manager, and deploy the operator. This takes significant time.
+   ```bash
+   # Correct timeout setting in Bash tool
+   timeout: 3600000  # 60 minutes in milliseconds
+   ```
+
+2. **NEVER use `grep` or `tail` to filter test output**: These commands buffer output and hide real-time progress, making it impossible to debug hanging tests. Always view full output or use Ginkgo's built-in filtering.
+   ```bash
+   # ❌ WRONG - hides progress and makes debugging impossible
+   make test-e2e-focus FOCUS="..." 2>&1 | tail -100
+
+   # ✅ CORRECT - shows full output with real-time progress
+   make test-e2e-focus FOCUS="..."
+   ```
+
+3. **Clean up failed clusters**: If tests fail due to cluster issues (network timeouts, resource conflicts, cert-manager problems):
+   ```bash
+   # Delete the test cluster and retry
+   kind delete cluster --name lynq-test-e2e
+
+   # Then re-run your test
+   make test-e2e-focus FOCUS="your test description"
+   ```
+
+4. **Understanding FOCUS parameter**:
+   - Uses Ginkgo's focus filter (substring match on test descriptions)
+   - Case-sensitive
+   - Matches against the full test hierarchy: `Describe > Context > It`
+   - Examples:
+     - `FOCUS="Template Functions"` - runs all tests in "Template Functions" describe block
+     - `FOCUS="should convert string"` - runs specific test containing this phrase
+     - `FOCUS="Typed template functions"` - runs tests in that context
+
+5. **Test debugging workflow**:
+   ```bash
+   # Step 1: Run the specific failing test
+   make test-e2e-focus FOCUS="exact test description from failure"
+
+   # Step 2: If cluster issues occur, clean up
+   kind delete cluster --name lynq-test-e2e
+
+   # Step 3: Re-run after cleanup
+   make test-e2e-focus FOCUS="exact test description from failure"
+
+   # Step 4: Check controller logs if test still fails
+   kubectl logs -n lynq-system deployment/lynq-controller-manager --tail=100
+
+   # Step 5: Inspect test resources
+   kubectl get lynqnodes,lynqforms,lynqhubs -A
+   kubectl describe lynqnode <node-name> -n <namespace>
+   ```
+
+6. **Performance expectations**:
+   - Full test suite (`make test-e2e`): 30-45 minutes
+   - Single focused test: 3-5 minutes (includes cluster setup)
+   - Subsequent focused tests (cluster exists): 1-2 minutes
+
+**Common Test Failures and Solutions**:
+
+| Issue | Solution |
+|-------|----------|
+| "Kind cluster already exists" | Tests will reuse existing cluster (faster) |
+| "cert-manager webhook timeout" | Cluster networking issue - run `kind delete cluster --name lynq-test-e2e` |
+| "deployment not found" | Controller panic or rendering error - check logs |
+| "timed out waiting for deployment" | Deployment may be scaled to 0 or image pull failed |
+| "panic: cannot deep copy int" | Type conversion issue in templates - ensure int values are converted to int64 |
+
 ### Important Invariants
 
 1. `LynqHub.status.desired` MUST equal active row count

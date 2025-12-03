@@ -560,6 +560,138 @@ func TestRenderUnstructured_NoTemplates(t *testing.T) {
 	}
 }
 
+// TestRenderUnstructured_TypedFunctions tests type conversion using int, float, bool template functions
+func TestRenderUnstructured_TypedFunctions(t *testing.T) {
+	scheme := runtime.NewScheme()
+	r := &LynqNodeReconciler{
+		Client: fake.NewClientBuilder().WithScheme(scheme).Build(),
+		Scheme: scheme,
+	}
+	ctx := context.Background()
+	engine := template.NewEngine()
+
+	tests := []struct {
+		name       string
+		data       map[string]interface{}
+		vars       template.Variables
+		wantType   string // expected type of the result field
+		wantValue  interface{}
+		checkField string
+	}{
+		{
+			name: "int function converts string to integer",
+			data: map[string]interface{}{
+				"replicas": "{{ .replicas | int }}",
+			},
+			vars:       template.Variables{"replicas": "3"},
+			checkField: "replicas",
+			wantType:   "int",
+			wantValue:  3,
+		},
+		{
+			name: "int function in nested structure",
+			data: map[string]interface{}{
+				"spec": map[string]interface{}{
+					"replicas": "{{ .replicas | int }}",
+				},
+			},
+			vars:       template.Variables{"replicas": "5"},
+			checkField: "spec.replicas",
+			wantType:   "int",
+			wantValue:  5,
+		},
+		{
+			name: "int function in array",
+			data: map[string]interface{}{
+				"ports": []interface{}{"{{ .port | int }}"},
+			},
+			vars:       template.Variables{"port": "8080"},
+			checkField: "ports[0]",
+			wantType:   "int",
+			wantValue:  8080,
+		},
+		{
+			name: "float function converts string to float64",
+			data: map[string]interface{}{
+				"cpuLimit": "{{ .cpu | float }}",
+			},
+			vars:       template.Variables{"cpu": "1.5"},
+			checkField: "cpuLimit",
+			wantType:   "float64",
+			wantValue:  1.5,
+		},
+		{
+			name: "bool function converts string to boolean",
+			data: map[string]interface{}{
+				"enabled": "{{ .flag | bool }}",
+			},
+			vars:       template.Variables{"flag": "true"},
+			checkField: "enabled",
+			wantType:   "bool",
+			wantValue:  true,
+		},
+		{
+			name: "bool function handles database style '1'",
+			data: map[string]interface{}{
+				"active": "{{ .isActive | bool }}",
+			},
+			vars:       template.Variables{"isActive": "1"},
+			checkField: "active",
+			wantType:   "bool",
+			wantValue:  true,
+		},
+		{
+			name: "regular string remains string",
+			data: map[string]interface{}{
+				"name": "{{ .name }}",
+			},
+			vars:       template.Variables{"name": "my-service"},
+			checkField: "name",
+			wantType:   "string",
+			wantValue:  "my-service",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := r.renderUnstructured(ctx, tt.data, engine, tt.vars)
+			require.NoError(t, err)
+
+			// Extract value based on checkField path
+			var value interface{}
+			switch tt.checkField {
+			case "replicas", "cpuLimit", "enabled", "active", "name":
+				value = got[tt.checkField]
+			case "spec.replicas":
+				spec := got["spec"].(map[string]interface{})
+				value = spec["replicas"]
+			case "ports[0]":
+				ports := got["ports"].([]interface{})
+				value = ports[0]
+			}
+
+			// Check type
+			switch tt.wantType {
+			case "int":
+				_, ok := value.(int)
+				assert.True(t, ok, "expected int, got %T", value)
+			case "float64":
+				_, ok := value.(float64)
+				assert.True(t, ok, "expected float64, got %T", value)
+			case "bool":
+				_, ok := value.(bool)
+				assert.True(t, ok, "expected bool, got %T", value)
+			case "string":
+				_, ok := value.(string)
+				assert.True(t, ok, "expected string, got %T", value)
+			}
+
+			// Check value
+			assert.Equal(t, tt.wantValue, value)
+		})
+	}
+}
+
 // TestCheckOnceCreated tests "created-once" annotation check
 func TestCheckOnceCreated(t *testing.T) {
 	tests := []struct {

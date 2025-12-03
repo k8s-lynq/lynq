@@ -787,6 +787,8 @@ func (r *LynqNodeReconciler) renderResource(ctx context.Context, engine *templat
 
 // renderUnstructured recursively renders template variables in unstructured data
 // Returns an error if any template rendering fails (e.g., missing variable references)
+// This function also parses type markers (from int, float, bool template functions)
+// to restore proper Go types for Kubernetes API compatibility
 //
 //nolint:unparam // ctx is passed through for recursive calls
 func (r *LynqNodeReconciler) renderUnstructured(ctx context.Context, data map[string]interface{}, engine *template.Engine, vars template.Variables) (map[string]interface{}, error) {
@@ -801,7 +803,21 @@ func (r *LynqNodeReconciler) renderUnstructured(ctx context.Context, data map[st
 				// Return error to mark resource as failed (e.g., missing variable reference)
 				return nil, fmt.Errorf("template rendering failed for field %q: %w", k, err)
 			}
-			result[k] = rendered
+			// Parse type markers to restore proper Go types (int, float, bool)
+			// This enables templates like {{ .port | int }} to produce actual integers
+			// Note: Convert to JSON-compatible types (int64, float64) to avoid deep copy panics
+			parsed := template.ParseTypedValue(rendered)
+			switch v := parsed.(type) {
+			case int:
+				// Convert int to int64 (JSON-compatible integer type)
+				result[k] = int64(v)
+			case float64, bool, string:
+				// These are already JSON-compatible
+				result[k] = v
+			default:
+				// Fallback to original rendered string
+				result[k] = rendered
+			}
 		case map[string]interface{}:
 			// Recurse into nested maps
 			rendered, err := r.renderUnstructured(ctx, val, engine, vars)
@@ -824,7 +840,17 @@ func (r *LynqNodeReconciler) renderUnstructured(ctx context.Context, data map[st
 					if err != nil {
 						return nil, fmt.Errorf("template rendering failed for array string %q[%d]: %w", k, i, err)
 					}
-					renderedArray[i] = rendered
+					// Parse type markers for array string items as well
+					// Convert to JSON-compatible types
+					parsed := template.ParseTypedValue(rendered)
+					switch v := parsed.(type) {
+					case int:
+						renderedArray[i] = int64(v)
+					case float64, bool, string:
+						renderedArray[i] = v
+					default:
+						renderedArray[i] = rendered
+					}
 				} else {
 					renderedArray[i] = item
 				}
@@ -1514,14 +1540,27 @@ func (r *LynqNodeReconciler) determineReconcileType(node *lynqv1.LynqNode) Recon
 		}
 	}
 
-	// 4. Check if this was triggered by owned resource status change
-	// We can infer this by checking if the node's generation matches status.observedGeneration
-	if node.Generation == node.Status.ObservedGeneration {
-		// Generation hasn't changed, likely triggered by child resource status change
-		return ReconcileTypeStatus
-	}
+	// 4. Always perform full reconcile to ensure correctness
+	//
+	// IMPORTANT: Template variables are stored in annotations (lynq.sh/extra, lynq.sh/hostOrUrl, etc.)
+	// and are used to render resource specs. When LynqHub controller updates these annotations due to
+	// database changes, the LynqNode's generation does NOT change (because spec content is identical -
+	// templates like "{{ .maxConnections }}" remain the same).
+	//
+	// This causes a critical issue: annotation changes don't trigger full reconcile, so updated
+	// template variables are not applied to resources, breaking database-driven synchronization.
+	//
+	// SOLUTION: Always perform full reconcile (ReconcileTypeSpec) to ensure template variable changes
+	// are properly applied. The generation == observedGeneration check is insufficient because it
+	// cannot detect annotation-only changes.
+	//
+	// Status-only reconcile (ReconcileTypeStatus) is disabled until we implement proper annotation
+	// change tracking (e.g., observedTemplateVariablesHash in status).
+	//
+	// Performance impact: Minimal, as reconciles are already lightweight with SSA and change detection.
+	// Correctness impact: Critical - this fix enables database-driven configuration updates.
 
-	// 5. Default to full reconcile for spec changes
+	// 5. Always do full reconcile to handle both spec AND annotation changes
 	return ReconcileTypeSpec
 }
 

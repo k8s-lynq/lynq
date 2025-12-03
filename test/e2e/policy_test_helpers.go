@@ -168,7 +168,9 @@ spec:
 	schemaSQL := `
 CREATE TABLE IF NOT EXISTS nodes (
   id VARCHAR(255) PRIMARY KEY,
-  active BOOLEAN NOT NULL DEFAULT TRUE
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  replicas VARCHAR(255),
+  app_port VARCHAR(255)
 );
 `
 	schemaStartTime := time.Now()
