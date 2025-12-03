@@ -585,8 +585,8 @@ func TestRenderUnstructured_TypedFunctions(t *testing.T) {
 			},
 			vars:       template.Variables{"replicas": "3"},
 			checkField: "replicas",
-			wantType:   "int",
-			wantValue:  3,
+			wantType:   "int64",
+			wantValue:  int64(3),
 		},
 		{
 			name: "int function in nested structure",
@@ -597,8 +597,8 @@ func TestRenderUnstructured_TypedFunctions(t *testing.T) {
 			},
 			vars:       template.Variables{"replicas": "5"},
 			checkField: "spec.replicas",
-			wantType:   "int",
-			wantValue:  5,
+			wantType:   "int64",
+			wantValue:  int64(5),
 		},
 		{
 			name: "int function in array",
@@ -607,8 +607,8 @@ func TestRenderUnstructured_TypedFunctions(t *testing.T) {
 			},
 			vars:       template.Variables{"port": "8080"},
 			checkField: "ports[0]",
-			wantType:   "int",
-			wantValue:  8080,
+			wantType:   "int64",
+			wantValue:  int64(8080),
 		},
 		{
 			name: "float function converts string to float64",
@@ -672,9 +672,9 @@ func TestRenderUnstructured_TypedFunctions(t *testing.T) {
 
 			// Check type
 			switch tt.wantType {
-			case "int":
-				_, ok := value.(int)
-				assert.True(t, ok, "expected int, got %T", value)
+			case "int64":
+				_, ok := value.(int64)
+				assert.True(t, ok, "expected int64, got %T", value)
 			case "float64":
 				_, ok := value.(float64)
 				assert.True(t, ok, "expected float64, got %T", value)

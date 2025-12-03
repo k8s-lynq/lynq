@@ -57,7 +57,7 @@ func TestDetermineReconcileType(t *testing.T) {
 			expectedReason: "generation (2) != observedGeneration (1)",
 		},
 		{
-			name: "should return Status type when generation equals observedGeneration and healthy",
+			name: "should return Spec type when generation equals observedGeneration for annotation change detection",
 			node: &lynqv1.LynqNode{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:       "test-node",
@@ -71,8 +71,8 @@ func TestDetermineReconcileType(t *testing.T) {
 					Conditions:         []metav1.Condition{},
 				},
 			},
-			expectedType:   ReconcileTypeStatus,
-			expectedReason: "generation matches and no degraded/failed state",
+			expectedType:   ReconcileTypeSpec,
+			expectedReason: "always full reconcile to detect annotation changes (template variable updates)",
 		},
 		{
 			name: "should return Spec type when Degraded condition is True (for recovery)",
@@ -150,7 +150,7 @@ func TestDetermineReconcileType(t *testing.T) {
 			expectedReason: "deletion timestamp set triggers cleanup",
 		},
 		{
-			name: "should return Status type when Degraded condition is False",
+			name: "should return Spec type even when Degraded condition is False for annotation change detection",
 			node: &lynqv1.LynqNode{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:       "test-node",
@@ -170,8 +170,8 @@ func TestDetermineReconcileType(t *testing.T) {
 					},
 				},
 			},
-			expectedType:   ReconcileTypeStatus,
-			expectedReason: "Degraded=False should use status path",
+			expectedType:   ReconcileTypeSpec,
+			expectedReason: "always full reconcile to detect annotation changes (template variable updates)",
 		},
 		{
 			name: "should return Spec type when both Degraded and failedResources indicate problems",
@@ -228,14 +228,16 @@ func TestDetermineReconcileType(t *testing.T) {
 	}
 }
 
-// TestDetermineReconcileType_PreventUnnecessaryFullReconcile verifies that
-// the optimization prevents unnecessary full reconciles when no state change occurred.
-// This is the key regression test for the log/event noise fix.
-func TestDetermineReconcileType_PreventUnnecessaryFullReconcile(t *testing.T) {
+// TestDetermineReconcileType_AlwaysFullReconcileForAnnotationChanges verifies that
+// determineReconcileType always returns Spec type to ensure annotation changes
+// (template variable updates from database) are properly applied.
+// This is critical for database-driven configuration synchronization.
+func TestDetermineReconcileType_AlwaysFullReconcileForAnnotationChanges(t *testing.T) {
 	r := &LynqNodeReconciler{}
 
 	// Simulate a node that has been successfully reconciled
-	// and is now receiving a reconcile trigger from child resource status change
+	// Even though spec hasn't changed, annotations may have changed
+	// (e.g., lynq.sh/extra updated by LynqHub controller due to DB changes)
 	stableNode := &lynqv1.LynqNode{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       "stable-node",
@@ -244,7 +246,7 @@ func TestDetermineReconcileType_PreventUnnecessaryFullReconcile(t *testing.T) {
 			Finalizers: []string{LynqNodeFinalizer},
 		},
 		Status: lynqv1.LynqNodeStatus{
-			ObservedGeneration: 5, // Matches generation - fully reconciled
+			ObservedGeneration: 5, // Matches generation - but annotations may have changed
 			FailedResources:    0,
 			ReadyResources:     3,
 			DesiredResources:   3,
@@ -257,13 +259,12 @@ func TestDetermineReconcileType_PreventUnnecessaryFullReconcile(t *testing.T) {
 		},
 	}
 
-	// This should return Status type, NOT Spec type
-	// Before the fix, this would incorrectly return Spec type due to
-	// ObservedGeneration not being updated
+	// This should return Spec type to ensure annotation changes are applied
+	// Template variables are stored in annotations and don't change generation
 	result := r.determineReconcileType(stableNode)
 
-	assert.Equal(t, ReconcileTypeStatus, result,
-		"Stable node with matching generation should use Status path to prevent log noise")
+	assert.Equal(t, ReconcileTypeSpec, result,
+		"Always full reconcile to detect annotation changes (template variable updates from database)")
 }
 
 // TestDetermineReconcileType_ConflictRecovery verifies that nodes in

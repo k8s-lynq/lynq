@@ -27,6 +27,22 @@ import (
 	"github.com/k8s-lynq/lynq/test/utils"
 )
 
+// verifyConfigMapValue checks that a ConfigMap has been created and verifies a specific data value.
+// Returns the actual value found for the given key.
+func verifyConfigMapValue(configMapName, namespace, dataKey, expectedValue string) {
+	Eventually(func(g Gomega) {
+		cmd := exec.Command("kubectl", "get", "configmap", configMapName, "-n", namespace)
+		_, err := utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred())
+	}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+	cmd := exec.Command("kubectl", "get", "configmap", configMapName, "-n", namespace,
+		"-o", fmt.Sprintf("jsonpath={.data.%s}", dataKey))
+	output, err := utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(output).To(Equal(expectedValue))
+}
+
 var _ = Describe("Template Functions", Ordered, func() {
 	BeforeAll(func() {
 		By("setting up policy test namespace")
@@ -228,39 +244,10 @@ spec:
 				configMapName := fmt.Sprintf("%s-sprig", uid)
 
 				By("Then ConfigMap should contain correctly transformed values")
-				Eventually(func(g Gomega) {
-					cmd := exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace)
-					_, err := utils.Run(cmd)
-					g.Expect(err).NotTo(HaveOccurred())
-				}, policyTestTimeout, policyTestInterval).Should(Succeed())
-
-				// Check upper
-				cmd := exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
-					"-o", "jsonpath={.data.upper-uid}")
-				output, err := utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(output).To(Equal("FUNC-TEST-UID"))
-
-				// Check lower
-				cmd = exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
-					"-o", "jsonpath={.data.lower-uid}")
-				output, err = utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(output).To(Equal("func-test-uid"))
-
-				// Check default with empty string (tests default function behavior with empty values)
-				cmd = exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
-					"-o", "jsonpath={.data.default-val}")
-				output, err = utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(output).To(Equal("fallback"))
-
-				// Check trimmed
-				cmd = exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
-					"-o", "jsonpath={.data.trimmed}")
-				output, err = utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(output).To(Equal("spaces"))
+				verifyConfigMapValue(configMapName, policyTestNamespace, "upper-uid", "FUNC-TEST-UID")
+				verifyConfigMapValue(configMapName, policyTestNamespace, "lower-uid", "func-test-uid")
+				verifyConfigMapValue(configMapName, policyTestNamespace, "default-val", "fallback")
+				verifyConfigMapValue(configMapName, policyTestNamespace, "trimmed", "spaces")
 			})
 		})
 
@@ -540,36 +527,10 @@ spec:
 				configMapName := fmt.Sprintf("%s-bool-test", uid)
 
 				By("Then ConfigMap should be created with boolean values")
-				Eventually(func(g Gomega) {
-					cmd := exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace)
-					_, err := utils.Run(cmd)
-					g.Expect(err).NotTo(HaveOccurred())
-				}, policyTestTimeout, policyTestInterval).Should(Succeed())
-
-				// Check bool conversions (in ConfigMap data, booleans are stored as strings)
-				cmd := exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
-					"-o", "jsonpath={.data.true-from-string}")
-				output, err := utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(output).To(Equal("true"))
-
-				cmd = exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
-					"-o", "jsonpath={.data.false-from-string}")
-				output, err = utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(output).To(Equal("false"))
-
-				cmd = exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
-					"-o", "jsonpath={.data.true-from-one}")
-				output, err = utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(output).To(Equal("true"))
-
-				cmd = exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
-					"-o", "jsonpath={.data.true-from-yes}")
-				output, err = utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(output).To(Equal("true"))
+				verifyConfigMapValue(configMapName, policyTestNamespace, "true-from-string", "true")
+				verifyConfigMapValue(configMapName, policyTestNamespace, "false-from-string", "false")
+				verifyConfigMapValue(configMapName, policyTestNamespace, "true-from-one", "true")
+				verifyConfigMapValue(configMapName, policyTestNamespace, "true-from-yes", "true")
 			})
 
 			It("should convert string values to float types", func() {
