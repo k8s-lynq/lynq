@@ -553,7 +553,7 @@ func TestRenderUnstructured_NoTemplates(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := r.renderUnstructured(ctx, tt.data, engine, vars)
+			got, err := r.renderUnstructured(ctx, tt.data, engine, vars, "Deployment", nil)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
@@ -571,22 +571,24 @@ func TestRenderUnstructured_TypedFunctions(t *testing.T) {
 	engine := template.NewEngine()
 
 	tests := []struct {
-		name       string
-		data       map[string]interface{}
-		vars       template.Variables
-		wantType   string // expected type of the result field
-		wantValue  interface{}
-		checkField string
+		name         string
+		data         map[string]interface{}
+		vars         template.Variables
+		resourceKind string
+		wantType     string // expected type of the result field
+		wantValue    interface{}
+		checkField   string
 	}{
 		{
 			name: "int function converts string to integer",
 			data: map[string]interface{}{
 				"replicas": "{{ .replicas | int }}",
 			},
-			vars:       template.Variables{"replicas": "3"},
-			checkField: "replicas",
-			wantType:   "int64",
-			wantValue:  int64(3),
+			vars:         template.Variables{"replicas": "3"},
+			checkField:   "replicas",
+			wantType:     "int64",
+			wantValue:    int64(3),
+			resourceKind: "Deployment",
 		},
 		{
 			name: "int function in nested structure",
@@ -595,40 +597,44 @@ func TestRenderUnstructured_TypedFunctions(t *testing.T) {
 					"replicas": "{{ .replicas | int }}",
 				},
 			},
-			vars:       template.Variables{"replicas": "5"},
-			checkField: "spec.replicas",
-			wantType:   "int64",
-			wantValue:  int64(5),
+			vars:         template.Variables{"replicas": "5"},
+			checkField:   "spec.replicas",
+			wantType:     "int64",
+			wantValue:    int64(5),
+			resourceKind: "Deployment",
 		},
 		{
 			name: "int function in array",
 			data: map[string]interface{}{
 				"ports": []interface{}{"{{ .port | int }}"},
 			},
-			vars:       template.Variables{"port": "8080"},
-			checkField: "ports[0]",
-			wantType:   "int64",
-			wantValue:  int64(8080),
+			vars:         template.Variables{"port": "8080"},
+			checkField:   "ports[0]",
+			wantType:     "int64",
+			wantValue:    int64(8080),
+			resourceKind: "Deployment",
 		},
 		{
 			name: "float function converts string to float64",
 			data: map[string]interface{}{
 				"cpuLimit": "{{ .cpu | float }}",
 			},
-			vars:       template.Variables{"cpu": "1.5"},
-			checkField: "cpuLimit",
-			wantType:   "float64",
-			wantValue:  1.5,
+			vars:         template.Variables{"cpu": "1.5"},
+			checkField:   "cpuLimit",
+			wantType:     "float64",
+			wantValue:    1.5,
+			resourceKind: "Deployment",
 		},
 		{
 			name: "bool function converts string to boolean",
 			data: map[string]interface{}{
 				"enabled": "{{ .flag | bool }}",
 			},
-			vars:       template.Variables{"flag": "true"},
-			checkField: "enabled",
-			wantType:   "bool",
-			wantValue:  true,
+			vars:         template.Variables{"flag": "true"},
+			checkField:   "enabled",
+			wantType:     "bool",
+			wantValue:    true,
+			resourceKind: "Deployment",
 		},
 		{
 			name: "bool function handles database style '1'",
@@ -645,16 +651,34 @@ func TestRenderUnstructured_TypedFunctions(t *testing.T) {
 			data: map[string]interface{}{
 				"name": "{{ .name }}",
 			},
-			vars:       template.Variables{"name": "my-service"},
-			checkField: "name",
-			wantType:   "string",
-			wantValue:  "my-service",
+			vars:         template.Variables{"name": "my-service"},
+			checkField:   "name",
+			wantType:     "string",
+			wantValue:    "my-service",
+			resourceKind: "Deployment",
+		},
+		{
+			name: "configmap data keeps strings",
+			data: map[string]interface{}{
+				"data": map[string]interface{}{
+					"boolKey": "{{ .flag | bool }}",
+					"intKey":  "{{ .count | int }}",
+				},
+			},
+			vars: template.Variables{
+				"flag":  "1",
+				"count": "42",
+			},
+			resourceKind: "ConfigMap",
+			checkField:   "data.boolKey",
+			wantType:     "string",
+			wantValue:    "true",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := r.renderUnstructured(ctx, tt.data, engine, tt.vars)
+			got, err := r.renderUnstructured(ctx, tt.data, engine, tt.vars, tt.resourceKind, nil)
 			require.NoError(t, err)
 
 			// Extract value based on checkField path
@@ -668,6 +692,9 @@ func TestRenderUnstructured_TypedFunctions(t *testing.T) {
 			case "ports[0]":
 				ports := got["ports"].([]interface{})
 				value = ports[0]
+			case "data.boolKey":
+				dataMap := got["data"].(map[string]interface{})
+				value = dataMap["boolKey"]
 			}
 
 			// Check type

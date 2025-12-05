@@ -282,10 +282,42 @@ func toBool(value interface{}) string {
 	return fmt.Sprintf("%s%t", MarkerBool, result)
 }
 
+// StripTypeMarker removes type markers from a rendered string and returns the raw value as a string
+// This allows YAML parsers to automatically convert string numbers to integers where needed,
+// while keeping values as strings in string-only fields (e.g., ConfigMap data)
+//
+// Format: __LYNQ_TYPE_{TYPE}__{value}
+//
+// Examples:
+//   - "__LYNQ_TYPE_INT__42" → "42"
+//   - "__LYNQ_TYPE_FLOAT__3.14" → "3.14"
+//   - "__LYNQ_TYPE_BOOL__true" → "true"
+//   - "plain string" → "plain string"
+func StripTypeMarker(s string) string {
+	// Check for int marker
+	if strings.HasPrefix(s, MarkerInt) {
+		return strings.TrimPrefix(s, MarkerInt)
+	}
+
+	// Check for float marker
+	if strings.HasPrefix(s, MarkerFloat) {
+		return strings.TrimPrefix(s, MarkerFloat)
+	}
+
+	// Check for bool marker
+	if strings.HasPrefix(s, MarkerBool) {
+		return strings.TrimPrefix(s, MarkerBool)
+	}
+
+	// No marker found, return original string
+	return s
+}
+
 // ParseTypedValue detects type markers and converts the value to the appropriate Go type
 // This function is called during resource rendering to restore proper types for Kubernetes API
 // If no marker is found, the original string is returned unchanged
-// Example: "__LYNQ_TYPE_INT__42" -> int(42)
+// Returns JSON-compatible types only (int64, float64, bool, string) to avoid deep copy panics
+// Example: "__LYNQ_TYPE_INT__42" -> int64(42)
 // Example: "__LYNQ_TYPE_FLOAT__3.14" -> float64(3.14)
 // Example: "__LYNQ_TYPE_BOOL__true" -> bool(true)
 // Example: "hello" -> "hello" (unchanged)
@@ -293,7 +325,8 @@ func ParseTypedValue(s string) interface{} {
 	// Check for int marker
 	if strings.HasPrefix(s, MarkerInt) {
 		valueStr := strings.TrimPrefix(s, MarkerInt)
-		if i, err := strconv.Atoi(valueStr); err == nil {
+		// Use ParseInt to return int64 (JSON-compatible) instead of int (Go-specific)
+		if i, err := strconv.ParseInt(valueStr, 10, 64); err == nil {
 			return i
 		}
 		// If parsing fails, return original string

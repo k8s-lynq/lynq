@@ -776,7 +776,7 @@ func (r *LynqNodeReconciler) renderResource(ctx context.Context, engine *templat
 	}
 
 	// Render spec recursively (for template variables inside the unstructured object)
-	renderedSpec, err := r.renderUnstructured(ctx, obj.Object, engine, vars)
+	renderedSpec, err := r.renderUnstructured(ctx, obj.Object, engine, vars, obj.GetKind(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to render spec: %w", err)
 	}
@@ -788,13 +788,24 @@ func (r *LynqNodeReconciler) renderResource(ctx context.Context, engine *templat
 // renderUnstructured recursively renders template variables in unstructured data
 // Returns an error if any template rendering fails (e.g., missing variable references)
 // This function also parses type markers (from int, float, bool template functions)
-// to restore proper Go types for Kubernetes API compatibility
+// to restore proper Go types for Kubernetes API compatibility. For string-only
+// fields (e.g., ConfigMap data, annotations) values remain strings even if typed
+// template functions are used.
 //
 //nolint:unparam // ctx is passed through for recursive calls
-func (r *LynqNodeReconciler) renderUnstructured(ctx context.Context, data map[string]interface{}, engine *template.Engine, vars template.Variables) (map[string]interface{}, error) {
+func (r *LynqNodeReconciler) renderUnstructured(
+	ctx context.Context,
+	data map[string]interface{},
+	engine *template.Engine,
+	vars template.Variables,
+	resourceKind string,
+	fieldPath []string,
+) (map[string]interface{}, error) {
 	result := make(map[string]interface{})
 
 	for k, v := range data {
+		currentPath := append(fieldPath, k)
+
 		switch val := v.(type) {
 		case string:
 			// Try to render as template
@@ -803,24 +814,14 @@ func (r *LynqNodeReconciler) renderUnstructured(ctx context.Context, data map[st
 				// Return error to mark resource as failed (e.g., missing variable reference)
 				return nil, fmt.Errorf("template rendering failed for field %q: %w", k, err)
 			}
-			// Parse type markers to restore proper Go types (int, float, bool)
-			// This enables templates like {{ .port | int }} to produce actual integers
-			// Note: Convert to JSON-compatible types (int64, float64) to avoid deep copy panics
-			parsed := template.ParseTypedValue(rendered)
-			switch v := parsed.(type) {
-			case int:
-				// Convert int to int64 (JSON-compatible integer type)
-				result[k] = int64(v)
-			case float64, bool, string:
-				// These are already JSON-compatible
-				result[k] = v
-			default:
-				// Fallback to original rendered string
-				result[k] = rendered
+			if shouldKeepString(resourceKind, currentPath) {
+				result[k] = template.StripTypeMarker(rendered)
+			} else {
+				result[k] = template.ParseTypedValue(rendered)
 			}
 		case map[string]interface{}:
 			// Recurse into nested maps
-			rendered, err := r.renderUnstructured(ctx, val, engine, vars)
+			rendered, err := r.renderUnstructured(ctx, val, engine, vars, resourceKind, currentPath)
 			if err != nil {
 				return nil, fmt.Errorf("template rendering failed in nested field %q: %w", k, err)
 			}
@@ -830,7 +831,7 @@ func (r *LynqNodeReconciler) renderUnstructured(ctx context.Context, data map[st
 			renderedArray := make([]interface{}, len(val))
 			for i, item := range val {
 				if itemMap, ok := item.(map[string]interface{}); ok {
-					rendered, err := r.renderUnstructured(ctx, itemMap, engine, vars)
+					rendered, err := r.renderUnstructured(ctx, itemMap, engine, vars, resourceKind, currentPath)
 					if err != nil {
 						return nil, fmt.Errorf("template rendering failed for array item %q[%d]: %w", k, i, err)
 					}
@@ -840,16 +841,10 @@ func (r *LynqNodeReconciler) renderUnstructured(ctx context.Context, data map[st
 					if err != nil {
 						return nil, fmt.Errorf("template rendering failed for array string %q[%d]: %w", k, i, err)
 					}
-					// Parse type markers for array string items as well
-					// Convert to JSON-compatible types
-					parsed := template.ParseTypedValue(rendered)
-					switch v := parsed.(type) {
-					case int:
-						renderedArray[i] = int64(v)
-					case float64, bool, string:
-						renderedArray[i] = v
-					default:
-						renderedArray[i] = rendered
+					if shouldKeepString(resourceKind, currentPath) {
+						renderedArray[i] = template.StripTypeMarker(rendered)
+					} else {
+						renderedArray[i] = template.ParseTypedValue(rendered)
 					}
 				} else {
 					renderedArray[i] = item
@@ -862,6 +857,36 @@ func (r *LynqNodeReconciler) renderUnstructured(ctx context.Context, data map[st
 	}
 
 	return result, nil
+}
+
+// shouldKeepString returns true when the current field must remain a string even if
+// typed template markers are present. This is required for ConfigMap/Secret data
+// and for label/annotation-style maps that only accept string values.
+func shouldKeepString(resourceKind string, fieldPath []string) bool {
+	if len(fieldPath) == 0 {
+		return false
+	}
+
+	currentKey := fieldPath[len(fieldPath)-1]
+	if currentKey == "apiVersion" || currentKey == "kind" {
+		return true
+	}
+
+	if len(fieldPath) < 2 {
+		return false
+	}
+
+	parentKey := fieldPath[len(fieldPath)-2]
+	switch parentKey {
+	case "annotations", "labels", "matchLabels", "nodeSelector":
+		return true
+	case "data":
+		return resourceKind == "ConfigMap" || resourceKind == "Secret"
+	case "binaryData", "stringData":
+		return resourceKind == "ConfigMap" || resourceKind == "Secret"
+	default:
+		return false
+	}
 }
 
 // LynqNodeStatusUpdate contains all calculated status fields for a LynqNode
@@ -1540,28 +1565,18 @@ func (r *LynqNodeReconciler) determineReconcileType(node *lynqv1.LynqNode) Recon
 		}
 	}
 
-	// 4. Always perform full reconcile to ensure correctness
-	//
-	// IMPORTANT: Template variables are stored in annotations (lynq.sh/extra, lynq.sh/hostOrUrl, etc.)
-	// and are used to render resource specs. When LynqHub controller updates these annotations due to
-	// database changes, the LynqNode's generation does NOT change (because spec content is identical -
-	// templates like "{{ .maxConnections }}" remain the same).
-	//
-	// This causes a critical issue: annotation changes don't trigger full reconcile, so updated
-	// template variables are not applied to resources, breaking database-driven synchronization.
-	//
-	// SOLUTION: Always perform full reconcile (ReconcileTypeSpec) to ensure template variable changes
-	// are properly applied. The generation == observedGeneration check is insufficient because it
-	// cannot detect annotation-only changes.
-	//
-	// Status-only reconcile (ReconcileTypeStatus) is disabled until we implement proper annotation
-	// change tracking (e.g., observedTemplateVariablesHash in status).
-	//
-	// Performance impact: Minimal, as reconciles are already lightweight with SSA and change detection.
-	// Correctness impact: Critical - this fix enables database-driven configuration updates.
+	// 4. Check if spec changed (generation mismatch)
+	// If observedGeneration doesn't match generation, it means spec or annotations changed
+	// and we need full reconcile to apply changes
+	if node.Status.ObservedGeneration != node.Generation {
+		return ReconcileTypeSpec
+	}
 
-	// 5. Always do full reconcile to handle both spec AND annotation changes
-	return ReconcileTypeSpec
+	// 5. Use status-only reconcile for child resource status changes
+	// This enables fast metric updates when only child resources change
+	// (e.g., Deployment scaled externally, pod becomes unhealthy)
+	// without reapplying resources
+	return ReconcileTypeStatus
 }
 
 // hasOwnershipConflict checks if a resource has an ownership conflict with the node
