@@ -313,10 +313,9 @@ func StripTypeMarker(s string) string {
 	return s
 }
 
-// ParseTypedValue detects type markers and converts the value to the appropriate Go type
-// This function is called during resource rendering to restore proper types for Kubernetes API
-// If no marker is found, the original string is returned unchanged
-// Returns JSON-compatible types only (int64, float64, bool, string) to avoid deep copy panics
+// ParseTypedValue detects type markers and converts the value to the appropriate Go type.
+// This function is called during resource rendering to restore proper types for Kubernetes API.
+// If no marker is found, the original string is returned unchanged.
 // Example: "__LYNQ_TYPE_INT__42" -> int64(42)
 // Example: "__LYNQ_TYPE_FLOAT__3.14" -> float64(3.14)
 // Example: "__LYNQ_TYPE_BOOL__true" -> bool(true)
@@ -325,7 +324,6 @@ func ParseTypedValue(s string) interface{} {
 	// Check for int marker
 	if strings.HasPrefix(s, MarkerInt) {
 		valueStr := strings.TrimPrefix(s, MarkerInt)
-		// Use ParseInt to return int64 (JSON-compatible) instead of int (Go-specific)
 		if i, err := strconv.ParseInt(valueStr, 10, 64); err == nil {
 			return i
 		}

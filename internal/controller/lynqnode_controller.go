@@ -88,6 +88,10 @@ const (
 	ReasonResourcesFailed              = "ResourcesFailed"
 	ReasonNotAllResourcesReady         = "NotAllResourcesReady"
 
+	// Resource kinds used in template rendering
+	resourceKindConfigMap = "ConfigMap"
+	resourceKindSecret    = "Secret"
+
 	// Degraded reasons
 	ReasonResourceFailuresAndConflicts = "ResourceFailuresAndConflicts"
 	ReasonResourceFailures             = "ResourceFailures"
@@ -881,9 +885,9 @@ func shouldKeepString(resourceKind string, fieldPath []string) bool {
 	case "annotations", "labels", "matchLabels", "nodeSelector":
 		return true
 	case "data":
-		return resourceKind == "ConfigMap" || resourceKind == "Secret"
+		return resourceKind == resourceKindConfigMap || resourceKind == resourceKindSecret
 	case "binaryData", "stringData":
-		return resourceKind == "ConfigMap" || resourceKind == "Secret"
+		return resourceKind == resourceKindConfigMap || resourceKind == resourceKindSecret
 	default:
 		return false
 	}
@@ -1526,7 +1530,7 @@ func (r *LynqNodeReconciler) deleteOrphanedResource(ctx context.Context, node *l
 // getAPIVersionForKind returns the API version for a given kind string
 func (r *LynqNodeReconciler) getAPIVersionForKind(kind string) string {
 	switch kind {
-	case "Namespace", "ServiceAccount", "Service", "ConfigMap", "Secret", "PersistentVolumeClaim":
+	case "Namespace", "ServiceAccount", "Service", resourceKindConfigMap, resourceKindSecret, "PersistentVolumeClaim":
 		return "v1"
 	case "Deployment", "StatefulSet", "DaemonSet":
 		return "apps/v1"
@@ -1572,11 +1576,10 @@ func (r *LynqNodeReconciler) determineReconcileType(node *lynqv1.LynqNode) Recon
 		return ReconcileTypeSpec
 	}
 
-	// 5. Use status-only reconcile for child resource status changes
-	// This enables fast metric updates when only child resources change
-	// (e.g., Deployment scaled externally, pod becomes unhealthy)
-	// without reapplying resources
-	return ReconcileTypeStatus
+	// 5. Always perform a full spec reconcile to detect annotation-driven changes
+	// (template variable updates) even when generation matches observedGeneration.
+	// This avoids missing database-sourced updates that don't bump generation.
+	return ReconcileTypeSpec
 }
 
 // hasOwnershipConflict checks if a resource has an ownership conflict with the node

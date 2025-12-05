@@ -137,9 +137,9 @@ func TestParseTypedValue(t *testing.T) {
 			input    string
 			expected interface{}
 		}{
-			{"positive integer", MarkerInt + "42", 42},
-			{"negative integer", MarkerInt + "-123", -123},
-			{"zero", MarkerInt + "0", 0},
+			{"positive integer", MarkerInt + "42", int64(42)},
+			{"negative integer", MarkerInt + "-123", int64(-123)},
+			{"zero", MarkerInt + "0", int64(0)},
 			{"invalid int returns original", MarkerInt + "invalid", MarkerInt + "invalid"},
 		}
 
@@ -218,7 +218,7 @@ func TestTypedFunctionsInTemplates(t *testing.T) {
 			name     string
 			template string
 			vars     Variables
-			expected int
+			expected int64
 		}{
 			{
 				name:     "port number",
@@ -334,10 +334,10 @@ func TestKubernetesResourceScenarios(t *testing.T) {
 		rendered, _ := engine.Render(`{{ .replicas | int }}`, vars)
 		parsed := ParseTypedValue(rendered)
 
-		if _, ok := parsed.(int); !ok {
-			t.Errorf("replicas should be int, got %T", parsed)
+		if _, ok := parsed.(int64); !ok {
+			t.Errorf("replicas should be int64, got %T", parsed)
 		}
-		if parsed != 3 {
+		if parsed != int64(3) {
 			t.Errorf("replicas = %v, want 3", parsed)
 		}
 	})
@@ -352,10 +352,10 @@ func TestKubernetesResourceScenarios(t *testing.T) {
 		}
 		parsed := ParseTypedValue(rendered)
 
-		if _, ok := parsed.(int); !ok {
-			t.Errorf("literal 3 should be int, got %T", parsed)
+		if _, ok := parsed.(int64); !ok {
+			t.Errorf("literal 3 should be int64, got %T", parsed)
 		}
-		if parsed != 3 {
+		if parsed != int64(3) {
 			t.Errorf("literal 3 = %v, want 3", parsed)
 		}
 	})
@@ -370,10 +370,10 @@ func TestKubernetesResourceScenarios(t *testing.T) {
 		}
 		parsed := ParseTypedValue(rendered)
 
-		if _, ok := parsed.(int); !ok {
-			t.Errorf("literal 8080 should be int, got %T", parsed)
+		if _, ok := parsed.(int64); !ok {
+			t.Errorf("literal 8080 should be int64, got %T", parsed)
 		}
-		if parsed != 8080 {
+		if parsed != int64(8080) {
 			t.Errorf("literal 8080 = %v, want 8080", parsed)
 		}
 	})
@@ -384,10 +384,10 @@ func TestKubernetesResourceScenarios(t *testing.T) {
 		rendered, _ := engine.Render(`{{ .appPort | int }}`, vars)
 		parsed := ParseTypedValue(rendered)
 
-		if _, ok := parsed.(int); !ok {
-			t.Errorf("containerPort should be int, got %T", parsed)
+		if _, ok := parsed.(int64); !ok {
+			t.Errorf("containerPort should be int64, got %T", parsed)
 		}
-		if parsed != 8080 {
+		if parsed != int64(8080) {
 			t.Errorf("containerPort = %v, want 8080", parsed)
 		}
 	})
@@ -404,10 +404,10 @@ func TestKubernetesResourceScenarios(t *testing.T) {
 		minParsed := ParseTypedValue(minRendered)
 		maxParsed := ParseTypedValue(maxRendered)
 
-		if minParsed != 2 {
+		if minParsed != int64(2) {
 			t.Errorf("minReplicas = %v, want 2", minParsed)
 		}
-		if maxParsed != 10 {
+		if maxParsed != int64(10) {
 			t.Errorf("maxReplicas = %v, want 10", maxParsed)
 		}
 	})
