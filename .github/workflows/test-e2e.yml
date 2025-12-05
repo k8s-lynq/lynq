@@ -8,8 +8,6 @@ jobs:
   test-e2e:
     name: K8s ${{ matrix.k8s-version }} - ${{ matrix.test-group }}
     runs-on: ubuntu-latest
-    env:
-      KIND_NODE_IMAGE_BASE: registry.k8s.io/kindest/node
     strategy:
       fail-fast: false
       matrix:
@@ -70,14 +68,12 @@ jobs:
 
       - name: Create kind cluster with K8s ${{ matrix.k8s-version }}
         run: |
-          NODE_IMAGE="${KIND_NODE_IMAGE_BASE}:v${{ matrix.k8s-version }}.0"
-          echo "Using kind node image: ${NODE_IMAGE}"
           cat <<EOF | kind create cluster --config=-
           kind: Cluster
           apiVersion: kind.x-k8s.io/v1alpha4
           nodes:
           - role: control-plane
-            image: ${NODE_IMAGE}
+            image: kindest/node:v${{ matrix.k8s-version }}.0
           EOF
 
       - name: Verify cluster info
