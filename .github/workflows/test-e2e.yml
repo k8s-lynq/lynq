@@ -82,12 +82,12 @@ jobs:
       - name: Run E2E Tests (${{ matrix.test-group }})
         run: |
           go mod tidy
-          FOCUS_ARG=""
-          SKIP_ARG=""
+          FOCUS_ARGS=()
+          SKIP_ARGS=()
           if [ -n "${{ matrix.focus }}" ]; then
-            FOCUS_ARG="-ginkgo.focus=${{ matrix.focus }}"
+            FOCUS_ARGS+=("-ginkgo.focus=${{ matrix.focus }}")
           fi
           if [ -n "${{ matrix.skip }}" ]; then
-            SKIP_ARG="-ginkgo.skip=${{ matrix.skip }}"
+            SKIP_ARGS+=("-ginkgo.skip=${{ matrix.skip }}")
           fi
-          KIND_CLUSTER=kind go test ./test/e2e/ -v -ginkgo.v $FOCUS_ARG $SKIP_ARG -timeout 30m
+          KIND_CLUSTER=kind go test ./test/e2e/ -v -ginkgo.v "${FOCUS_ARGS[@]}" "${SKIP_ARGS[@]}" -timeout 30m
