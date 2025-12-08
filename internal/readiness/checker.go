@@ -154,14 +154,21 @@ func (c *Checker) isDeploymentReady(obj *unstructured.Unstructured) bool {
 	}
 
 	// Check replicas
-	replicas, _, _ := unstructured.NestedInt64(obj.Object, "spec", "replicas")
+	replicas, found, _ := unstructured.NestedInt64(obj.Object, "spec", "replicas")
+	if !found {
+		replicas = 1 // Default replicas when not specified
+	}
+
+	// Special case: deployment scaled to 0 is considered not ready
+	// (no pods serving traffic, even though it's at desired state)
 	if replicas == 0 {
-		replicas = 1 // Default replicas
+		return false
 	}
 
 	availableReplicas, _, _ := unstructured.NestedInt64(obj.Object, "status", "availableReplicas")
 	updatedReplicas, _, _ := unstructured.NestedInt64(obj.Object, "status", "updatedReplicas")
 
+	// Deployment is ready when actual replicas match desired replicas
 	return availableReplicas >= replicas && updatedReplicas >= replicas
 }
 
@@ -176,9 +183,15 @@ func (c *Checker) isStatefulSetReady(obj *unstructured.Unstructured) bool {
 	}
 
 	// Check replicas
-	replicas, _, _ := unstructured.NestedInt64(obj.Object, "spec", "replicas")
+	replicas, found, _ := unstructured.NestedInt64(obj.Object, "spec", "replicas")
+	if !found {
+		replicas = 1 // Default replicas when not specified
+	}
+
+	// Special case: statefulset scaled to 0 is considered not ready
+	// (no pods serving traffic, even though it's at desired state)
 	if replicas == 0 {
-		replicas = 1
+		return false
 	}
 
 	readyReplicas, _, _ := unstructured.NestedInt64(obj.Object, "status", "readyReplicas")

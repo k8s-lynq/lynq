@@ -6,8 +6,48 @@ on:
 
 jobs:
   test-e2e:
-    name: Run on Ubuntu
+    name: K8s ${{ matrix.k8s-version }} - ${{ matrix.test-group }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        k8s-version:
+          - "1.29"
+          - "1.30"
+          - "1.31"
+          - "1.32"
+        test-group:
+          - core
+          - policies
+          - templates
+          - resources
+          - advanced
+          - other
+        include:
+          # Core: Manager setup, datasource, garbage collection, finalizer
+          - test-group: core
+            focus: "Manager|Datasource Behavior|LynqHub Garbage Collection|Finalizer Behavior"
+            skip: ""
+          # Policies: Creation, deletion, conflict policies
+          - test-group: policies
+            focus: "CreationPolicy|DeletionPolicy|ConflictPolicy|PatchStrategy"
+            skip: ""
+          # Templates: Template functions, error handling, field ignore
+          - test-group: templates
+            focus: "Template Functions|Template Error Handling|Field-Level Ignore Control"
+            skip: ""
+          # Resources: Readiness, timeout, health check, orphan cleanup
+          - test-group: resources
+            focus: "Resource Readiness|Resource Timeout|Resource Health Check|Orphan Resource Cleanup"
+            skip: ""
+          # Advanced: Dependencies, cross-namespace, multi-template, metrics
+          - test-group: advanced
+            focus: "Dependency Graph|SkipOnDependencyFailure|Cross-Namespace|Multi-Template|Metrics Collection"
+            skip: ""
+          # Other: Catch-all for any tests not in other groups (prevents missing new tests)
+          - test-group: other
+            focus: ""
+            skip: "Manager|Datasource Behavior|LynqHub Garbage Collection|Finalizer Behavior|CreationPolicy|DeletionPolicy|ConflictPolicy|PatchStrategy|Template Functions|Template Error Handling|Field-Level Ignore Control|Resource Readiness|Resource Timeout|Resource Health Check|Orphan Resource Cleanup|Dependency Graph|SkipOnDependencyFailure|Cross-Namespace|Multi-Template|Metrics Collection"
     steps:
       - name: Clone the code
         uses: actions/checkout@v4
@@ -26,7 +66,28 @@ jobs:
       - name: Verify kind installation
         run: kind version
 
-      - name: Running Test e2e
+      - name: Create kind cluster with K8s ${{ matrix.k8s-version }}
+        run: |
+          cat <<EOF | kind create cluster --config=-
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          nodes:
+          - role: control-plane
+            image: kindest/node:v${{ matrix.k8s-version }}.0
+          EOF
+
+      - name: Verify cluster info
+        run: kubectl cluster-info
+
+      - name: Run E2E Tests (${{ matrix.test-group }})
         run: |
           go mod tidy
-          make test-e2e
+          FOCUS_ARGS=()
+          SKIP_ARGS=()
+          if [ -n "${{ matrix.focus }}" ]; then
+            FOCUS_ARGS+=("-ginkgo.focus=${{ matrix.focus }}")
+          fi
+          if [ -n "${{ matrix.skip }}" ]; then
+            SKIP_ARGS+=("-ginkgo.skip=${{ matrix.skip }}")
+          fi
+          KIND_CLUSTER=kind go test ./test/e2e/ -v -ginkgo.v "${FOCUS_ARGS[@]}" "${SKIP_ARGS[@]}" -timeout 30m

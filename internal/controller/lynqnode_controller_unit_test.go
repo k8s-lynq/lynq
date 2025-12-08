@@ -553,9 +553,168 @@ func TestRenderUnstructured_NoTemplates(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := r.renderUnstructured(ctx, tt.data, engine, vars)
+			got, err := r.renderUnstructured(ctx, tt.data, engine, vars, "Deployment", nil)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// TestRenderUnstructured_TypedFunctions tests type conversion using int, float, bool template functions
+func TestRenderUnstructured_TypedFunctions(t *testing.T) {
+	scheme := runtime.NewScheme()
+	r := &LynqNodeReconciler{
+		Client: fake.NewClientBuilder().WithScheme(scheme).Build(),
+		Scheme: scheme,
+	}
+	ctx := context.Background()
+	engine := template.NewEngine()
+
+	tests := []struct {
+		name         string
+		data         map[string]interface{}
+		vars         template.Variables
+		resourceKind string
+		wantType     string // expected type of the result field
+		wantValue    interface{}
+		checkField   string
+	}{
+		{
+			name: "int function converts string to integer",
+			data: map[string]interface{}{
+				"replicas": "{{ .replicas | int }}",
+			},
+			vars:         template.Variables{"replicas": "3"},
+			checkField:   "replicas",
+			wantType:     "int64",
+			wantValue:    int64(3),
+			resourceKind: "Deployment",
+		},
+		{
+			name: "int function in nested structure",
+			data: map[string]interface{}{
+				"spec": map[string]interface{}{
+					"replicas": "{{ .replicas | int }}",
+				},
+			},
+			vars:         template.Variables{"replicas": "5"},
+			checkField:   "spec.replicas",
+			wantType:     "int64",
+			wantValue:    int64(5),
+			resourceKind: "Deployment",
+		},
+		{
+			name: "int function in array",
+			data: map[string]interface{}{
+				"ports": []interface{}{"{{ .port | int }}"},
+			},
+			vars:         template.Variables{"port": "8080"},
+			checkField:   "ports[0]",
+			wantType:     "int64",
+			wantValue:    int64(8080),
+			resourceKind: "Deployment",
+		},
+		{
+			name: "float function converts string to float64",
+			data: map[string]interface{}{
+				"cpuLimit": "{{ .cpu | float }}",
+			},
+			vars:         template.Variables{"cpu": "1.5"},
+			checkField:   "cpuLimit",
+			wantType:     "float64",
+			wantValue:    1.5,
+			resourceKind: "Deployment",
+		},
+		{
+			name: "bool function converts string to boolean",
+			data: map[string]interface{}{
+				"enabled": "{{ .flag | bool }}",
+			},
+			vars:         template.Variables{"flag": "true"},
+			checkField:   "enabled",
+			wantType:     "bool",
+			wantValue:    true,
+			resourceKind: "Deployment",
+		},
+		{
+			name: "bool function handles database style '1'",
+			data: map[string]interface{}{
+				"active": "{{ .isActive | bool }}",
+			},
+			vars:       template.Variables{"isActive": "1"},
+			checkField: "active",
+			wantType:   "bool",
+			wantValue:  true,
+		},
+		{
+			name: "regular string remains string",
+			data: map[string]interface{}{
+				"name": "{{ .name }}",
+			},
+			vars:         template.Variables{"name": "my-service"},
+			checkField:   "name",
+			wantType:     "string",
+			wantValue:    "my-service",
+			resourceKind: "Deployment",
+		},
+		{
+			name: "configmap data keeps strings",
+			data: map[string]interface{}{
+				"data": map[string]interface{}{
+					"boolKey": "{{ .flag | bool }}",
+					"intKey":  "{{ .count | int }}",
+				},
+			},
+			vars: template.Variables{
+				"flag":  "1",
+				"count": "42",
+			},
+			resourceKind: "ConfigMap",
+			checkField:   "data.boolKey",
+			wantType:     "string",
+			wantValue:    "true",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := r.renderUnstructured(ctx, tt.data, engine, tt.vars, tt.resourceKind, nil)
+			require.NoError(t, err)
+
+			// Extract value based on checkField path
+			var value interface{}
+			switch tt.checkField {
+			case "replicas", "cpuLimit", "enabled", "active", "name":
+				value = got[tt.checkField]
+			case "spec.replicas":
+				spec := got["spec"].(map[string]interface{})
+				value = spec["replicas"]
+			case "ports[0]":
+				ports := got["ports"].([]interface{})
+				value = ports[0]
+			case "data.boolKey":
+				dataMap := got["data"].(map[string]interface{})
+				value = dataMap["boolKey"]
+			}
+
+			// Check type
+			switch tt.wantType {
+			case "int64":
+				_, ok := value.(int64)
+				assert.True(t, ok, "expected int64, got %T", value)
+			case "float64":
+				_, ok := value.(float64)
+				assert.True(t, ok, "expected float64, got %T", value)
+			case "bool":
+				_, ok := value.(bool)
+				assert.True(t, ok, "expected bool, got %T", value)
+			case "string":
+				_, ok := value.(string)
+				assert.True(t, ok, "expected string, got %T", value)
+			}
+
+			// Check value
+			assert.Equal(t, tt.wantValue, value)
 		})
 	}
 }

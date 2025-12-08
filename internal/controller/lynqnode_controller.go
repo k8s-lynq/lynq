@@ -88,6 +88,10 @@ const (
 	ReasonResourcesFailed              = "ResourcesFailed"
 	ReasonNotAllResourcesReady         = "NotAllResourcesReady"
 
+	// Resource kinds used in template rendering
+	resourceKindConfigMap = "ConfigMap"
+	resourceKindSecret    = "Secret"
+
 	// Degraded reasons
 	ReasonResourceFailuresAndConflicts = "ResourceFailuresAndConflicts"
 	ReasonResourceFailures             = "ResourceFailures"
@@ -776,7 +780,7 @@ func (r *LynqNodeReconciler) renderResource(ctx context.Context, engine *templat
 	}
 
 	// Render spec recursively (for template variables inside the unstructured object)
-	renderedSpec, err := r.renderUnstructured(ctx, obj.Object, engine, vars)
+	renderedSpec, err := r.renderUnstructured(ctx, obj.Object, engine, vars, obj.GetKind(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to render spec: %w", err)
 	}
@@ -787,12 +791,25 @@ func (r *LynqNodeReconciler) renderResource(ctx context.Context, engine *templat
 
 // renderUnstructured recursively renders template variables in unstructured data
 // Returns an error if any template rendering fails (e.g., missing variable references)
+// This function also parses type markers (from int, float, bool template functions)
+// to restore proper Go types for Kubernetes API compatibility. For string-only
+// fields (e.g., ConfigMap data, annotations) values remain strings even if typed
+// template functions are used.
 //
 //nolint:unparam // ctx is passed through for recursive calls
-func (r *LynqNodeReconciler) renderUnstructured(ctx context.Context, data map[string]interface{}, engine *template.Engine, vars template.Variables) (map[string]interface{}, error) {
+func (r *LynqNodeReconciler) renderUnstructured(
+	ctx context.Context,
+	data map[string]interface{},
+	engine *template.Engine,
+	vars template.Variables,
+	resourceKind string,
+	fieldPath []string,
+) (map[string]interface{}, error) {
 	result := make(map[string]interface{})
 
 	for k, v := range data {
+		currentPath := append(fieldPath, k)
+
 		switch val := v.(type) {
 		case string:
 			// Try to render as template
@@ -801,10 +818,14 @@ func (r *LynqNodeReconciler) renderUnstructured(ctx context.Context, data map[st
 				// Return error to mark resource as failed (e.g., missing variable reference)
 				return nil, fmt.Errorf("template rendering failed for field %q: %w", k, err)
 			}
-			result[k] = rendered
+			if shouldKeepString(resourceKind, currentPath) {
+				result[k] = template.StripTypeMarker(rendered)
+			} else {
+				result[k] = template.ParseTypedValue(rendered)
+			}
 		case map[string]interface{}:
 			// Recurse into nested maps
-			rendered, err := r.renderUnstructured(ctx, val, engine, vars)
+			rendered, err := r.renderUnstructured(ctx, val, engine, vars, resourceKind, currentPath)
 			if err != nil {
 				return nil, fmt.Errorf("template rendering failed in nested field %q: %w", k, err)
 			}
@@ -814,7 +835,7 @@ func (r *LynqNodeReconciler) renderUnstructured(ctx context.Context, data map[st
 			renderedArray := make([]interface{}, len(val))
 			for i, item := range val {
 				if itemMap, ok := item.(map[string]interface{}); ok {
-					rendered, err := r.renderUnstructured(ctx, itemMap, engine, vars)
+					rendered, err := r.renderUnstructured(ctx, itemMap, engine, vars, resourceKind, currentPath)
 					if err != nil {
 						return nil, fmt.Errorf("template rendering failed for array item %q[%d]: %w", k, i, err)
 					}
@@ -824,7 +845,11 @@ func (r *LynqNodeReconciler) renderUnstructured(ctx context.Context, data map[st
 					if err != nil {
 						return nil, fmt.Errorf("template rendering failed for array string %q[%d]: %w", k, i, err)
 					}
-					renderedArray[i] = rendered
+					if shouldKeepString(resourceKind, currentPath) {
+						renderedArray[i] = template.StripTypeMarker(rendered)
+					} else {
+						renderedArray[i] = template.ParseTypedValue(rendered)
+					}
 				} else {
 					renderedArray[i] = item
 				}
@@ -836,6 +861,36 @@ func (r *LynqNodeReconciler) renderUnstructured(ctx context.Context, data map[st
 	}
 
 	return result, nil
+}
+
+// shouldKeepString returns true when the current field must remain a string even if
+// typed template markers are present. This is required for ConfigMap/Secret data
+// and for label/annotation-style maps that only accept string values.
+func shouldKeepString(resourceKind string, fieldPath []string) bool {
+	if len(fieldPath) == 0 {
+		return false
+	}
+
+	currentKey := fieldPath[len(fieldPath)-1]
+	if currentKey == "apiVersion" || currentKey == "kind" {
+		return true
+	}
+
+	if len(fieldPath) < 2 {
+		return false
+	}
+
+	parentKey := fieldPath[len(fieldPath)-2]
+	switch parentKey {
+	case "annotations", "labels", "matchLabels", "nodeSelector":
+		return true
+	case "data":
+		return resourceKind == resourceKindConfigMap || resourceKind == resourceKindSecret
+	case "binaryData", "stringData":
+		return resourceKind == resourceKindConfigMap || resourceKind == resourceKindSecret
+	default:
+		return false
+	}
 }
 
 // LynqNodeStatusUpdate contains all calculated status fields for a LynqNode
@@ -1475,7 +1530,7 @@ func (r *LynqNodeReconciler) deleteOrphanedResource(ctx context.Context, node *l
 // getAPIVersionForKind returns the API version for a given kind string
 func (r *LynqNodeReconciler) getAPIVersionForKind(kind string) string {
 	switch kind {
-	case "Namespace", "ServiceAccount", "Service", "ConfigMap", "Secret", "PersistentVolumeClaim":
+	case "Namespace", "ServiceAccount", "Service", resourceKindConfigMap, resourceKindSecret, "PersistentVolumeClaim":
 		return "v1"
 	case "Deployment", "StatefulSet", "DaemonSet":
 		return "apps/v1"
@@ -1514,14 +1569,16 @@ func (r *LynqNodeReconciler) determineReconcileType(node *lynqv1.LynqNode) Recon
 		}
 	}
 
-	// 4. Check if this was triggered by owned resource status change
-	// We can infer this by checking if the node's generation matches status.observedGeneration
-	if node.Generation == node.Status.ObservedGeneration {
-		// Generation hasn't changed, likely triggered by child resource status change
-		return ReconcileTypeStatus
+	// 4. Check if spec changed (generation mismatch)
+	// If observedGeneration doesn't match generation, it means spec or annotations changed
+	// and we need full reconcile to apply changes
+	if node.Status.ObservedGeneration != node.Generation {
+		return ReconcileTypeSpec
 	}
 
-	// 5. Default to full reconcile for spec changes
+	// 5. Always perform a full spec reconcile to detect annotation-driven changes
+	// (template variable updates) even when generation matches observedGeneration.
+	// This avoids missing database-sourced updates that don't bump generation.
 	return ReconcileTypeSpec
 }
 

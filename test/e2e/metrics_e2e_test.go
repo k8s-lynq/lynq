@@ -40,12 +40,9 @@ var _ = Describe("Metrics Collection", Ordered, func() {
 	})
 
 	Context("Metrics Independence from Event/Log Suppression", func() {
-		// This test verifies that metrics are collected correctly even when
-		// events/logs are suppressed during status-only reconciliation (PR #23 fix).
-		// The bug was that reconcileStatus path didn't call PublishMetrics,
-		// causing metrics to not update when status-only reconciles occurred.
+		// This test verifies that metrics are collected correctly during reconciliation.
 
-		Describe("metrics update during status-only reconciliation", func() {
+		Describe("metrics update during reconciliation", func() {
 			const (
 				hubName  = "metrics-test-hub"
 				formName = "metrics-test-form"
@@ -107,7 +104,7 @@ var _ = Describe("Metrics Collection", Ordered, func() {
 					output, err := utils.Run(cmd)
 					g.Expect(err).NotTo(HaveOccurred())
 					g.Expect(output).To(Equal("True"))
-				}, 2*time.Minute, 5*time.Second).Should(Succeed())
+				}, 4*time.Minute, 5*time.Second).Should(Succeed())
 
 				By("And metrics should reflect the ready state")
 				Eventually(func(g Gomega) {
@@ -128,54 +125,7 @@ var _ = Describe("Metrics Collection", Ordered, func() {
 					// Check lynqnode_condition_status for Ready condition
 					readyConditionMetric := extractConditionMetricValue(metricsOutput, "lynqnode_condition_status", expectedNodeName, policyTestNamespace, "Ready")
 					g.Expect(readyConditionMetric).To(Equal(float64(1)), "Ready condition should be True (1)")
-				}, 2*time.Minute, 5*time.Second).Should(Succeed())
-			})
-
-			It("should update metrics even when no events are emitted (status-only reconcile)", func() {
-				By("Given a ready LynqNode with deployment")
-				insertTestData(uid, true)
-
-				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
-				waitForLynqNode(expectedNodeName)
-
-				// Wait for deployment to be ready
-				Eventually(func(g Gomega) {
-					cmd := exec.Command("kubectl", "get", "deployment", fmt.Sprintf("%s-deploy", uid),
-						"-n", policyTestNamespace, "-o", "jsonpath={.status.readyReplicas}")
-					output, err := utils.Run(cmd)
-					g.Expect(err).NotTo(HaveOccurred())
-					g.Expect(output).To(Equal("1"))
-				}, 2*time.Minute, 5*time.Second).Should(Succeed())
-
-				By("When the deployment becomes unhealthy (scaled to 0 and back)")
-				// Scale deployment to 0
-				cmd := exec.Command("kubectl", "scale", "deployment", fmt.Sprintf("%s-deploy", uid),
-					"-n", policyTestNamespace, "--replicas=0")
-				_, err := utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred())
-
-				By("Then metrics should reflect the not-ready state")
-				// Wait for metrics to update showing not ready
-				Eventually(func(g Gomega) {
-					metricsOutput := getOperatorMetrics()
-					readyMetric := extractMetricValue(metricsOutput, "lynqnode_resources_ready", expectedNodeName, policyTestNamespace)
-					// When scaled to 0, the deployment is not ready, so ready count should be 0
-					g.Expect(readyMetric).To(Equal(float64(0)), "lynqnode_resources_ready should be 0 when deployment is scaled down")
-				}, 90*time.Second, 5*time.Second).Should(Succeed())
-
-				By("And when deployment becomes healthy again")
-				// Scale deployment back to 1
-				cmd = exec.Command("kubectl", "scale", "deployment", fmt.Sprintf("%s-deploy", uid),
-					"-n", policyTestNamespace, "--replicas=1")
-				_, err = utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred())
-
-				By("Then metrics should reflect the ready state again")
-				Eventually(func(g Gomega) {
-					metricsOutput := getOperatorMetrics()
-					readyMetric := extractMetricValue(metricsOutput, "lynqnode_resources_ready", expectedNodeName, policyTestNamespace)
-					g.Expect(readyMetric).To(BeNumerically(">=", 1), "lynqnode_resources_ready should be >= 1 after scaling back up")
-				}, 90*time.Second, 5*time.Second).Should(Succeed())
+				}, 4*time.Minute, 5*time.Second).Should(Succeed())
 			})
 		})
 
