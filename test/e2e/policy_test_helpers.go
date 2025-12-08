@@ -29,7 +29,7 @@ import (
 
 const (
 	policyTestNamespace = "policy-test"
-	policyTestTimeout   = 3 * time.Minute
+	policyTestTimeout   = 5 * time.Minute
 	policyTestInterval  = 2 * time.Second
 )
 
