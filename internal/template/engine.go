@@ -23,10 +23,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"text/template"
 
 	"github.com/Masterminds/sprig/v3"
+)
+
+// Type markers for typed template functions
+// These markers wrap values during template rendering and are parsed later
+// to restore the correct Go types for Kubernetes API compatibility
+const (
+	// MarkerInt marks integer values for type restoration
+	MarkerInt = "__LYNQ_TYPE_INT__"
+	// MarkerFloat marks float values for type restoration
+	MarkerFloat = "__LYNQ_TYPE_FLOAT__"
+	// MarkerBool marks boolean values for type restoration
+	MarkerBool = "__LYNQ_TYPE_BOOL__"
 )
 
 // Variables contains all template variables available for rendering
@@ -48,6 +61,12 @@ func NewEngine() *Engine {
 	engine.funcMap["trunc63"] = trunc63
 	engine.funcMap["sha1sum"] = sha1sum
 	engine.funcMap["fromJson"] = fromJson
+
+	// Add typed template functions for Kubernetes type compatibility
+	// These functions wrap values with type markers that are parsed by ParseTypedValue
+	engine.funcMap["int"] = toInt
+	engine.funcMap["float"] = toFloat
+	engine.funcMap["bool"] = toBool
 
 	return engine
 }
@@ -144,6 +163,192 @@ func fromJson(jsonStr string) interface{} {
 		return map[string]interface{}{}
 	}
 	return result
+}
+
+// Typed Template Functions
+// These functions enable proper type conversion for Kubernetes resources
+// by wrapping values with type markers that are later parsed by ParseTypedValue
+
+// toInt converts a value to an integer and wraps it with a type marker
+// The marker is parsed by ParseTypedValue to restore the actual int type
+// Example: toInt("42") -> "__LYNQ_TYPE_INT__42"
+// Example: toInt(3.14) -> "__LYNQ_TYPE_INT__3"
+func toInt(value interface{}) string {
+	var result int
+
+	switch v := value.(type) {
+	case int:
+		result = v
+	case int64:
+		result = int(v)
+	case int32:
+		result = int(v)
+	case float64:
+		result = int(v)
+	case float32:
+		result = int(v)
+	case string:
+		// Try to parse as int first
+		if i, err := strconv.Atoi(v); err == nil {
+			result = i
+		} else if f, err := strconv.ParseFloat(v, 64); err == nil {
+			// Try to parse as float and truncate
+			result = int(f)
+		}
+		// If both fail, result stays 0
+	case bool:
+		if v {
+			result = 1
+		}
+		// false stays 0
+	default:
+		// For nil or unsupported types, return 0
+		result = 0
+	}
+
+	return fmt.Sprintf("%s%d", MarkerInt, result)
+}
+
+// toFloat converts a value to a float64 and wraps it with a type marker
+// The marker is parsed by ParseTypedValue to restore the actual float64 type
+// Example: toFloat("3.14") -> "__LYNQ_TYPE_FLOAT__3.14"
+// Example: toFloat(42) -> "__LYNQ_TYPE_FLOAT__42"
+func toFloat(value interface{}) string {
+	var result float64
+
+	switch v := value.(type) {
+	case float64:
+		result = v
+	case float32:
+		result = float64(v)
+	case int:
+		result = float64(v)
+	case int64:
+		result = float64(v)
+	case int32:
+		result = float64(v)
+	case string:
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			result = f
+		}
+		// If parsing fails, result stays 0
+	case bool:
+		if v {
+			result = 1.0
+		}
+	default:
+		result = 0
+	}
+
+	// Use %v to avoid unnecessary decimal places for whole numbers
+	// e.g., 42 -> "42" instead of "42.000000"
+	return fmt.Sprintf("%s%v", MarkerFloat, result)
+}
+
+// toBool converts a value to a boolean and wraps it with a type marker
+// The marker is parsed by ParseTypedValue to restore the actual bool type
+// Truthy values: true, "true", "TRUE", "1", "yes", "YES", non-zero numbers
+// Falsy values: false, "false", "FALSE", "0", "no", "NO", zero, empty string
+// Example: toBool("true") -> "__LYNQ_TYPE_BOOL__true"
+// Example: toBool("1") -> "__LYNQ_TYPE_BOOL__true"
+func toBool(value interface{}) string {
+	var result bool
+
+	switch v := value.(type) {
+	case bool:
+		result = v
+	case string:
+		lower := strings.ToLower(v)
+		switch lower {
+		case "true", "1", "yes", "on", "t", "y":
+			result = true
+		default:
+			result = false
+		}
+	case int:
+		result = v != 0
+	case int64:
+		result = v != 0
+	case int32:
+		result = v != 0
+	case float64:
+		result = v != 0
+	case float32:
+		result = v != 0
+	default:
+		result = false
+	}
+
+	return fmt.Sprintf("%s%t", MarkerBool, result)
+}
+
+// StripTypeMarker removes type markers from a rendered string and returns the raw value as a string
+// This allows YAML parsers to automatically convert string numbers to integers where needed,
+// while keeping values as strings in string-only fields (e.g., ConfigMap data)
+//
+// Format: __LYNQ_TYPE_{TYPE}__{value}
+//
+// Examples:
+//   - "__LYNQ_TYPE_INT__42" → "42"
+//   - "__LYNQ_TYPE_FLOAT__3.14" → "3.14"
+//   - "__LYNQ_TYPE_BOOL__true" → "true"
+//   - "plain string" → "plain string"
+func StripTypeMarker(s string) string {
+	// Check for int marker
+	if strings.HasPrefix(s, MarkerInt) {
+		return strings.TrimPrefix(s, MarkerInt)
+	}
+
+	// Check for float marker
+	if strings.HasPrefix(s, MarkerFloat) {
+		return strings.TrimPrefix(s, MarkerFloat)
+	}
+
+	// Check for bool marker
+	if strings.HasPrefix(s, MarkerBool) {
+		return strings.TrimPrefix(s, MarkerBool)
+	}
+
+	// No marker found, return original string
+	return s
+}
+
+// ParseTypedValue detects type markers and converts the value to the appropriate Go type.
+// This function is called during resource rendering to restore proper types for Kubernetes API.
+// If no marker is found, the original string is returned unchanged.
+// Example: "__LYNQ_TYPE_INT__42" -> int64(42)
+// Example: "__LYNQ_TYPE_FLOAT__3.14" -> float64(3.14)
+// Example: "__LYNQ_TYPE_BOOL__true" -> bool(true)
+// Example: "hello" -> "hello" (unchanged)
+func ParseTypedValue(s string) interface{} {
+	// Check for int marker
+	if strings.HasPrefix(s, MarkerInt) {
+		valueStr := strings.TrimPrefix(s, MarkerInt)
+		if i, err := strconv.ParseInt(valueStr, 10, 64); err == nil {
+			return i
+		}
+		// If parsing fails, return original string
+		return s
+	}
+
+	// Check for float marker
+	if strings.HasPrefix(s, MarkerFloat) {
+		valueStr := strings.TrimPrefix(s, MarkerFloat)
+		if f, err := strconv.ParseFloat(valueStr, 64); err == nil {
+			return f
+		}
+		// If parsing fails, return original string
+		return s
+	}
+
+	// Check for bool marker
+	if strings.HasPrefix(s, MarkerBool) {
+		valueStr := strings.TrimPrefix(s, MarkerBool)
+		return valueStr == "true"
+	}
+
+	// No marker found, return original string
+	return s
 }
 
 // BuildVariables creates Variables from database row data

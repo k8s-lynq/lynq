@@ -323,7 +323,7 @@ func TestCleanupNodeResources(t *testing.T) {
 				require.NoError(t, err)
 
 				switch kind {
-				case "ConfigMap":
+				case resourceKindConfigMap:
 					cm := &corev1.ConfigMap{
 						ObjectMeta: metav1.ObjectMeta{
 							Name:      name,

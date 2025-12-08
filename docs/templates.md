@@ -205,6 +205,207 @@ env:
   value: "{{ (.config | fromJson).endpoint }}"
 ```
 
+### Type Conversion Functions <Badge type="tip" text="^1.1.15" />
+
+::: tip New in v1.1.15
+Type conversion functions solve the **YAML quoting problem**, enabling proper type conversion for Kubernetes resource fields.
+:::
+
+#### The YAML Quoting Problem
+
+When writing LynqForm CRDs in YAML, template expressions **must** be quoted due to YAML parser requirements:
+
+```yaml
+# ❌ INVALID YAML - Parser error
+containerPort: {{ .appPort }}
+
+# ✅ VALID YAML - Must quote template expressions
+containerPort: "{{ .appPort }}"
+```
+
+**The problem:** While quotes make the YAML valid, the rendered output remains a **quoted string**, causing Kubernetes API validation to fail for numeric/boolean fields:
+
+```yaml
+# After template rendering (without type functions)
+containerPort: "8080"  # ❌ String - Kubernetes API rejects
+replicas: "3"          # ❌ String - Expected integer
+enabled: "true"        # ❌ String - Expected boolean
+
+# Expected by Kubernetes
+containerPort: 8080    # ✅ Integer
+replicas: 3            # ✅ Integer
+enabled: true          # ✅ Boolean
+```
+
+#### Type Conversion Functions
+
+::: v-pre
+
+#### `toInt(value)`
+Convert value to integer (int):
+
+```yaml
+# Basic conversion
+replicas: "{{ .maxReplicas | toInt }}"          # "3" → 3
+containerPort: "{{ .appPort | toInt }}"         # "8080" → 8080
+
+# With default value
+replicas: "{{ .replicas | default \"2\" | toInt }}"  # Ensures integer output
+
+# From float (truncates)
+value: "{{ .cpuCount | toInt }}"                # 2.8 → 2
+```
+
+**Conversion rules:**
+- String → int: `"123"` → `123`
+- Float → int: `2.8` → `2` (truncates)
+- Already int: Returns as-is
+- Invalid input: Returns `0` (graceful fallback)
+
+#### `toFloat(value)`
+Convert value to floating-point number (float64):
+
+```yaml
+# Resource limits with decimals
+resources:
+  limits:
+    cpu: "{{ .cpuLimit | toFloat }}"            # "1.5" → 1.5
+    memory: "{{ .memoryGb | toFloat }}Gi"       # "2.5" → "2.5Gi"
+
+# Percentage calculations
+targetCPUUtilization: "{{ .threshold | toFloat }}"  # "75.5" → 75.5
+```
+
+**Conversion rules:**
+- String → float: `"1.5"` → `1.5`
+- Int → float: `2` → `2.0`
+- Already float: Returns as-is
+- Invalid input: Returns `0.0`
+
+#### `toBool(value)`
+Convert value to boolean:
+
+```yaml
+# Feature flags
+enabled: "{{ .featureEnabled | toBool }}"       # "true" → true
+readOnly: "{{ .isReadOnly | toBool }}"          # "false" → false
+
+# From integers (common in databases)
+automountServiceAccountToken: "{{ .autoMount | toBool }}"  # 1 → true, 0 → false
+```
+
+**Truthy values** (converted to `true`):
+- Strings: `"true"`, `"True"`, `"TRUE"`, `"1"`, `"yes"`, `"Yes"`, `"YES"`, `"y"`, `"Y"`
+- Numbers: Any non-zero integer (`1`, `42`, `-5`)
+- Boolean: `true`
+
+**Falsy values** (converted to `false`):
+- Strings: `"false"`, `"False"`, `"FALSE"`, `"0"`, `"no"`, `"No"`, `"NO"`, `"n"`, `"N"`, `""` (empty)
+- Numbers: `0`
+- Boolean: `false`
+
+:::
+
+#### Complete Example
+
+::: v-pre
+
+```yaml
+apiVersion: lynq.sh/v1
+kind: LynqForm
+metadata:
+  name: typed-app
+spec:
+  hubId: production-db
+  deployments:
+    - id: app
+      nameTemplate: "{{ .uid }}-api"
+      spec:
+        apiVersion: apps/v1
+        kind: Deployment
+        spec:
+          # Integer field - type conversion required
+          replicas: "{{ .maxReplicas | default \"2\" | toInt }}"
+          template:
+            spec:
+              # Boolean field - type conversion required
+              automountServiceAccountToken: "{{ .mountToken | toBool }}"
+              containers:
+                - name: app
+                  image: "{{ .image }}"
+                  ports:
+                    # Integer field - type conversion required
+                    - containerPort: "{{ .appPort | toInt }}"
+                      protocol: TCP
+                  env:
+                    # String fields - no conversion needed
+                    - name: APP_ENV
+                      value: "{{ .environment }}"
+                    - name: TENANT_ID
+                      value: "{{ .uid }}"
+                    # Integer env var - stays as string (env values are always strings)
+                    - name: MAX_CONNECTIONS
+                      value: "{{ .maxConns }}"
+                  resources:
+                    limits:
+                      # Float field - type conversion required
+                      cpu: "{{ .cpuLimit | toFloat }}"
+                      memory: "{{ .memoryLimit }}Mi"
+                    requests:
+                      cpu: "{{ .cpuRequest | toFloat }}"
+                      memory: "{{ .memoryRequest }}Mi"
+```
+
+:::
+
+#### When to Use Type Conversion
+
+::: tip Guidelines
+
+**✅ Use type conversion for:**
+- Kubernetes resource fields expecting numbers: `replicas`, `containerPort`, `targetPort`
+- Boolean fields: `automountServiceAccountToken`, `readOnlyRootFilesystem`, `privileged`
+- Numeric resource limits: `cpu`, `memory` (when using float values)
+- HPA/VPA metrics: `targetCPUUtilizationPercentage`, `minReplicas`, `maxReplicas`
+
+**❌ Don't use type conversion for:**
+- Environment variable values (always strings in containers)
+- Labels and annotations (always strings)
+- Command arguments (always strings)
+- ConfigMap/Secret data values (always strings)
+- Image tags (always strings, even if numeric like `"1.2.3"`)
+
+:::
+
+#### How It Works (Technical Details)
+
+The hybrid approach uses **type markers** internally:
+
+1. **Template function wraps result with marker:**
+   ```go
+   toInt("42") → "__LYNQ_TYPE_INT__42"  // Internal representation
+   ```
+
+2. **Go template engine processes normally:**
+   - Template rendering treats marker as string
+   - Marker survives template evaluation
+
+3. **Controller automatically restores type:**
+   ```go
+   renderUnstructured() detects marker → converts to int → 42
+   ```
+
+4. **Kubernetes receives correctly-typed value:**
+   ```yaml
+   containerPort: 42  # Pure integer, no quotes
+   ```
+
+::: details Why not use Sprig's `atoi`?
+Go's `text/template` engine always returns rendered results as **strings**, regardless of function return types. Sprig's `atoi` returns an integer *during* template execution, but the final output is still a string.
+
+The type marker approach is the only way to preserve type information across the template rendering boundary.
+:::
+
 ### Sprig Functions (200+)
 
 Full documentation: https://masterminds.github.io/sprig/
@@ -296,7 +497,7 @@ value: "{{ max .minReplicas 3 }}"
 
 ::: v-pre
 
-### Example 1: Multi-Region Deployment
+### Example 1: Multi-Region Deployment with Type Conversion
 
 ```yaml
 deployments:
@@ -306,12 +507,18 @@ deployments:
       apiVersion: apps/v1
       kind: Deployment
       spec:
-        replicas: {{ if eq .planId "enterprise" }}5{{ else }}2{{ end }}
+        # Integer field - use toInt for conditional numeric values
+        replicas: "{{ if eq .planId \"enterprise\" }}5{{ else }}2{{ end | toInt }}"
         template:
           spec:
+            # Boolean field - use toBool
+            automountServiceAccountToken: "{{ .autoMount | default \"true\" | toBool }}"
             containers:
             - name: app
               image: "{{ .deployImage | default \"myapp:latest\" }}"
+              ports:
+              - containerPort: "{{ .appPort | default \"8080\" | toInt }}"
+                protocol: TCP
               env:
               - name: TENANT_ID
                 value: "{{ .uid }}"
@@ -319,6 +526,13 @@ deployments:
                 value: "{{ .region | default \"us-east-1\" }}"
               - name: DATABASE_HOST
                 value: "{{ .dbHost }}"
+              resources:
+                limits:
+                  cpu: "{{ .cpuLimit | default \"1.0\" | toFloat }}"
+                  memory: "{{ .memoryLimit | default \"512\" }}Mi"
+                requests:
+                  cpu: "{{ .cpuRequest | default \"0.5\" | toFloat }}"
+                  memory: "{{ .memoryRequest | default \"256\" }}Mi"
 ```
 
 ### Example 2: Secure Resource Names
@@ -427,7 +641,40 @@ value: "{{ .uid }}"
 value: {{ .uid }}
 ```
 
-### 4. Handle Missing Variables Gracefully
+### 4. Use Type Conversion for Kubernetes Fields
+
+Always use type conversion functions for fields expecting numbers or booleans:
+
+```yaml
+# Good - Kubernetes receives correct types
+replicas: "{{ .maxReplicas | toInt }}"
+containerPort: "{{ .appPort | toInt }}"
+automountServiceAccountToken: "{{ .autoMount | toBool }}"
+
+# Bad - Kubernetes API validation fails
+replicas: "{{ .maxReplicas }}"        # String "3" instead of 3
+containerPort: "{{ .appPort }}"       # String "8080" instead of 8080
+```
+
+**Common fields requiring type conversion:**
+- **Integers**: `replicas`, `containerPort`, `targetPort`, `minReplicas`, `maxReplicas`
+- **Floats**: `cpu` (resource limits), `targetCPUUtilizationPercentage`
+- **Booleans**: `automountServiceAccountToken`, `readOnlyRootFilesystem`, `privileged`
+
+**Exception:** Environment variables are always strings, don't convert:
+```yaml
+# Good - env values are always strings
+env:
+  - name: PORT
+    value: "{{ .appPort }}"  # Keep as string
+
+# Unnecessary
+env:
+  - name: PORT
+    value: "{{ .appPort | toInt }}"  # Don't convert
+```
+
+### 5. Handle Missing Variables Gracefully
 
 ```yaml
 # Good - provides default and checks existence
@@ -441,7 +688,21 @@ value: "default-value"
 value: "{{ .optionalField | default \"default-value\" }}"
 ```
 
-### 5. Use Comments for Complex Logic
+### 6. Combine Type Conversion with Default Values
+
+Chain type conversion after default values to ensure proper types:
+
+```yaml
+# Good - provides default then converts type
+replicas: "{{ .replicas | default \"2\" | toInt }}"
+cpu: "{{ .cpuLimit | default \"1.0\" | toFloat }}"
+enabled: "{{ .feature | default \"true\" | toBool }}"
+
+# Bad - type conversion on potentially empty value
+replicas: "{{ .replicas | toInt }}"  # May fail if .replicas is empty
+```
+
+### 7. Use Comments for Complex Logic
 
 ```yaml
 # Calculate replicas based on plan tier
@@ -530,6 +791,33 @@ kubectl describe lynqnode <lynqnode-name>
 **Error:** `yaml: line 10: mapping values are not allowed in this context`
 - **Cause:** Missing quotes around template
 - **Fix:** Always quote templates: `"{{ .value }}"`
+
+**Error:** `admission webhook denied: spec.replicas: Invalid value: "string": spec.replicas in body must be of type integer`
+- **Cause:** Kubernetes field received string instead of number
+- **Fix:** Use type conversion function:
+  ```yaml
+  # Before (error)
+  replicas: "{{ .maxReplicas }}"  # Renders as string "3"
+
+  # After (correct)
+  replicas: "{{ .maxReplicas | toInt }}"  # Renders as integer 3
+  ```
+
+**Error:** `json: cannot unmarshal string into Go struct field ... of type int32`
+- **Cause:** Integer field received quoted string value
+- **Fix:** Use `toInt` for integer fields:
+  ```yaml
+  containerPort: "{{ .port | toInt }}"        # int/int32
+  replicas: "{{ .replicas | toInt }}"         # int32
+  ```
+
+**Error:** `json: cannot unmarshal string into Go struct field ... of type bool`
+- **Cause:** Boolean field received string value
+- **Fix:** Use `toBool` for boolean fields:
+  ```yaml
+  automountServiceAccountToken: "{{ .autoMount | toBool }}"
+  readOnlyRootFilesystem: "{{ .readOnly | toBool }}"
+  ```
 
 ## Advanced Template Techniques
 

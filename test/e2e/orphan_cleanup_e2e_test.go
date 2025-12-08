@@ -120,6 +120,26 @@ var _ = Describe("Orphan Resource Cleanup", Ordered, func() {
 					g.Expect(err).NotTo(HaveOccurred())
 				}, policyTestTimeout, policyTestInterval).Should(Succeed())
 
+				By("And the LynqNode is Ready with AppliedResources populated")
+				Eventually(func(g Gomega) {
+					// Wait for Ready condition
+					cmd := exec.Command("kubectl", "get", "lynqnode", expectedNodeName, "-n", policyTestNamespace,
+						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(output).To(Equal("True"))
+				}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+				Eventually(func(g Gomega) {
+					// Wait for AppliedResources to contain both ConfigMaps
+					cmd := exec.Command("kubectl", "get", "lynqnode", expectedNodeName, "-n", policyTestNamespace,
+						"-o", "jsonpath={.status.appliedResources}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(output).To(ContainSubstring(configMapA))
+					g.Expect(output).To(ContainSubstring(configMapB))
+				}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
 				By("When resource-b is removed from the template")
 				createForm(formName, hubName, `
   configMaps:
@@ -192,6 +212,26 @@ var _ = Describe("Orphan Resource Cleanup", Ordered, func() {
 					cmd := exec.Command("kubectl", "get", "configmap", retainB, "-n", policyTestNamespace)
 					_, err := utils.Run(cmd)
 					g.Expect(err).NotTo(HaveOccurred())
+				}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+				By("And the LynqNode is Ready with AppliedResources populated")
+				Eventually(func(g Gomega) {
+					// Wait for Ready condition
+					cmd := exec.Command("kubectl", "get", "lynqnode", expectedNodeName, "-n", policyTestNamespace,
+						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(output).To(Equal("True"))
+				}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+				Eventually(func(g Gomega) {
+					// Wait for AppliedResources to contain both ConfigMaps
+					cmd := exec.Command("kubectl", "get", "lynqnode", expectedNodeName, "-n", policyTestNamespace,
+						"-o", "jsonpath={.status.appliedResources}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(output).To(ContainSubstring(retainA))
+					g.Expect(output).To(ContainSubstring(retainB))
 				}, policyTestTimeout, policyTestInterval).Should(Succeed())
 
 				By("When retain-b is removed from the template")
@@ -280,6 +320,25 @@ var _ = Describe("Orphan Resource Cleanup", Ordered, func() {
 					cmd := exec.Command("kubectl", "get", "configmap", readoptCM, "-n", policyTestNamespace)
 					_, err := utils.Run(cmd)
 					g.Expect(err).NotTo(HaveOccurred())
+				}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+				By("And the LynqNode is Ready with AppliedResources populated")
+				Eventually(func(g Gomega) {
+					// Wait for Ready condition
+					cmd := exec.Command("kubectl", "get", "lynqnode", expectedNodeName, "-n", policyTestNamespace,
+						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(output).To(Equal("True"))
+				}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+				Eventually(func(g Gomega) {
+					// Wait for AppliedResources to contain the ConfigMap
+					cmd := exec.Command("kubectl", "get", "lynqnode", expectedNodeName, "-n", policyTestNamespace,
+						"-o", "jsonpath={.status.appliedResources}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(output).To(ContainSubstring(readoptCM))
 				}, policyTestTimeout, policyTestInterval).Should(Succeed())
 
 				By("When the resource is removed from template (becomes orphaned)")

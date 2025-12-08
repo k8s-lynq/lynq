@@ -27,6 +27,22 @@ import (
 	"github.com/k8s-lynq/lynq/test/utils"
 )
 
+// verifyConfigMapValue checks that a ConfigMap has been created and verifies a specific data value.
+// Returns the actual value found for the given key.
+func verifyConfigMapValue(configMapName, namespace, dataKey, expectedValue string) {
+	Eventually(func(g Gomega) {
+		cmd := exec.Command("kubectl", "get", "configmap", configMapName, "-n", namespace)
+		_, err := utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred())
+	}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+	cmd := exec.Command("kubectl", "get", "configmap", configMapName, "-n", namespace,
+		"-o", fmt.Sprintf("jsonpath={.data.%s}", dataKey))
+	output, err := utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(output).To(Equal(expectedValue))
+}
+
 var _ = Describe("Template Functions", Ordered, func() {
 	BeforeAll(func() {
 		By("setting up policy test namespace")
@@ -228,39 +244,10 @@ spec:
 				configMapName := fmt.Sprintf("%s-sprig", uid)
 
 				By("Then ConfigMap should contain correctly transformed values")
-				Eventually(func(g Gomega) {
-					cmd := exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace)
-					_, err := utils.Run(cmd)
-					g.Expect(err).NotTo(HaveOccurred())
-				}, policyTestTimeout, policyTestInterval).Should(Succeed())
-
-				// Check upper
-				cmd := exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
-					"-o", "jsonpath={.data.upper-uid}")
-				output, err := utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(output).To(Equal("FUNC-TEST-UID"))
-
-				// Check lower
-				cmd = exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
-					"-o", "jsonpath={.data.lower-uid}")
-				output, err = utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(output).To(Equal("func-test-uid"))
-
-				// Check default with empty string (tests default function behavior with empty values)
-				cmd = exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
-					"-o", "jsonpath={.data.default-val}")
-				output, err = utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(output).To(Equal("fallback"))
-
-				// Check trimmed
-				cmd = exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
-					"-o", "jsonpath={.data.trimmed}")
-				output, err = utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(output).To(Equal("spaces"))
+				verifyConfigMapValue(configMapName, policyTestNamespace, "upper-uid", "FUNC-TEST-UID")
+				verifyConfigMapValue(configMapName, policyTestNamespace, "lower-uid", "func-test-uid")
+				verifyConfigMapValue(configMapName, policyTestNamespace, "default-val", "fallback")
+				verifyConfigMapValue(configMapName, policyTestNamespace, "trimmed", "spaces")
 			})
 		})
 
@@ -376,6 +363,310 @@ spec:
 				output, err = utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(output).To(Equal(hubName))
+			})
+		})
+
+		Describe("Typed template functions (int, float, bool)", func() {
+			It("should convert string values to proper integer types for Kubernetes API", func() {
+				By("Given active data in MySQL with numeric values as strings")
+				// Insert test data with extra value mappings for replicas and port
+				insertSQL := fmt.Sprintf("INSERT INTO nodes (id, active, replicas, app_port) VALUES ('%s', 1, '3', '8080') ON DUPLICATE KEY UPDATE active=1, replicas='3', app_port='8080';", uid)
+				cmd := exec.Command("kubectl", "exec", "-n", policyTestNamespace, "deployment/mysql", "--",
+					"mysql", "-h", "127.0.0.1", "-uroot", "-ptest-password", "testdb", "-e", insertSQL)
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred())
+
+				By("And a LynqHub with extraValueMappings for numeric fields")
+				// Update hub to include extra value mappings
+				hubYAML := fmt.Sprintf(`
+apiVersion: operator.lynq.sh/v1
+kind: LynqHub
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  source:
+    type: mysql
+    syncInterval: 5s
+    mysql:
+      host: mysql.%s.svc.cluster.local
+      port: 3306
+      database: testdb
+      table: nodes
+      username: root
+      passwordRef:
+        name: mysql-root-password
+        key: password
+  valueMappings:
+    uid: id
+    activate: active
+  extraValueMappings:
+    replicas: replicas
+    appPort: app_port
+`, hubName, policyTestNamespace, policyTestNamespace)
+				cmd = exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = utils.StringReader(hubYAML)
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Wait for hub to sync
+				time.Sleep(2 * time.Second)
+
+				By("And a LynqForm using int function for numeric fields")
+				// Create a Deployment with replicas and containerPort using int function
+				createForm(formName, hubName, `
+  configMaps:
+    - id: int-test-config
+      nameTemplate: "{{ .uid }}-int-test"
+      spec:
+        apiVersion: v1
+        kind: ConfigMap
+        data:
+          replicas-str: "{{ .replicas }}"
+          port-str: "{{ .appPort }}"
+  deployments:
+    - id: int-test-deploy
+      nameTemplate: "{{ .uid }}-int-deploy"
+      spec:
+        apiVersion: apps/v1
+        kind: Deployment
+        spec:
+          replicas: "{{ .replicas | int }}"
+          selector:
+            matchLabels:
+              app: "{{ .uid }}"
+          template:
+            metadata:
+              labels:
+                app: "{{ .uid }}"
+            spec:
+              containers:
+                - name: nginx
+                  image: nginx:alpine
+                  ports:
+                    - containerPort: "{{ .appPort | int }}"
+`)
+
+				By("When LynqNode is created")
+				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
+				waitForLynqNode(expectedNodeName)
+
+				deploymentName := fmt.Sprintf("%s-int-deploy", uid)
+
+				By("Then Deployment should be created with correct integer types")
+				// Debug: Print LynqNode status immediately
+				debugCmd := exec.Command("kubectl", "describe", "lynqnode", expectedNodeName, "-n", policyTestNamespace)
+				debugOutput, _ := utils.Run(debugCmd)
+				GinkgoWriter.Printf("DEBUG LynqNode describe:\n%s\n", debugOutput)
+
+				// Debug: Check controller logs
+				logsCmd := exec.Command("kubectl", "logs", "-n", "lynq-system", "deployment/lynq-controller-manager", "--tail=50")
+				logsOutput, _ := utils.Run(logsCmd)
+				GinkgoWriter.Printf("DEBUG Controller logs:\n%s\n", logsOutput)
+
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "deployment", deploymentName, "-n", policyTestNamespace)
+					output, err := utils.Run(cmd)
+					if err != nil {
+						// Debug: Print LynqNode status and events
+						debugCmd := exec.Command("kubectl", "describe", "lynqnode", expectedNodeName, "-n", policyTestNamespace)
+						debugOutput, _ := utils.Run(debugCmd)
+						GinkgoWriter.Printf("DEBUG LynqNode describe:\n%s\n", debugOutput)
+
+						eventsCmd := exec.Command("kubectl", "get", "events", "-n", policyTestNamespace, "--sort-by=.lastTimestamp")
+						eventsOutput, _ := utils.Run(eventsCmd)
+						GinkgoWriter.Printf("DEBUG Events:\n%s\n", eventsOutput)
+
+						// Also print controller logs again
+						logsCmd := exec.Command("kubectl", "logs", "-n", "lynq-system", "deployment/lynq-controller-manager", "--tail=100")
+						logsOutput, _ := utils.Run(logsCmd)
+						GinkgoWriter.Printf("DEBUG Controller logs (detailed):\n%s\n", logsOutput)
+					}
+					g.Expect(err).NotTo(HaveOccurred(), "Failed to get deployment, output: %s", output)
+				}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+				By("And replicas should be a valid integer (not quoted string)")
+				cmd = exec.Command("kubectl", "get", "deployment", deploymentName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.spec.replicas}")
+				output, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(output).To(Equal("3"))
+
+				By("And containerPort should be a valid integer")
+				cmd = exec.Command("kubectl", "get", "deployment", deploymentName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.spec.template.spec.containers[0].ports[0].containerPort}")
+				output, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(output).To(Equal("8080"))
+			})
+
+			It("should convert string values to boolean types", func() {
+				By("Given active data in MySQL")
+				insertTestData(uid, true)
+
+				By("And a LynqForm using bool function")
+				createForm(formName, hubName, `
+  configMaps:
+    - id: bool-test-config
+      nameTemplate: "{{ .uid }}-bool-test"
+      spec:
+        apiVersion: v1
+        kind: ConfigMap
+        data:
+          true-from-string: '{{ "true" | bool }}'
+          false-from-string: '{{ "false" | bool }}'
+          true-from-one: '{{ "1" | bool }}'
+          false-from-zero: '{{ "0" | bool }}'
+          true-from-yes: '{{ "yes" | bool }}'
+`)
+
+				By("When LynqNode is created")
+				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
+				waitForLynqNode(expectedNodeName)
+
+				configMapName := fmt.Sprintf("%s-bool-test", uid)
+
+				By("Then ConfigMap should be created with boolean values")
+				verifyConfigMapValue(configMapName, policyTestNamespace, "true-from-string", "true")
+				verifyConfigMapValue(configMapName, policyTestNamespace, "false-from-string", "false")
+				verifyConfigMapValue(configMapName, policyTestNamespace, "true-from-one", "true")
+				verifyConfigMapValue(configMapName, policyTestNamespace, "true-from-yes", "true")
+			})
+
+			It("should convert string values to float types", func() {
+				By("Given active data in MySQL")
+				insertTestData(uid, true)
+
+				By("And a LynqForm using float function")
+				createForm(formName, hubName, `
+  configMaps:
+    - id: float-test-config
+      nameTemplate: "{{ .uid }}-float-test"
+      spec:
+        apiVersion: v1
+        kind: ConfigMap
+        data:
+          cpu-limit: '{{ "1.5" | float }}'
+          memory-ratio: '{{ "0.75" | float }}'
+          integer-as-float: '{{ "42" | float }}'
+`)
+
+				By("When LynqNode is created")
+				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
+				waitForLynqNode(expectedNodeName)
+
+				configMapName := fmt.Sprintf("%s-float-test", uid)
+
+				By("Then ConfigMap should be created with float values")
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace)
+					_, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+				}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+				cmd := exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.data.cpu-limit}")
+				output, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(output).To(Equal("1.5"))
+
+				cmd = exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.data.memory-ratio}")
+				output, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(output).To(Equal("0.75"))
+
+				cmd = exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.data.integer-as-float}")
+				output, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(output).To(Equal("42"))
+			})
+
+			It("should handle int function with default values for optional fields", func() {
+				By("Given active data in MySQL")
+				insertTestData(uid, true)
+
+				By("And a LynqForm using int with default function")
+				createForm(formName, hubName, `
+  deployments:
+    - id: default-int-deploy
+      nameTemplate: "{{ .uid }}-default-int"
+      spec:
+        apiVersion: apps/v1
+        kind: Deployment
+        spec:
+          replicas: '{{ index . "customReplicas" | default "2" | int }}'
+          selector:
+            matchLabels:
+              app: "{{ .uid }}"
+          template:
+            metadata:
+              labels:
+                app: "{{ .uid }}"
+            spec:
+              containers:
+                - name: nginx
+                  image: nginx:alpine
+`)
+
+				By("When LynqNode is created (customReplicas not provided)")
+				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
+				waitForLynqNode(expectedNodeName)
+
+				deploymentName := fmt.Sprintf("%s-default-int", uid)
+
+				By("Then Deployment should use default replicas value")
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "deployment", deploymentName, "-n", policyTestNamespace,
+						"-o", "jsonpath={.spec.replicas}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(output).To(Equal("2"))
+				}, policyTestTimeout, policyTestInterval).Should(Succeed())
+			})
+
+			It("should gracefully handle invalid values with int function (returns 0)", func() {
+				By("Given active data in MySQL")
+				insertTestData(uid, true)
+
+				By("And a LynqForm using int function with invalid string input")
+				createForm(formName, hubName, `
+  configMaps:
+    - id: invalid-int-config
+      nameTemplate: "{{ .uid }}-invalid-int"
+      spec:
+        apiVersion: v1
+        kind: ConfigMap
+        data:
+          invalid-to-zero: '{{ "not-a-number" | int }}'
+          empty-to-zero: '{{ "" | int }}'
+`)
+
+				By("When LynqNode is created")
+				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
+				waitForLynqNode(expectedNodeName)
+
+				configMapName := fmt.Sprintf("%s-invalid-int", uid)
+
+				By("Then ConfigMap should contain 0 for invalid inputs")
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace)
+					_, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+				}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+				cmd := exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.data.invalid-to-zero}")
+				output, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(output).To(Equal("0"))
+
+				cmd = exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.data.empty-to-zero}")
+				output, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(output).To(Equal("0"))
 			})
 		})
 	})
