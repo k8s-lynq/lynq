@@ -250,7 +250,7 @@ html:not(.dark) .custom-hero::before {
 <h1 class="hero-tagline">Database-Driven<br/>Kubernetes Automation</h1>
 <p class="hero-description">
 Turn database rows into production-ready infrastructure.<br/>
-Automatically.
+Automatically. Welcome to RecordOps.
 </p>
 
 <div class="hero-actions">
@@ -268,7 +268,7 @@ Automatically.
 ## Why Teams Choose Lynq
 
 <p style="text-align: center; color: var(--vp-c-text-2); margin: 0 0 4rem; font-size: 1.1rem; line-height: 1.6; max-width: 900px; margin-left: auto; margin-right: auto;">
-Watch how Lynq transforms complex infrastructure management into elegant automation
+Watch how Lynq transforms complex infrastructure management into elegant automation through <strong>RecordOps</strong>—where your database becomes the control plane for your infrastructure
 </p>
 
 <WhyLynqCards />
@@ -283,11 +283,16 @@ Watch how a simple database change instantly triggers infrastructure updates acr
 
 <div style="text-align: center; margin: 3rem 0;">
   <p style="color: var(--vp-c-text-2); margin-bottom: 1.5rem; font-size: 1rem;">
-    Want to understand the architecture? Learn how LynqHub, LynqForm, and LynqNode work together.
+    Want to understand the architecture? Learn how LynqHub, LynqForm, and LynqNode work together to enable RecordOps.
   </p>
-  <a href="/how-it-works" style="display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.75rem 1.5rem; background: var(--vp-c-brand-soft); color: var(--vp-c-brand); border-radius: 8px; text-decoration: none; font-weight: 600; transition: all 0.2s ease;">
-    Learn How It Works →
-  </a>
+  <div style="display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;">
+    <a href="/recordops" style="display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.75rem 1.5rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 8px; text-decoration: none; font-weight: 600; transition: all 0.2s ease; box-shadow: 0 4px 14px rgba(102, 126, 234, 0.3);">
+      What is RecordOps? →
+    </a>
+    <a href="/how-it-works" style="display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.75rem 1.5rem; background: var(--vp-c-brand-soft); color: var(--vp-c-brand); border-radius: 8px; text-decoration: none; font-weight: 600; transition: all 0.2s ease;">
+      How It Works →
+    </a>
+  </div>
 </div>
 
 ::: tip Start in 5 minutes
@@ -497,6 +502,12 @@ Explore comprehensive guides, API references, and real-world integration example
     <span class="doc-card-icon">📚</span>
     <h3 class="doc-card-title">Core Concepts</h3>
     <ul class="doc-links">
+      <li class="doc-link-item">
+        <a href="/recordops">
+          <span class="doc-link-title">RecordOps</span>
+          <span class="doc-link-desc">Database-driven infrastructure paradigm</span>
+        </a>
+      </li>
       <li class="doc-link-item">
         <a href="/architecture">
           <span class="doc-link-title">Architecture</span>

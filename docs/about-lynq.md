@@ -14,6 +14,8 @@ Here's the thing - as I kept working on it, I realized this wasn't just about te
 
 So I decided to rename it to something that better captures what it does: **Lynq** - because it links your data sources to your Kubernetes resources. Plus, it sounds way better than "TenantOperator", right?
 
+This eventually evolved into what I now call **RecordOps** - a paradigm where your database records become the source of truth for infrastructure. Think GitOps, but with your database instead of Git. When you insert a row, infrastructure provisions. When you update a field, resources reconfigure. When you delete a record, everything cleans up. It's infrastructure management through data.
+
 The big rename happened in **v1.1.9**, and yes, it introduced breaking changes. But here's the thing - the project was only about two weeks old at that point, and I was literally the only person using it 😂 So no one got hurt in the process!
 
 Going forward though, I promise to be more careful. Any breaking changes will be properly documented in `MIGRATION.md` or `BREAKING_CHANGES.md` files with clear upgrade paths.
@@ -38,8 +40,10 @@ Honestly? Pair Lynq with [Crossplane](./integration-crossplane.md), and you can 
 
 ## What Makes It Special
 
-### 🎯 Truly Data-Driven
-I built Lynq to work directly with your existing data sources. No APIs, no webhooks needed - it just watches your database and keeps Kubernetes in sync. Simple as that.
+### 🎯 RecordOps-First Design
+I built Lynq around the RecordOps paradigm - your database records drive infrastructure changes directly. No APIs, no webhooks, no CI/CD pipelines needed. Just change your data, and infrastructure follows automatically. This isn't just convenient; it fundamentally changes how you think about provisioning and operations.
+
+[Learn more about RecordOps →](./recordops.md)
 
 ### 🔧 Flexible Templates
 You get the full power of Go templates plus Sprig functions. I've also added some custom helpers that I found myself needing over and over (like proper host extraction from URLs, SHA1 hashing for resource names, etc.).

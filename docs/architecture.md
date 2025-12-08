@@ -1,6 +1,12 @@
 # Architecture
 
-This document provides a detailed overview of the Lynq's architecture, including system components, reconciliation flow, and key design decisions.
+This document provides a detailed overview of Lynq's RecordOps architecture, including system components, reconciliation flow, and key design decisions that enable database-driven infrastructure automation.
+
+::: tip RecordOps Architecture
+Lynq implements the RecordOps paradigm where database records control infrastructure state. This architecture enables real-time, data-driven provisioning without manual intervention or CI/CD pipelines.
+
+[Learn more about RecordOps →](./recordops.md)
+:::
 
 ## System Overview
 
@@ -77,7 +83,7 @@ Quick reference for the three main components:
 | **LynqForm** | Defines resource blueprint              | Deployment + Service per node       |
 | **LynqNode**       | Instance of a single node               | `acme-corp-web-app` → 5 K8s resources |
 
-**Workflow**: Database row becomes active → LynqHub controller syncs and multiplies rows by all referencing LynqForms → A LynqNode CR is created per `{row × template}` combination → LynqNode controller renders the LynqForm snapshot for that node and applies it via the SSA engine → Kubernetes resources are created/updated and kept in sync.
+**RecordOps Workflow**: Database row becomes active → LynqHub controller syncs and multiplies rows by all referencing LynqForms → A LynqNode CR is created per `{row × template}` combination → LynqNode controller renders the LynqForm snapshot for that node and applies it via the SSA engine → Kubernetes resources are created/updated and kept in sync—all automatically driven by your database records.
 
 ## Reconciliation Flow
 
@@ -384,8 +390,20 @@ The operator is designed to scale horizontally:
 - Resource-type worker pools for parallel processing
 - SSA batching for bulk applies
 
+## RecordOps in Practice
+
+Lynq's architecture is designed around the RecordOps paradigm:
+
+1. **Database as Source of Truth**: Your database records define desired infrastructure state
+2. **Continuous Reconciliation**: Controllers ensure actual state matches database state
+3. **Template-Based Provisioning**: One template definition serves all records
+4. **Automatic Lifecycle**: Insert, update, delete operations in database trigger corresponding infrastructure changes
+
+This architecture enables true database-driven infrastructure where operational changes are simply database transactions.
+
 ## See Also
 
+- [RecordOps](/recordops) - Understanding the paradigm
 - [API Reference](/api) - Complete CRD specification
 - [Policies](/policies) - Lifecycle management policies
 - [Dependencies](/dependencies) - Dependency graph system
