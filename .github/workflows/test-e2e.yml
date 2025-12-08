@@ -2,7 +2,7 @@ name: E2E Tests
 
 on:
   push:
-  pull_request:
+  # pull_request:
 
 jobs:
   test-e2e:
