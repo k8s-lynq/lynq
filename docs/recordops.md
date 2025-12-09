@@ -1,6 +1,6 @@
 # RecordOps: Infrastructure as Data
 
-If you've ever built a multi-tenant SaaS platform, you've probably felt this pain: your customer data lives in your database, but their infrastructure is managed somewhere else—YAML files in Git, Terraform state, manual kubectl commands. Every time you onboard a new customer, you're coordinating between multiple systems that don't naturally talk to each other.
+If you've ever built a multi-tenant SaaS platform, you've probably felt this pain: your customer data lives in your database, but their infrastructure is managed somewhere else (YAML files in Git, Terraform state, manual kubectl commands). Every time you onboard a new customer, you're coordinating between multiple systems that don't naturally talk to each other.
 
 **RecordOps** changes this. It's a new paradigm called **Infrastructure as Data** where database records become the source of truth for infrastructure. When you insert a row, infrastructure provisions. When you update a field, resources reconfigure. When you delete a record, everything cleans up.
 
@@ -8,7 +8,7 @@ If you've ever built a multi-tenant SaaS platform, you've probably felt this pai
 
 ## What is Infrastructure as Data?
 
-You're familiar with Infrastructure as Code (IaC)—using Terraform or Pulumi to define infrastructure through code. Infrastructure as Data (IaD) is different: instead of writing code to describe infrastructure, you write data to describe state.
+You're familiar with Infrastructure as Code (IaC): using Terraform or Pulumi to define infrastructure through code. Infrastructure as Data (IaD) is different: instead of writing code to describe infrastructure, you write data to describe state.
 
 The term was coined by Michael DeHaan (creator of Ansible) in 2013:
 
@@ -42,7 +42,7 @@ UPDATE a column  →  Resources reconfigure
 DELETE a record  →  Everything cleans up
 ```
 
-This is Infrastructure as Data in action—your database becomes your infrastructure control plane.
+This is Infrastructure as Data in action. Your database becomes your infrastructure control plane.
 
 ## Lynq: A RecordOps Platform
 
@@ -128,7 +128,7 @@ WHERE customer_id = 'acme-corp';
 
 :::
 
-No new tooling. No context switching. Just SQL—operations you already know.
+No new tooling. No context switching. Just SQL, operations you already know.
 
 ### Testing Becomes Natural
 
@@ -148,7 +148,7 @@ WHERE id IN (...);
 ```
 
 ::: tip
-30 seconds later, perfect staging environment. Every service, every configuration, every dependency—recreated automatically because the data was copied.
+30 seconds later, perfect staging environment. Every service, every configuration, every dependency recreated automatically because the data was copied.
 :::
 
 ## How Infrastructure as Data Compares
@@ -171,7 +171,7 @@ WHERE id IN (...);
 
 ### Infrastructure as Data vs GitOps
 
-GitOps is great for cluster-level infrastructure. Your operators, CRDs, system services—these should absolutely be in Git with proper review processes.
+GitOps is great for cluster-level infrastructure. Your operators, CRDs, system services should absolutely be in Git with proper review processes.
 
 But for per-customer stacks? Git becomes tedious. You're creating YAML files for each customer, managing merge conflicts, waiting for CI/CD. Infrastructure as Data makes this simple: one database row per customer.
 
@@ -204,7 +204,7 @@ CREATE TABLE tenants (
 );
 ```
 
-This is Infrastructure as Data—columns become infrastructure parameters.
+This is Infrastructure as Data. Columns become infrastructure parameters.
 
 You define a LynqForm template once: "For each active tenant, create namespace, deployment (with `replicas` replicas), service, and ingress (pointing to `domain`)."
 
@@ -222,7 +222,7 @@ Lynq detects the new row within 30 seconds and provisions:
 - **Service**: `acme-corp-app`
 - **Ingress**: Routes `acme.example.com` to the service
 
-This is Infrastructure as Data in practice—data defines infrastructure, Lynq provisions it.
+This is Infrastructure as Data in practice. Data defines infrastructure, Lynq provisions it.
 :::
 
 ## Common Patterns in Infrastructure as Data
@@ -292,7 +292,7 @@ Before: Multiple tools (Git, Terraform, kubectl), multiple contexts, manual coor
 
 Now: One tool (SQL), one context (your database), automatic provisioning
 
-Test changes by inserting test records. Same skills you use every day—writing queries, managing transactions—work for infrastructure too.
+Test changes by inserting test records. Same skills you use every day (writing queries, managing transactions) work for infrastructure too.
 
 ### For Operations
 
@@ -348,7 +348,7 @@ With Infrastructure as Data, your database controls infrastructure. This means:
 ::: danger Security Model Shift
 SQL injection becomes infrastructure injection. User input that manipulates queries could trigger unwanted infrastructure changes.
 
-Always use parameterized queries. Validate all inputs. Protect database credentials—they control your cluster.
+Always use parameterized queries. Validate all inputs. Protect database credentials; they control your cluster.
 :::
 
 ::: info Sync Interval Trade-offs
@@ -407,7 +407,7 @@ Watch infrastructure provision. If something's wrong, delete the row and try aga
 
 ## Closing Thoughts
 
-Infrastructure as Data isn't about replacing every tool you use. It's about recognizing when your infrastructure naturally maps to your data—and eliminating the artificial gap between them.
+Infrastructure as Data isn't about replacing every tool you use. It's about recognizing when your infrastructure naturally maps to your data and eliminating the artificial gap between them.
 
 **Infrastructure as Code** is powerful for cloud resources and cluster setup. **Infrastructure as Data** is powerful for per-customer stacks and data-driven applications.
 
