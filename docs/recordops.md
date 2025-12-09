@@ -8,7 +8,9 @@ RecordOps is a different approach. Your database records become the source of tr
 
 ## What is RecordOps?
 
+::: tip Core Concept
 RecordOps (Record Operations) is an operational pattern where database records define infrastructure state. Instead of maintaining YAML files or writing Terraform code, you define infrastructure parameters as columns in your database tables.
+:::
 
 The pattern is straightforward:
 
@@ -24,50 +26,79 @@ Every active database row represents a running stack in your cluster. That's it.
 
 Let me show you a typical customer onboarding flow:
 
-**Traditional approach:**
-1. Customer signs up, gets inserted into your `customers` table
-2. You write YAML manifests for their namespace, deployment, service, ingress
-3. Commit to Git and wait for approval
-4. CI/CD pipeline runs (if it doesn't fail)
+::: code-group
+
+```text [Traditional Approach]
+1. Customer signs up → INSERT into customers table
+2. Write YAML manifests (namespace, deployment, service, ingress)
+3. Commit to Git and wait for PR approval
+4. Wait for CI/CD pipeline (hope it doesn't fail)
 5. Monitor until everything is up
-6. Update the customer record with their endpoint URL
+6. Update customer record with endpoint URL
 
-This works, but it feels disconnected. Your application already knows about the customer (it's in your database), but now you need to manually coordinate with your infrastructure system.
+⏱️  Time: 15-45 minutes
+🔄  Manual steps: 6
+❌  Points of failure: Multiple
+```
 
-**RecordOps approach:**
+```text [RecordOps Approach]
 1. Customer signs up
-2. `INSERT INTO customers (id, domain, plan, active) VALUES (...)`
-3. Infrastructure provisions automatically within 30 seconds
+2. INSERT INTO customers (id, domain, plan, active) VALUES (...)
+3. Infrastructure provisions automatically
 
-The database transaction is all you need. Your application's data model and your infrastructure model are the same thing.
+⏱️  Time: 30 seconds
+🔄  Manual steps: 1
+✅  Just works
+```
+
+:::
+
+::: info The Key Insight
+Your application already knows about the customer through the database. With RecordOps, your application's data model and your infrastructure model are the same thing.
+:::
 
 ## Why This Resonates
 
 ### Your Database Already Has the Answers
 
-Think about it: your database already contains all the information needed to provision infrastructure. Customer ID, domain, plan, region, feature flags—it's all there. You're just duplicating this information in YAML files or Terraform variables.
+Think about what information you need to provision infrastructure:
+- Customer ID
+- Domain name
+- Plan/tier
+- Region
+- Resource limits
+- Feature flags
 
+All of this is already in your database. You're just duplicating it in YAML files or Terraform variables.
+
+::: tip Question Worth Asking
 What if infrastructure could just read from the same place your application does?
+:::
 
 ### Operations Are Just Data Changes
 
 When you think about common operational tasks, they're really just data changes:
 
-**Scaling a customer:**
-```sql
-UPDATE customers SET replicas = 10 WHERE id = 'acme-corp';
+::: code-group
+
+```sql [Scale a Customer]
+UPDATE customers
+SET replicas = 10
+WHERE id = 'acme-corp';
 ```
 
-**Enabling a feature:**
-```sql
+```sql [Enable a Feature]
 INSERT INTO feature_flags (customer_id, feature, enabled)
 VALUES ('acme-corp', 'ai-assistant', true);
 ```
 
-**Rolling back a deployment:**
-```sql
-UPDATE deployments SET active_version = 'blue' WHERE customer_id = 'acme-corp';
+```sql [Rollback Deployment]
+UPDATE deployments
+SET active_version = 'blue'
+WHERE customer_id = 'acme-corp';
 ```
+
+:::
 
 These are operations you already know how to do. They're part of your normal workflow. Why should provisioning infrastructure require learning a completely different toolchain?
 
@@ -88,7 +119,9 @@ SET environment = 'staging',
 WHERE id IN (...);
 ```
 
+::: tip
 30 seconds later, you have a perfect copy of production running in staging. Every service, every configuration, every dependency—recreated automatically because the data was copied.
+:::
 
 ## How It Compares to Other Approaches
 
@@ -98,9 +131,10 @@ GitOps is great for cluster-level infrastructure. Your operators, CRDs, system s
 
 But for per-customer stacks? Git becomes tedious. You're creating YAML files for each customer, managing merge conflicts, waiting for CI/CD. Meanwhile, your application already knows about these customers through the database.
 
-RecordOps and GitOps work well together:
+::: info They Work Well Together
 - **GitOps**: Cluster-level configuration (changes infrequently, requires review)
 - **RecordOps**: Customer-level resources (changes frequently, follows your data)
+:::
 
 ### vs Traditional IaC
 
@@ -143,18 +177,19 @@ INSERT INTO tenants VALUES
   ('acme-corp', 'acme.example.com', 'enterprise', true, 5);
 ```
 
+::: tip What Happens Automatically
 Lynq detects the new row within 30 seconds and provisions:
-- Namespace: `acme-corp`
-- Deployment: 5 replicas
-- Service: `acme-corp-app`
-- Ingress: Routes `acme.example.com` to the service
+- **Namespace**: `acme-corp`
+- **Deployment**: 5 replicas
+- **Service**: `acme-corp-app`
+- **Ingress**: Routes `acme.example.com` to the service
 
 All automatically. No manual steps.
+:::
 
 ## Common Patterns
 
-### Feature Flags Control Infrastructure
-
+::: details Pattern 1: Feature Flags Control Infrastructure
 Instead of deploying optional features for everyone, make them data-driven:
 
 ```sql
@@ -171,9 +206,9 @@ INSERT INTO feature_flags VALUES ('acme-corp', 'ai-assistant', true);
 Your LynqForm template includes conditional logic: if the feature flag exists and is enabled, deploy the AI service. If disabled or absent, skip it.
 
 Suddenly your infrastructure adapts to your feature flags automatically.
+:::
 
-### Blue-Green Deployments as a Column
-
+::: details Pattern 2: Blue-Green Deployments as a Column
 ```sql
 CREATE TABLE deployments (
   tenant_id VARCHAR(50),
@@ -185,9 +220,9 @@ UPDATE deployments SET active_version = 'green' WHERE tenant_id = 'acme-corp';
 ```
 
 Your service selector updates to point to the green deployment. Traffic switches within seconds. Roll back by changing the column back to 'blue'.
+:::
 
-### Ephemeral Environments with TTL
-
+::: details Pattern 3: Ephemeral Environments with TTL
 ```sql
 -- Create temporary environment
 INSERT INTO environments (id, domain, ttl)
@@ -202,6 +237,7 @@ END;
 ```
 
 Environments provision on insert and automatically clean up after their TTL. Perfect for demo environments or PR previews.
+:::
 
 ## Practical Benefits
 
@@ -223,40 +259,42 @@ Customer onboarding is faster because there's less coordination. Feature rollout
 
 ## When RecordOps Makes Sense
 
-This pattern works well when:
-
+::: tip ✅ Good Fit
 - You're building a multi-tenant platform where each customer/project needs isolated infrastructure
 - You provision infrastructure frequently (multiple times per day)
 - Your infrastructure follows your data model closely
 - You want less coordination between application logic and infrastructure
+:::
 
-It's probably not the right fit if:
-
+::: warning ❌ Probably Not Right If
 - You rarely provision new infrastructure (once a month or less)
 - Your infrastructure requires manual approval for every change
 - You need deep integration with cloud provider services beyond Kubernetes
+:::
 
+::: info 🤝 Mix Approaches
 And honestly, you can mix approaches. Use GitOps for cluster-level config, RecordOps for per-tenant stacks, and manual processes for critical infrastructure changes. They complement each other.
+:::
 
 ## Things to Consider
 
-### Your Database Becomes More Critical
-
+::: warning Your Database Becomes More Critical
 With RecordOps, your database isn't just storing application data—it's controlling infrastructure. This means:
 
-- Database availability matters more. If the database is down, you can't provision new infrastructure (though existing infrastructure keeps running)
-- Schema migrations affect infrastructure. Test them carefully in staging
-- Database permissions become infrastructure permissions. Be thoughtful about who can write to these tables
+- **Database availability matters more**. If the database is down, you can't provision new infrastructure (though existing infrastructure keeps running)
+- **Schema migrations affect infrastructure**. Test them carefully in staging
+- **Database permissions become infrastructure permissions**. Be thoughtful about who can write to these tables
+:::
 
-### Security Model Changes
-
+::: danger Security Model Changes
 SQL injection vulnerabilities become infrastructure vulnerabilities. If user input can manipulate your queries, they could potentially trigger unwanted infrastructure changes. Validate inputs carefully and use parameterized queries.
 
 Database credentials need strong protection—they control your cluster.
+:::
 
-### You Need to Think About Sync Delays
-
+::: info Sync Delays
 Lynq syncs your database every 30 seconds by default. That means there's a small delay between when you insert a row and when infrastructure provisions. For most cases, this is fine. But if you need instant provisioning, you'll need to tune the sync interval or reconsider the approach.
+:::
 
 ## Getting Started
 
