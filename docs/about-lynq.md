@@ -14,7 +14,9 @@ Here's the thing - as I kept working on it, I realized this wasn't just about te
 
 So I decided to rename it to something that better captures what it does: **Lynq** - because it links your data sources to your Kubernetes resources. Plus, it sounds way better than "TenantOperator", right?
 
-This eventually evolved into what I now call **RecordOps** - a paradigm where your database records become the source of truth for infrastructure. Think GitOps, but with your database instead of Git. When you insert a row, infrastructure provisions. When you update a field, resources reconfigure. When you delete a record, everything cleans up. It's infrastructure management through data.
+This eventually evolved into what I now call **RecordOps**—an operational pattern that implements **Infrastructure as Data**. Think GitOps, but with your database instead of Git. When you insert a row, infrastructure provisions. When you update a field, resources reconfigure. When you delete a record, everything cleans up.
+
+It's a shift from Infrastructure as Code to Infrastructure as Data. Instead of writing code to describe infrastructure, you write data to describe state.
 
 The big rename happened in **v1.1.9**, and yes, it introduced breaking changes. But here's the thing - the project was only about two weeks old at that point, and I was literally the only person using it 😂 So no one got hurt in the process!
 
@@ -40,10 +42,12 @@ Honestly? Pair Lynq with [Crossplane](./integration-crossplane.md), and you can 
 
 ## What Makes It Special
 
-### 🎯 RecordOps-First Design
-I built Lynq around the RecordOps paradigm - your database records drive infrastructure changes directly. No APIs, no webhooks, no CI/CD pipelines needed. Just change your data, and infrastructure follows automatically. This isn't just convenient; it fundamentally changes how you think about provisioning and operations.
+### 🎯 Infrastructure as Data
+Lynq is a RecordOps platform that implements **Infrastructure as Data**—a paradigm where database records become infrastructure specifications. Instead of Infrastructure as Code (writing Terraform/YAML), you have Infrastructure as Data (writing SQL/database rows).
 
-[Learn more about RecordOps →](./recordops.md)
+Your database schema IS your infrastructure API. Change your data, infrastructure follows automatically. No CI/CD pipelines. No coordination between systems.
+
+[Learn more about Infrastructure as Data →](./recordops.md)
 
 ### 🔧 Flexible Templates
 You get the full power of Go templates plus Sprig functions. I've also added some custom helpers that I found myself needing over and over (like proper host extraction from URLs, SHA1 hashing for resource names, etc.).

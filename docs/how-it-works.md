@@ -4,14 +4,14 @@ aside: false
 
 # How Lynq Works
 
-Lynq bridges your database and Kubernetes with a simple three-component architecture that automates infrastructure provisioning based on your data. This is **RecordOps** in action—where database records become the source of truth for your infrastructure.
+Lynq is a **RecordOps platform** that implements **Infrastructure as Data** for Kubernetes. It bridges your database and cluster with a three-component architecture that automates infrastructure provisioning based on database records.
 
 [[toc]]
 
-::: tip What is RecordOps?
-RecordOps is a paradigm where your database records control infrastructure state. When you insert, update, or delete a row, infrastructure changes automatically. No manual deployments, no CI/CD delays—just real-time infrastructure that follows your data.
+::: tip Infrastructure as Data in Action
+Lynq implements Infrastructure as Data through RecordOps—database records control infrastructure state. When you insert, update, or delete a row, infrastructure changes automatically. No YAML files, no CI/CD delays—just real-time infrastructure that follows your data.
 
-[Learn more about RecordOps →](./recordops.md)
+[Learn more about Infrastructure as Data →](./recordops.md)
 :::
 
 ## Architecture Overview
@@ -24,7 +24,7 @@ Click **LynqHub** and **LynqForm** to see the YAML configuration, or click datab
 
 ## Three Simple Steps
 
-Lynq operates through a straightforward three-step RecordOps process that eliminates manual infrastructure management.
+Lynq implements Infrastructure as Data through a straightforward three-step process that eliminates manual infrastructure management.
 
 <style scoped>
 .step-card {
@@ -223,9 +223,9 @@ sequenceDiagram
 
 ## Key Features
 
-### Real-Time Synchronization (RecordOps)
+### Real-Time Synchronization
 
-Changes in your database trigger automatic infrastructure updates within 30 seconds (default hub sync interval). This is the core of RecordOps: your database transaction becomes an infrastructure operation.
+Changes in your database trigger automatic infrastructure updates within 30 seconds (default hub sync interval). This is Infrastructure as Data in practice: your database transaction becomes an infrastructure operation.
 
 ### Drift Detection & Auto-Correction
 
@@ -293,11 +293,11 @@ Tune performance with concurrent reconciliation:
 
 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; margin: 2rem 0">
   <div style="padding: 1.5rem; background: var(--vp-c-bg-soft); border-radius: 8px; border: 1px solid var(--vp-c-divider);">
-    <strong style="display: block; margin-bottom: 0.5rem;">💡 RecordOps</strong>
+    <strong style="display: block; margin-bottom: 0.5rem;">💡 Infrastructure as Data</strong>
     <p style="margin: 0 0 0.75rem; font-size: 0.9rem; color: var(--vp-c-text-2);">
       Understand the paradigm behind Lynq
     </p>
-    <a href="/recordops" style="color: var(--vp-c-brand);">Learn RecordOps →</a>
+    <a href="/recordops" style="color: var(--vp-c-brand);">Learn the Paradigm →</a>
   </div>
 
   <div style="padding: 1.5rem; background: var(--vp-c-bg-soft); border-radius: 8px; border: 1px solid var(--vp-c-divider);">

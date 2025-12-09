@@ -1,15 +1,31 @@
-# RecordOps: Infrastructure That Follows Your Data
+# RecordOps: Infrastructure as Data
 
 If you've ever built a multi-tenant SaaS platform, you've probably felt this pain: your customer data lives in your database, but their infrastructure is managed somewhere else—YAML files in Git, Terraform state, manual kubectl commands. Every time you onboard a new customer, you're coordinating between multiple systems that don't naturally talk to each other.
 
-RecordOps is a different approach. Your database records become the source of truth for infrastructure. When you insert a row, infrastructure provisions. When you update a field, resources reconfigure. When you delete a record, everything cleans up. It's infrastructure management that's as simple as managing data.
+**RecordOps** changes this. It's a new paradigm called **Infrastructure as Data** where database records become the source of truth for infrastructure. When you insert a row, infrastructure provisions. When you update a field, resources reconfigure. When you delete a record, everything cleans up.
 
 [[toc]]
 
+## What is Infrastructure as Data?
+
+You're familiar with Infrastructure as Code (IaC)—using Terraform or Pulumi to define infrastructure through code. **Infrastructure as Data (IaD)** is different: instead of writing code to describe infrastructure, you write data to describe state.
+
+::: tip The Paradigm Shift
+- **Infrastructure as Code**: Write code (HCL, TypeScript) → Run apply → Infrastructure changes
+- **Infrastructure as Data**: Write data (SQL, database rows) → Infrastructure follows automatically
+:::
+
+Infrastructure as Data makes sense when:
+- Your infrastructure maps directly to your data model (one customer = one stack)
+- You're provisioning the same pattern repeatedly
+- Your application already knows everything needed to provision infrastructure
+
 ## What is RecordOps?
 
-::: tip Core Concept
-RecordOps (Record Operations) is an operational pattern where database records define infrastructure state. Instead of maintaining YAML files or writing Terraform code, you define infrastructure parameters as columns in your database tables.
+**RecordOps** (Record Operations) is the operational pattern that implements Infrastructure as Data. It treats database records as infrastructure specifications.
+
+::: tip Core Principle
+RecordOps is how you practice Infrastructure as Data in production. Every database record defines a running stack in your cluster.
 :::
 
 The pattern is straightforward:
@@ -20,7 +36,13 @@ UPDATE a column  →  Resources reconfigure
 DELETE a record  →  Everything cleans up
 ```
 
-Every active database row represents a running stack in your cluster. That's it.
+This is Infrastructure as Data in action—your database becomes your infrastructure control plane.
+
+## Lynq: A RecordOps Platform
+
+**Lynq** is an open-source Kubernetes operator that implements the RecordOps pattern. It's a practical implementation of Infrastructure as Data for cloud-native environments.
+
+Lynq watches your database and continuously syncs infrastructure state to match your data. It's infrastructure management that's as simple as managing database records.
 
 ## The Problem This Solves
 
@@ -28,9 +50,9 @@ Let me show you a typical customer onboarding flow:
 
 ::: code-group
 
-```text [Traditional Approach]
+```text [Infrastructure as Code (Traditional)]
 1. Customer signs up → INSERT into customers table
-2. Write YAML manifests (namespace, deployment, service, ingress)
+2. Write Terraform/YAML manifests
 3. Commit to Git and wait for PR approval
 4. Wait for CI/CD pipeline (hope it doesn't fail)
 5. Monitor until everything is up
@@ -38,26 +60,26 @@ Let me show you a typical customer onboarding flow:
 
 ⏱️  Time: 15-45 minutes
 🔄  Manual steps: 6
-❌  Points of failure: Multiple
+❌  Context switches: Multiple systems
 ```
 
-```text [RecordOps Approach]
+```text [Infrastructure as Data (RecordOps)]
 1. Customer signs up
 2. INSERT INTO customers (id, domain, plan, active) VALUES (...)
 3. Infrastructure provisions automatically
 
 ⏱️  Time: 30 seconds
 🔄  Manual steps: 1
-✅  Just works
+✅  One system: Your database
 ```
 
 :::
 
 ::: info The Key Insight
-Your application already knows about the customer through the database. With RecordOps, your application's data model and your infrastructure model are the same thing.
+With Infrastructure as Data, your application's data model IS your infrastructure model. No duplication. No coordination. Just data.
 :::
 
-## Why This Resonates
+## Why Infrastructure as Data?
 
 ### Your Database Already Has the Answers
 
@@ -69,15 +91,15 @@ Think about what information you need to provision infrastructure:
 - Resource limits
 - Feature flags
 
-All of this is already in your database. You're just duplicating it in YAML files or Terraform variables.
+All of this is already in your database. Infrastructure as Code duplicates this in YAML files or Terraform variables. Infrastructure as Data just reads it directly.
 
 ::: tip Question Worth Asking
-What if infrastructure could just read from the same place your application does?
+If your infrastructure maps to your data, why not let your data drive your infrastructure?
 :::
 
-### Operations Are Just Data Changes
+### Operations Become Data Changes
 
-When you think about common operational tasks, they're really just data changes:
+With Infrastructure as Data, operational tasks are just database operations:
 
 ::: code-group
 
@@ -100,13 +122,13 @@ WHERE customer_id = 'acme-corp';
 
 :::
 
-These are operations you already know how to do. They're part of your normal workflow. Why should provisioning infrastructure require learning a completely different toolchain?
+No new tooling. No context switching. Just SQL—operations you already know.
 
 ### Testing Becomes Natural
 
-With traditional infrastructure, cloning an environment is a project. You need to export state, modify variables, coordinate across systems.
+Infrastructure as Code cloning: Export state → Modify variables → Run apply → Debug conflicts → Maybe it works
 
-With RecordOps, cloning an environment is just cloning database rows:
+Infrastructure as Data cloning: Clone database rows
 
 ```sql
 -- Clone production to staging
@@ -120,43 +142,50 @@ WHERE id IN (...);
 ```
 
 ::: tip
-30 seconds later, you have a perfect copy of production running in staging. Every service, every configuration, every dependency—recreated automatically because the data was copied.
+30 seconds later, perfect staging environment. Every service, every configuration, every dependency—recreated automatically because the data was copied.
 :::
 
-## How It Compares to Other Approaches
+## How Infrastructure as Data Compares
 
-### vs GitOps
+### Infrastructure as Data vs Infrastructure as Code
+
+| Aspect | Infrastructure as Code | Infrastructure as Data |
+|--------|----------------------|----------------------|
+| **Definition** | Code describes infrastructure | Data describes state |
+| **Language** | HCL, TypeScript, Python | SQL, database schema |
+| **Execution** | Manual plan/apply | Automatic sync |
+| **State Storage** | Separate state files | Database is the state |
+| **Best For** | Cloud resources, cluster setup | Per-customer stacks, data-driven apps |
+
+::: info They Complement Each Other
+- **IaC**: Provision your Kubernetes cluster, cloud resources
+- **IaD**: Provision customer/tenant infrastructure within that cluster
+:::
+
+### Infrastructure as Data vs GitOps
 
 GitOps is great for cluster-level infrastructure. Your operators, CRDs, system services—these should absolutely be in Git with proper review processes.
 
-But for per-customer stacks? Git becomes tedious. You're creating YAML files for each customer, managing merge conflicts, waiting for CI/CD. Meanwhile, your application already knows about these customers through the database.
+But for per-customer stacks? Git becomes tedious. You're creating YAML files for each customer, managing merge conflicts, waiting for CI/CD. Infrastructure as Data makes this simple: one database row per customer.
 
 ::: info They Work Well Together
 - **GitOps**: Cluster-level configuration (changes infrequently, requires review)
-- **RecordOps**: Customer-level resources (changes frequently, follows your data)
+- **Infrastructure as Data**: Customer-level resources (changes frequently, follows your data)
 :::
 
-### vs Traditional IaC
+## RecordOps with Lynq: Implementation Details
 
-Terraform and Pulumi are excellent for cloud infrastructure. If you're provisioning AWS resources or managing your Kubernetes cluster itself, use them.
+Lynq implements Infrastructure as Data through three components:
 
-But if you're provisioning the same pattern repeatedly (one stack per customer, one environment per project), you might not need infrastructure-as-code. You might just need infrastructure-as-data.
+**1. LynqHub** - Database watcher that syncs records every 30 seconds (configurable)
 
-Instead of writing code to describe infrastructure, you're adding rows to describe state. It's a different mental model that maps naturally to applications built around a database.
+**2. LynqForm** - Infrastructure template. Defines what each database record creates
 
-## RecordOps with Lynq
-
-Lynq implements this pattern for Kubernetes. Here's how it works:
-
-**1. LynqHub** - Connects to your database and syncs records periodically (default: every 30 seconds)
-
-**2. LynqForm** - Defines the infrastructure template. What should each record create? A deployment? Services? Ingresses?
-
-**3. LynqNode** - Represents each active record. One LynqNode per row, managing all resources for that customer/tenant/project.
+**3. LynqNode** - One per active record, managing all resources for that customer/tenant/project
 
 ### A Concrete Example
 
-Let's say you have a `tenants` table:
+Your database schema defines your infrastructure API:
 
 ```sql
 CREATE TABLE tenants (
@@ -168,9 +197,11 @@ CREATE TABLE tenants (
 );
 ```
 
-You point Lynq to this table and define a template that says: "For each active tenant, create a namespace, deployment (with `replicas` replicas), service, and ingress (pointing to `domain`)."
+This is Infrastructure as Data—columns become infrastructure parameters.
 
-Now when you insert:
+You define a LynqForm template once: "For each active tenant, create namespace, deployment (with `replicas` replicas), service, and ingress (pointing to `domain`)."
+
+Now infrastructure follows your data:
 
 ```sql
 INSERT INTO tenants VALUES
@@ -184,13 +215,13 @@ Lynq detects the new row within 30 seconds and provisions:
 - **Service**: `acme-corp-app`
 - **Ingress**: Routes `acme.example.com` to the service
 
-All automatically. No manual steps.
+This is Infrastructure as Data in practice—data defines infrastructure, Lynq provisions it.
 :::
 
-## Common Patterns
+## Common Patterns in Infrastructure as Data
 
-::: details Pattern 1: Feature Flags Control Infrastructure
-Instead of deploying optional features for everyone, make them data-driven:
+::: details Pattern 1: Feature Flags as Infrastructure Parameters
+Infrastructure as Data makes feature flags literal infrastructure parameters:
 
 ```sql
 CREATE TABLE feature_flags (
@@ -199,36 +230,43 @@ CREATE TABLE feature_flags (
   enabled BOOLEAN
 );
 
--- Enable AI assistant for specific customer
+-- Feature flag becomes infrastructure
 INSERT INTO feature_flags VALUES ('acme-corp', 'ai-assistant', true);
 ```
 
-Your LynqForm template includes conditional logic: if the feature flag exists and is enabled, deploy the AI service. If disabled or absent, skip it.
-
-Suddenly your infrastructure adapts to your feature flags automatically.
+Your template has conditional logic: if `ai-assistant` flag is enabled, deploy AI service. Otherwise, skip it. Infrastructure automatically adapts to your data.
 :::
 
 ::: details Pattern 2: Blue-Green Deployments as a Column
+With Infrastructure as Data, deployment strategy is just a column:
+
 ```sql
 CREATE TABLE deployments (
   tenant_id VARCHAR(50),
   active_version VARCHAR(10) -- 'blue' or 'green'
 );
 
--- Switch traffic
+-- Change the data, change the infrastructure
 UPDATE deployments SET active_version = 'green' WHERE tenant_id = 'acme-corp';
 ```
 
-Your service selector updates to point to the green deployment. Traffic switches within seconds. Roll back by changing the column back to 'blue'.
+Service selector updates automatically. Traffic switches in seconds. Roll back by changing the column back to 'blue'.
 :::
 
 ::: details Pattern 3: Ephemeral Environments with TTL
-```sql
--- Create temporary environment
-INSERT INTO environments (id, domain, ttl)
-VALUES ('demo-acme', 'demo-acme.example.com', NOW() + INTERVAL 7 DAY);
+Infrastructure as Data with lifecycle management:
 
--- Add a database trigger to clean up expired environments
+```sql
+CREATE TABLE environments (
+  id VARCHAR(50),
+  domain VARCHAR(255),
+  ttl TIMESTAMP
+);
+
+INSERT INTO environments VALUES
+  ('demo-acme', 'demo-acme.example.com', NOW() + INTERVAL 7 DAY);
+
+-- Database trigger cleans up expired data
 CREATE TRIGGER cleanup_expired
 AFTER INSERT OR UPDATE ON environments
 BEGIN
@@ -236,75 +274,87 @@ BEGIN
 END;
 ```
 
-Environments provision on insert and automatically clean up after their TTL. Perfect for demo environments or PR previews.
+When the data is deleted, infrastructure cleans up automatically. Perfect for demo environments or PR previews.
 :::
 
-## Practical Benefits
+## Practical Benefits of Infrastructure as Data
 
 ### For Development
 
-Before, adding a customer meant coordinating across multiple systems. Now it's just a database operation. The same skills you use every day—writing queries, managing transactions—work for infrastructure too.
+Before: Multiple tools (Git, Terraform, kubectl), multiple contexts, manual coordination
 
-You can test changes by inserting test records. No need to learn Terraform or maintain separate YAML files.
+Now: One tool (SQL), one context (your database), automatic provisioning
+
+Test changes by inserting test records. Same skills you use every day—writing queries, managing transactions—work for infrastructure too.
 
 ### For Operations
 
-Your infrastructure state is in the same place as your application state. Audit logs are database logs. Backups include infrastructure configuration. There's no need to reconcile state files or worry about drift—Lynq continuously syncs your database to the cluster.
+Before: Infrastructure state scattered (Git, Terraform state, Vault, etc.)
 
-Rollbacks are straightforward: restore your database, and infrastructure recreates automatically.
+Now: Infrastructure state in one place (your database)
 
-### For the Business
+- Audit logs are database logs
+- Backups include infrastructure configuration
+- No state file reconciliation
+- Automatic drift correction (Lynq continuously syncs database to cluster)
 
-Customer onboarding is faster because there's less coordination. Feature rollouts are simpler because they're just database toggles. The gap between what your application knows and what your infrastructure provides shrinks to almost nothing.
+Rollbacks: Restore database → Infrastructure recreates automatically
 
-## When RecordOps Makes Sense
+### For Business
 
-::: tip ✅ Good Fit
-- You're building a multi-tenant platform where each customer/project needs isolated infrastructure
-- You provision infrastructure frequently (multiple times per day)
-- Your infrastructure follows your data model closely
-- You want less coordination between application logic and infrastructure
+Before: Customer onboarding takes 15-45 minutes of manual coordination
+
+Now: Customer onboarding is a database transaction (30 seconds)
+
+Feature rollouts are database toggles. The gap between what your application knows and what your infrastructure provides disappears.
+
+## When Infrastructure as Data Makes Sense
+
+::: tip ✅ Perfect For
+- **Multi-tenant SaaS platforms** - Each customer/tenant needs isolated infrastructure
+- **Data-driven applications** - Infrastructure follows your data model
+- **Frequent provisioning** - Multiple times per day
+- **Repeated patterns** - Same stack per customer/project
 :::
 
-::: warning ❌ Probably Not Right If
-- You rarely provision new infrastructure (once a month or less)
-- Your infrastructure requires manual approval for every change
-- You need deep integration with cloud provider services beyond Kubernetes
+::: warning ❌ Better to Use Infrastructure as Code If
+- You rarely provision infrastructure (once a month or less)
+- Infrastructure requires manual approval for every change
+- You need deep cloud provider integrations (use Terraform)
+- Infrastructure doesn't map to database records
 :::
 
-::: info 🤝 Mix Approaches
-And honestly, you can mix approaches. Use GitOps for cluster-level config, RecordOps for per-tenant stacks, and manual processes for critical infrastructure changes. They complement each other.
+::: info 🤝 Best: Combine Both
+Use Infrastructure as Code for your cluster and cloud resources. Use Infrastructure as Data for customer/tenant infrastructure. They complement each other perfectly.
 :::
 
-## Things to Consider
+## Considerations for Infrastructure as Data
 
-::: warning Your Database Becomes More Critical
-With RecordOps, your database isn't just storing application data—it's controlling infrastructure. This means:
+::: warning Your Database Becomes Infrastructure Control Plane
+With Infrastructure as Data, your database controls infrastructure. This means:
 
-- **Database availability matters more**. If the database is down, you can't provision new infrastructure (though existing infrastructure keeps running)
-- **Schema migrations affect infrastructure**. Test them carefully in staging
-- **Database permissions become infrastructure permissions**. Be thoughtful about who can write to these tables
+- **Database availability is critical** - Though existing infrastructure keeps running if DB goes down
+- **Schema migrations affect infrastructure** - Test carefully in staging
+- **Database permissions = Infrastructure permissions** - Be thoughtful about access control
 :::
 
-::: danger Security Model Changes
-SQL injection vulnerabilities become infrastructure vulnerabilities. If user input can manipulate your queries, they could potentially trigger unwanted infrastructure changes. Validate inputs carefully and use parameterized queries.
+::: danger Security Model Shift
+SQL injection becomes infrastructure injection. User input that manipulates queries could trigger unwanted infrastructure changes.
 
-Database credentials need strong protection—they control your cluster.
+Always use parameterized queries. Validate all inputs. Protect database credentials—they control your cluster.
 :::
 
-::: info Sync Delays
-Lynq syncs your database every 30 seconds by default. That means there's a small delay between when you insert a row and when infrastructure provisions. For most cases, this is fine. But if you need instant provisioning, you'll need to tune the sync interval or reconsider the approach.
+::: info Sync Interval Trade-offs
+Lynq syncs every 30 seconds by default. Small delay between data change and infrastructure provisioning. For most cases, this is fine. Tune as needed for your latency requirements.
 :::
 
-## Getting Started
+## Getting Started with Infrastructure as Data
 
-If this resonates with you, here's how to try it:
+Ready to try Infrastructure as Data with Lynq?
 
-**1. Identify your infrastructure records**
+**1. Design your data schema as infrastructure API**
 
-What database rows should represent infrastructure? Customers? Projects? Deployments? Feature environments?
-
-**2. Add infrastructure columns**
+What database rows should represent infrastructure? Customers? Projects? Environments?
 
 ```sql
 ALTER TABLE customers
@@ -313,7 +363,9 @@ ALTER TABLE customers
   ADD COLUMN active BOOLEAN DEFAULT TRUE;
 ```
 
-**3. Install Lynq and point it at your database**
+Your schema IS your infrastructure API.
+
+**2. Install Lynq and connect to your database**
 
 ```yaml
 apiVersion: operator.lynq.sh/v1
@@ -334,33 +386,33 @@ spec:
     plan: plan
 ```
 
-**4. Define your template**
+**3. Define your infrastructure template**
 
-What should each customer get? A namespace? Deployment? Services? Define it once, and it applies to every row.
+What should each record create? Namespace? Deployment? Services? Define once in a LynqForm.
 
-**5. Test with a single record**
+**4. Test with data**
 
 ```sql
 INSERT INTO customers VALUES ('test', 'test.example.com', 'pro', true, 2);
 ```
 
-Watch it provision. If something's wrong, delete the row and try again. It's just data.
+Watch infrastructure provision. If something's wrong, delete the row and try again. It's just data.
 
 ## Closing Thoughts
 
-RecordOps isn't revolutionary—it's actually pretty obvious once you see it. If your infrastructure maps to your data, why not let your data drive your infrastructure?
+Infrastructure as Data isn't about replacing every tool you use. It's about recognizing when your infrastructure naturally maps to your data—and eliminating the artificial gap between them.
 
-This pattern won't replace every infrastructure tool you use. But for the specific problem of provisioning repeated patterns (per-customer stacks, per-project environments), it might make your life simpler.
+**Infrastructure as Code** is powerful for cloud resources and cluster setup. **Infrastructure as Data** is powerful for per-customer stacks and data-driven applications.
 
-I built Lynq because I kept solving the same problem: syncing my application's database state with infrastructure state. Eventually I realized they could be the same thing.
+**RecordOps** is how you practice Infrastructure as Data. **Lynq** is an open-source platform that implements it for Kubernetes.
 
-If that sounds familiar, maybe RecordOps is worth exploring.
+If your infrastructure follows your data model, maybe it's time to let your data drive your infrastructure directly.
 
 ## Learn More
 
-- [How Lynq Works](./how-it-works.md) - Technical architecture
-- [Quick Start](./quickstart.md) - Try it in 5 minutes
-- [Architecture](./architecture.md) - System design
+- [How Lynq Works](./how-it-works.md) - RecordOps architecture
+- [Quick Start](./quickstart.md) - Try Infrastructure as Data in 5 minutes
+- [Architecture](./architecture.md) - Lynq system design
 - [Use Cases](./advanced-use-cases.md) - Real-world patterns
 
 ---

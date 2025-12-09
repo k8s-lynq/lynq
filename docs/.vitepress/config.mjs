@@ -5,7 +5,7 @@ import { withMermaid } from "vitepress-plugin-mermaid";
 export default withMermaid(
   defineConfig({
     title: "Lynq",
-    description: "RecordOps Platform - Database-Driven Kubernetes Automation",
+    description: "Infrastructure as Data for Kubernetes - A RecordOps Platform",
     base: "/",
     srcDir: ".",
     ignoreDeadLinks: false,
@@ -37,7 +37,7 @@ export default withMermaid(
           text: "Core Concepts",
           collapsed: false,
           items: [
-            { text: "RecordOps", link: "/recordops" },
+            { text: "Infrastructure as Data", link: "/recordops" },
             { text: "How It Works", link: "/how-it-works" },
             { text: "Architecture", link: "/architecture" },
             { text: "API Reference", link: "/api" },
@@ -265,7 +265,7 @@ export default withMermaid(
         {
           name: "description",
           content:
-            "Lynq is a RecordOps platform that automates database-driven Kubernetes resource provisioning. Transform database records into production-ready infrastructure automatically.",
+            "Lynq is a RecordOps platform that implements Infrastructure as Data for Kubernetes. Transform database records into production-ready infrastructure automatically. No YAML, no CI/CD delays—just data.",
         },
       ],
       [
@@ -273,7 +273,7 @@ export default withMermaid(
         {
           name: "keywords",
           content:
-            "kubernetes, operator, automation, database-driven, k8s, lynq, multi-tenancy, resource provisioning, template engine, recordops, record operations, data-driven infrastructure",
+            "kubernetes, operator, automation, database-driven, k8s, lynq, multi-tenancy, resource provisioning, recordops, infrastructure as data, infrastructure as code alternative, data-driven infrastructure",
         },
       ],
       ["meta", { name: "author", content: "Lynq Contributors" }],
@@ -285,7 +285,7 @@ export default withMermaid(
         "meta",
         {
           property: "og:title",
-          content: "Lynq - RecordOps Platform for Kubernetes",
+          content: "Lynq - Infrastructure as Data for Kubernetes",
         },
       ],
       [
@@ -293,7 +293,7 @@ export default withMermaid(
         {
           property: "og:description",
           content:
-            "RecordOps platform for Kubernetes. Transform database records into production-ready infrastructure. Real-time, data-driven automation without CI/CD delays.",
+            "A RecordOps platform that implements Infrastructure as Data for Kubernetes. Turn database records into infrastructure. No YAML files, no CI/CD delays—just data.",
         },
       ],
       ["meta", { property: "og:url", content: "https://lynq.sh" }],
@@ -312,7 +312,7 @@ export default withMermaid(
         "meta",
         {
           name: "twitter:title",
-          content: "Lynq - RecordOps Platform for Kubernetes",
+          content: "Lynq - Infrastructure as Data for Kubernetes",
         },
       ],
       [
@@ -320,7 +320,7 @@ export default withMermaid(
         {
           name: "twitter:description",
           content:
-            "RecordOps platform for Kubernetes. Transform database records into production-ready infrastructure. Real-time, data-driven automation without CI/CD delays.",
+            "A RecordOps platform that implements Infrastructure as Data for Kubernetes. Turn database records into infrastructure. No YAML, no CI/CD delays—just data.",
         },
       ],
       [

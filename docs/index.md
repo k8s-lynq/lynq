@@ -247,10 +247,10 @@ html:not(.dark) .custom-hero::before {
 
 <div class="custom-hero">
 <div class="hero-content">
-<h1 class="hero-tagline">Database-Driven<br/>Kubernetes Automation</h1>
+<h1 class="hero-tagline">Infrastructure as Data<br/>for Kubernetes</h1>
 <p class="hero-description">
-Turn database rows into production-ready infrastructure.<br/>
-Automatically. Welcome to RecordOps.
+A RecordOps platform that turns database records into infrastructure.<br/>
+No YAML. No CI/CD delays. Just data.
 </p>
 
 <div class="hero-actions">
@@ -268,7 +268,7 @@ Automatically. Welcome to RecordOps.
 ## Why Teams Choose Lynq
 
 <p style="text-align: center; color: var(--vp-c-text-2); margin: 0 0 4rem; font-size: 1.1rem; line-height: 1.6; max-width: 900px; margin-left: auto; margin-right: auto;">
-Watch how Lynq transforms complex infrastructure management into elegant automation through <strong>RecordOps</strong>—where your database becomes the control plane for your infrastructure
+Lynq is a <strong>RecordOps platform</strong> that implements <strong>Infrastructure as Data</strong>. Your database records become infrastructure specifications. Insert a row, provision a stack. Update a field, reconfigure resources. Delete a record, clean up everything.
 </p>
 
 <WhyLynqCards />
@@ -287,7 +287,7 @@ Watch how a simple database change instantly triggers infrastructure updates acr
   </p>
   <div style="display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;">
     <a href="/recordops" style="display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.75rem 1.5rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 8px; text-decoration: none; font-weight: 600; transition: all 0.2s ease; box-shadow: 0 4px 14px rgba(102, 126, 234, 0.3);">
-      What is RecordOps? →
+      Infrastructure as Data →
     </a>
     <a href="/how-it-works" style="display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.75rem 1.5rem; background: var(--vp-c-brand-soft); color: var(--vp-c-brand); border-radius: 8px; text-decoration: none; font-weight: 600; transition: all 0.2s ease;">
       How It Works →
