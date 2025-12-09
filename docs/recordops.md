@@ -8,14 +8,20 @@ If you've ever built a multi-tenant SaaS platform, you've probably felt this pai
 
 ## What is Infrastructure as Data?
 
-You're familiar with Infrastructure as Code (IaC)—using Terraform or Pulumi to define infrastructure through code. **Infrastructure as Data (IaD)** is different: instead of writing code to describe infrastructure, you write data to describe state.
+You're familiar with Infrastructure as Code (IaC)—using Terraform or Pulumi to define infrastructure through code. Infrastructure as Data (IaD) is different: instead of writing code to describe infrastructure, you write data to describe state.
+
+The term was coined by Michael DeHaan (creator of Ansible) in 2013:
+
+> "Infrastructure is best modeled not as code, nor in a GUI, but as a text-based, middle-ground, data-driven policy."
 
 ::: tip The Paradigm Shift
 - **Infrastructure as Code**: Write code (HCL, TypeScript) → Run apply → Infrastructure changes
-- **Infrastructure as Data**: Write data (SQL, database rows) → Infrastructure follows automatically
+- **Infrastructure as Data**: Write data (YAML, SQL, database rows) → Infrastructure follows automatically
 :::
 
-Infrastructure as Data makes sense when:
+Infrastructure as Data is the foundation of tools like Ansible (playbooks), Crossplane (Kubernetes CRs), and RecordOps (database records).
+
+It makes sense when:
 - Your infrastructure maps directly to your data model (one customer = one stack)
 - You're provisioning the same pattern repeatedly
 - Your application already knows everything needed to provision infrastructure
@@ -152,14 +158,15 @@ WHERE id IN (...);
 | Aspect | Infrastructure as Code | Infrastructure as Data |
 |--------|----------------------|----------------------|
 | **Definition** | Code describes infrastructure | Data describes state |
-| **Language** | HCL, TypeScript, Python | SQL, database schema |
-| **Execution** | Manual plan/apply | Automatic sync |
-| **State Storage** | Separate state files | Database is the state |
-| **Best For** | Cloud resources, cluster setup | Per-customer stacks, data-driven apps |
+| **Language** | HCL, TypeScript, Python | YAML (Ansible), Kubernetes CR (Crossplane), SQL (RecordOps) |
+| **Execution** | Manual plan/apply | Automatic sync/reconciliation |
+| **State Storage** | Separate state files | Declarative specs (playbooks, CRs, database) |
+| **Examples** | Terraform, Pulumi | Ansible, Crossplane, RecordOps |
+| **Best For** | Cloud resources, cluster setup | Declarative automation, data-driven apps |
 
 ::: info They Complement Each Other
 - **IaC**: Provision your Kubernetes cluster, cloud resources
-- **IaD**: Provision customer/tenant infrastructure within that cluster
+- **IaD**: Declarative automation (Ansible for config, Crossplane for cloud, RecordOps for tenants)
 :::
 
 ### Infrastructure as Data vs GitOps
