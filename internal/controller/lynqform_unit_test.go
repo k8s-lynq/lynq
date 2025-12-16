@@ -39,7 +39,6 @@ func TestCheckLynqNodeStatuses(t *testing.T) {
 		nodes          []lynqv1.LynqNode
 		wantTotalNodes int32
 		wantReadyNodes int32
-		wantErr        bool
 	}{
 		{
 			name: "no nodes using template",
@@ -55,7 +54,6 @@ func TestCheckLynqNodeStatuses(t *testing.T) {
 			nodes:          []lynqv1.LynqNode{},
 			wantTotalNodes: 0,
 			wantReadyNodes: 0,
-			wantErr:        false,
 		},
 		{
 			name: "all nodes using template are ready",
@@ -108,7 +106,6 @@ func TestCheckLynqNodeStatuses(t *testing.T) {
 			},
 			wantTotalNodes: 2,
 			wantReadyNodes: 2,
-			wantErr:        false,
 		},
 		{
 			name: "mixed ready and not ready nodes",
@@ -174,7 +171,6 @@ func TestCheckLynqNodeStatuses(t *testing.T) {
 			},
 			wantTotalNodes: 3,
 			wantReadyNodes: 1,
-			wantErr:        false,
 		},
 		{
 			name: "exclude nodes using different template",
@@ -227,7 +223,6 @@ func TestCheckLynqNodeStatuses(t *testing.T) {
 			},
 			wantTotalNodes: 1, // Only node1 uses web-app template
 			wantReadyNodes: 1,
-			wantErr:        false,
 		},
 		{
 			name: "exclude nodes in different namespace",
@@ -262,7 +257,6 @@ func TestCheckLynqNodeStatuses(t *testing.T) {
 			},
 			wantTotalNodes: 0, // Different namespace
 			wantReadyNodes: 0,
-			wantErr:        false,
 		},
 	}
 
@@ -287,14 +281,8 @@ func TestCheckLynqNodeStatuses(t *testing.T) {
 				Scheme: scheme,
 			}
 
-			totalLynqNodes, readyLynqNodes, err := r.checkLynqNodeStatuses(ctx, tt.template)
+			totalLynqNodes, readyLynqNodes := r.checkLynqNodeStatuses(ctx, tt.template)
 
-			if tt.wantErr {
-				assert.Error(t, err)
-				return
-			}
-
-			require.NoError(t, err)
 			assert.Equal(t, tt.wantTotalNodes, totalLynqNodes, "Expected %d total nodes, got %d", tt.wantTotalNodes, totalLynqNodes)
 			assert.Equal(t, tt.wantReadyNodes, readyLynqNodes, "Expected %d ready nodes, got %d", tt.wantReadyNodes, readyLynqNodes)
 		})

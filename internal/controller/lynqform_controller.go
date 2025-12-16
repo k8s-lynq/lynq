@@ -90,7 +90,7 @@ func (r *LynqFormReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if len(validationErrors) > 0 {
 		logger.Info("LynqForm validation failed", "errors", validationErrors)
 		// Update status with validation errors
-		r.updateStatus(ctx, tmpl, validationErrors, 0, 0)
+		r.updateStatus(ctx, tmpl, validationErrors)
 		// Emit warning event for validation failure (only if state changed)
 		if wasValid {
 			r.Recorder.Eventf(tmpl, corev1.EventTypeWarning, "ValidationFailed",
@@ -105,15 +105,8 @@ func (r *LynqFormReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			"Template validation passed successfully")
 	}
 
-	// Check node statuses
-	totalLynqNodes, readyLynqNodes, err := r.checkLynqNodeStatuses(ctx, tmpl)
-	if err != nil {
-		logger.Error(err, "Failed to check node statuses")
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
-	}
-
-	// Update status with node counts
-	r.updateStatus(ctx, tmpl, validationErrors, totalLynqNodes, readyLynqNodes)
+	// Check node statuses and update status
+	r.updateStatus(ctx, tmpl, validationErrors)
 
 	return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
 }
@@ -232,9 +225,9 @@ type rolloutStats struct {
 }
 
 // checkLynqNodeStatuses checks the status of all nodes using this template
-func (r *LynqFormReconciler) checkLynqNodeStatuses(ctx context.Context, tmpl *lynqv1.LynqForm) (totalLynqNodes, readyLynqNodes int32, err error) {
+func (r *LynqFormReconciler) checkLynqNodeStatuses(ctx context.Context, tmpl *lynqv1.LynqForm) (totalLynqNodes, readyLynqNodes int32) {
 	stats := r.calculateRolloutStats(ctx, tmpl)
-	return stats.totalNodes, stats.readyNodes, nil
+	return stats.totalNodes, stats.readyNodes
 }
 
 // calculateRolloutStats calculates rollout statistics for a template
@@ -282,8 +275,7 @@ func (r *LynqFormReconciler) calculateRolloutStats(ctx context.Context, tmpl *ly
 }
 
 // updateStatus updates LynqForm status with retry on conflict
-func (r *LynqFormReconciler) updateStatus(ctx context.Context, tmpl *lynqv1.LynqForm, validationErrors []string, totalLynqNodes, readyLynqNodes int32) {
-	// For backward compatibility, calculate rollout stats
+func (r *LynqFormReconciler) updateStatus(ctx context.Context, tmpl *lynqv1.LynqForm, validationErrors []string) {
 	stats := r.calculateRolloutStats(ctx, tmpl)
 	r.updateStatusWithRollout(ctx, tmpl, validationErrors, stats)
 }
