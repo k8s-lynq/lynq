@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -388,6 +389,415 @@ var _ = Describe("Rollout maxSkew Feature", Ordered, func() {
 		})
 	})
 
+	Context("maxSkew enforcement during Deployment rolling update", func() {
+		// BUG REPRODUCTION TEST
+		// This test verifies that maxSkew is strictly enforced when LynqForm template changes
+		// trigger Deployment rolling updates across multiple nodes.
+		//
+		// Expected behavior:
+		// - With maxSkew=1, at most 1 node should be "updating" (not Ready) at any time
+		// - The operator should wait for Deployment rolling update to complete before
+		//   proceeding to update the next node
+		//
+		// Bug scenario:
+		// - Due to async status updates, the operator may incorrectly think a node is Ready
+		//   when the Deployment is still rolling out, causing maxSkew violation
+
+		const (
+			hubName  = "maxskew-deploy-hub"
+			formName = "maxskew-deploy-form"
+		)
+
+		BeforeEach(func() {
+			By("creating a LynqHub")
+			createHub(hubName)
+		})
+
+		AfterEach(func() {
+			By("cleaning up test data and resources")
+			for i := 1; i <= 3; i++ {
+				deleteTestData(fmt.Sprintf("maxskew-node-%d", i))
+			}
+
+			// Delete all Deployments created by the test
+			cmd := exec.Command("kubectl", "delete", "deployment", "-n", policyTestNamespace,
+				"-l", "lynq.sh/node", "--ignore-not-found=true")
+			_, _ = utils.Run(cmd)
+
+			// Delete LynqForm
+			cmd = exec.Command("kubectl", "delete", "lynqform", formName, "-n", policyTestNamespace, "--ignore-not-found=true")
+			_, _ = utils.Run(cmd)
+
+			// Delete LynqHub
+			cmd = exec.Command("kubectl", "delete", "lynqhub", hubName, "-n", policyTestNamespace, "--ignore-not-found=true")
+			_, _ = utils.Run(cmd)
+
+			time.Sleep(5 * time.Second)
+		})
+
+		It("should strictly enforce maxSkew=1 during template change with Deployment rolling update", func() {
+			By("Given a LynqForm with maxSkew=1 and a Deployment with slow-starting pods")
+			// Use initContainer with sleep to simulate slow pod startup
+			// This ensures rolling update takes long enough to detect maxSkew violations
+			formYAML := fmt.Sprintf(`
+apiVersion: operator.lynq.sh/v1
+kind: LynqForm
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  hubId: %s
+  rollout:
+    maxSkew: 1
+    progressDeadlineSeconds: 600
+  deployments:
+    - id: nginx-deploy
+      nameTemplate: "{{ .uid }}-nginx"
+      spec:
+        apiVersion: apps/v1
+        kind: Deployment
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app: "{{ .uid }}-nginx"
+          template:
+            metadata:
+              labels:
+                app: "{{ .uid }}-nginx"
+            spec:
+              initContainers:
+                - name: slow-start
+                  image: busybox:1.36
+                  command: ["sh", "-c", "echo 'Starting slow init v1...' && sleep 5"]
+              containers:
+                - name: nginx
+                  image: nginx:1.24
+                  ports:
+                    - containerPort: 80
+                  readinessProbe:
+                    httpGet:
+                      path: /
+                      port: 80
+                    initialDelaySeconds: 2
+                    periodSeconds: 1
+`, formName, policyTestNamespace, hubName)
+
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = utils.StringReader(formYAML)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("And 3 active nodes in the database")
+			for i := 1; i <= 3; i++ {
+				insertTestData(fmt.Sprintf("maxskew-node-%d", i), true)
+			}
+
+			By("When initial LynqNodes are created and become Ready")
+			// Wait for all 3 nodes to become Ready initially
+			for i := 1; i <= 3; i++ {
+				nodeName := fmt.Sprintf("maxskew-node-%d-%s", i, formName)
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "lynqnode", nodeName, "-n", policyTestNamespace,
+						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(output).To(Equal("True"), "LynqNode %s should be Ready", nodeName)
+				}, 2*policyTestTimeout, policyTestInterval).Should(Succeed())
+			}
+
+			By("And all Deployments have ready replicas")
+			for i := 1; i <= 3; i++ {
+				deployName := fmt.Sprintf("maxskew-node-%d-nginx", i)
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "deployment", deployName, "-n", policyTestNamespace,
+						"-o", "jsonpath={.status.readyReplicas}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(output).To(Equal("1"), "Deployment %s should have 1 ready replica", deployName)
+				}, policyTestTimeout, policyTestInterval).Should(Succeed())
+			}
+
+			By("When the LynqForm template is changed (init command updated to trigger rolling update)")
+			// Change the init command to trigger a rolling update
+			// The 5-second sleep ensures rolling update takes long enough to detect violations
+			formYAML = fmt.Sprintf(`
+apiVersion: operator.lynq.sh/v1
+kind: LynqForm
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  hubId: %s
+  rollout:
+    maxSkew: 1
+    progressDeadlineSeconds: 600
+  deployments:
+    - id: nginx-deploy
+      nameTemplate: "{{ .uid }}-nginx"
+      spec:
+        apiVersion: apps/v1
+        kind: Deployment
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app: "{{ .uid }}-nginx"
+          template:
+            metadata:
+              labels:
+                app: "{{ .uid }}-nginx"
+            spec:
+              initContainers:
+                - name: slow-start
+                  image: busybox:1.36
+                  command: ["sh", "-c", "echo 'Starting slow init v2...' && sleep 5"]
+              containers:
+                - name: nginx
+                  image: nginx:1.25
+                  ports:
+                    - containerPort: 80
+                  readinessProbe:
+                    httpGet:
+                      path: /
+                      port: 80
+                    initialDelaySeconds: 2
+                    periodSeconds: 1
+`, formName, policyTestNamespace, hubName)
+
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = utils.StringReader(formYAML)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Then at any point during rollout, at most 1 LynqNode should be not Ready (maxSkew=1)")
+			// Check frequently during the rollout process
+			// With 3 nodes and ~7 seconds per rolling update (5s init + 2s readiness),
+			// total rollout takes ~21 seconds if serial, but much less if parallel (bug)
+			maxViolations := 0
+			checkCount := 60 // Check for 30 seconds (every 0.5s)
+			for check := 0; check < checkCount; check++ {
+				notReadyCount := 0
+				notReadyNodes := []string{}
+
+				for i := 1; i <= 3; i++ {
+					nodeName := fmt.Sprintf("maxskew-node-%d-%s", i, formName)
+					cmd := exec.Command("kubectl", "get", "lynqnode", nodeName, "-n", policyTestNamespace,
+						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+					output, err := utils.Run(cmd)
+					if err == nil && output != "True" {
+						notReadyCount++
+						notReadyNodes = append(notReadyNodes, nodeName)
+					}
+				}
+
+				// Log each check for debugging
+				if notReadyCount > 0 {
+					GinkgoWriter.Printf("Check %d/%d: %d nodes not Ready: %v\n",
+						check+1, checkCount, notReadyCount, notReadyNodes)
+				}
+
+				// Track the maximum violation
+				if notReadyCount > maxViolations {
+					maxViolations = notReadyCount
+				}
+
+				// BUG ASSERTION: maxSkew=1 means at most 1 node can be updating (not Ready)
+				// If more than 1 node is not Ready simultaneously, maxSkew is violated
+				Expect(notReadyCount).To(BeNumerically("<=", 1),
+					"maxSkew violation detected! Expected at most 1 node updating, but found %d nodes not Ready: %v",
+					notReadyCount, notReadyNodes)
+
+				time.Sleep(500 * time.Millisecond) // Check every 0.5 seconds
+			}
+
+			By("And eventually all nodes should become Ready with the new template")
+			for i := 1; i <= 3; i++ {
+				nodeName := fmt.Sprintf("maxskew-node-%d-%s", i, formName)
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "lynqnode", nodeName, "-n", policyTestNamespace,
+						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(output).To(Equal("True"), "LynqNode %s should be Ready after rollout", nodeName)
+				}, 2*policyTestTimeout, policyTestInterval).Should(Succeed())
+			}
+
+			By("And all Deployments should be running nginx:1.25")
+			for i := 1; i <= 3; i++ {
+				deployName := fmt.Sprintf("maxskew-node-%d-nginx", i)
+				cmd := exec.Command("kubectl", "get", "deployment", deployName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.spec.template.spec.containers[0].image}")
+				output, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(output).To(Equal("nginx:1.25"),
+					"Deployment %s should have image nginx:1.25", deployName)
+			}
+		})
+
+		It("should not start updating second node until first node Deployment is fully rolled out", func() {
+			By("Given a LynqForm with maxSkew=1 and a Deployment with 2 replicas")
+			formYAML := fmt.Sprintf(`
+apiVersion: operator.lynq.sh/v1
+kind: LynqForm
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  hubId: %s
+  rollout:
+    maxSkew: 1
+    progressDeadlineSeconds: 600
+  deployments:
+    - id: nginx-deploy
+      nameTemplate: "{{ .uid }}-nginx"
+      spec:
+        apiVersion: apps/v1
+        kind: Deployment
+        spec:
+          replicas: 2
+          selector:
+            matchLabels:
+              app: "{{ .uid }}-nginx"
+          template:
+            metadata:
+              labels:
+                app: "{{ .uid }}-nginx"
+            spec:
+              containers:
+                - name: nginx
+                  image: nginx:1.24
+                  ports:
+                    - containerPort: 80
+`, formName, policyTestNamespace, hubName)
+
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = utils.StringReader(formYAML)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("And 2 active nodes in the database")
+			for i := 1; i <= 2; i++ {
+				insertTestData(fmt.Sprintf("maxskew-node-%d", i), true)
+			}
+
+			By("When all nodes and Deployments become Ready")
+			for i := 1; i <= 2; i++ {
+				nodeName := fmt.Sprintf("maxskew-node-%d-%s", i, formName)
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "lynqnode", nodeName, "-n", policyTestNamespace,
+						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(output).To(Equal("True"))
+				}, 2*policyTestTimeout, policyTestInterval).Should(Succeed())
+
+				deployName := fmt.Sprintf("maxskew-node-%d-nginx", i)
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "deployment", deployName, "-n", policyTestNamespace,
+						"-o", "jsonpath={.status.readyReplicas}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(output).To(Equal("2"))
+				}, 2*policyTestTimeout, policyTestInterval).Should(Succeed())
+			}
+
+			By("When the LynqForm template is changed")
+			formYAML = fmt.Sprintf(`
+apiVersion: operator.lynq.sh/v1
+kind: LynqForm
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  hubId: %s
+  rollout:
+    maxSkew: 1
+    progressDeadlineSeconds: 600
+  deployments:
+    - id: nginx-deploy
+      nameTemplate: "{{ .uid }}-nginx"
+      spec:
+        apiVersion: apps/v1
+        kind: Deployment
+        spec:
+          replicas: 2
+          selector:
+            matchLabels:
+              app: "{{ .uid }}-nginx"
+          template:
+            metadata:
+              labels:
+                app: "{{ .uid }}-nginx"
+            spec:
+              containers:
+                - name: nginx
+                  image: nginx:1.25
+                  ports:
+                    - containerPort: 80
+`, formName, policyTestNamespace, hubName)
+
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = utils.StringReader(formYAML)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Then during the rollout, we should never see both Deployments in rolling update state simultaneously")
+			checkCount := 30
+			for check := 0; check < checkCount; check++ {
+				rollingUpdateCount := 0
+				rollingDeployments := []string{}
+
+				for i := 1; i <= 2; i++ {
+					deployName := fmt.Sprintf("maxskew-node-%d-nginx", i)
+					// A Deployment is in rolling update if updatedReplicas < replicas or readyReplicas < replicas
+					cmd := exec.Command("kubectl", "get", "deployment", deployName, "-n", policyTestNamespace,
+						"-o", "jsonpath={.status.updatedReplicas},{.status.readyReplicas},{.spec.replicas}")
+					output, err := utils.Run(cmd)
+					if err == nil && output != "" {
+						// Parse: updatedReplicas,readyReplicas,replicas
+						parts := splitOutput(output)
+						if len(parts) == 3 {
+							updated, _ := strconv.Atoi(parts[0])
+							ready, _ := strconv.Atoi(parts[1])
+							replicas, _ := strconv.Atoi(parts[2])
+
+							// If updated < replicas or ready < replicas, it's rolling
+							if updated < replicas || ready < replicas {
+								rollingUpdateCount++
+								rollingDeployments = append(rollingDeployments,
+									fmt.Sprintf("%s(updated=%d,ready=%d,replicas=%d)", deployName, updated, ready, replicas))
+							}
+						}
+					}
+				}
+
+				if rollingUpdateCount > 0 {
+					GinkgoWriter.Printf("Check %d/%d: %d Deployments in rolling update: %v\n",
+						check+1, checkCount, rollingUpdateCount, rollingDeployments)
+				}
+
+				// With maxSkew=1, at most 1 Deployment should be in rolling update state
+				Expect(rollingUpdateCount).To(BeNumerically("<=", 1),
+					"maxSkew violation! Multiple Deployments rolling simultaneously: %v", rollingDeployments)
+
+				time.Sleep(1 * time.Second)
+			}
+
+			By("And eventually all Deployments should complete their rollout")
+			for i := 1; i <= 2; i++ {
+				deployName := fmt.Sprintf("maxskew-node-%d-nginx", i)
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "deployment", deployName, "-n", policyTestNamespace,
+						"-o", "jsonpath={.status.updatedReplicas},{.status.readyReplicas}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(output).To(Equal("2,2"))
+				}, 2*policyTestTimeout, policyTestInterval).Should(Succeed())
+			}
+		})
+	})
+
 	Context("Deployment rolling update readiness", func() {
 		const (
 			hubName  = "deploy-ready-hub"
@@ -581,4 +991,12 @@ spec:
 	cmd.Stdin = utils.StringReader(formYAML)
 	_, err := utils.Run(cmd)
 	Expect(err).NotTo(HaveOccurred())
+}
+
+// splitOutput splits a comma-separated string into parts
+func splitOutput(output string) []string {
+	if output == "" {
+		return []string{}
+	}
+	return strings.Split(output, ",")
 }

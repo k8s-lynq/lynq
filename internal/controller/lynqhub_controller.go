@@ -187,6 +187,11 @@ func (r *LynqHubReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	// Track throttled updates for events
 	throttledByTemplate := make(map[string]int)
 
+	// Track nodes updated in THIS reconcile iteration per template
+	// This is critical for maxSkew enforcement because templateNodes snapshot doesn't reflect
+	// updates made within this loop iteration
+	updatedInThisIteration := make(map[string]int32)
+
 	// Create/update nodes for each template-row combination
 	for key, desired := range desired {
 		tmpl := desired.Template
@@ -194,12 +199,15 @@ func (r *LynqHubReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 		if existingLynqNode, exists := existing[key]; !exists {
 			// Create new LynqNode - check maxSkew before creating
-			if r.canUpdateNode(tmpl, templateNodes) {
+			if r.canUpdateNodeWithCount(tmpl, templateNodes, updatedInThisIteration[tmpl.Name]) {
 				if err := r.createLynqNode(ctx, registry, tmpl, desired.Row); err != nil {
 					// Ignore AlreadyExists errors (can happen due to concurrent reconciliations)
 					if !errors.IsAlreadyExists(err) {
 						logger.Error(err, "Failed to create LynqNode", "template", key.TemplateName, "uid", key.UID)
 					}
+				} else {
+					// Successfully created - track it
+					updatedInThisIteration[tmpl.Name]++
 				}
 			} else {
 				// Throttled by maxSkew
@@ -209,9 +217,12 @@ func (r *LynqHubReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			// Update existing LynqNode if data or template changed
 			if r.shouldUpdateLynqNode(ctx, registry, existingLynqNode, desired.Row) {
 				// Check maxSkew before updating
-				if r.canUpdateNode(tmpl, templateNodes) {
+				if r.canUpdateNodeWithCount(tmpl, templateNodes, updatedInThisIteration[tmpl.Name]) {
 					if err := r.updateLynqNode(ctx, registry, tmpl, existingLynqNode, desired.Row); err != nil {
 						logger.Error(err, "Failed to update LynqNode", "template", key.TemplateName, "uid", key.UID)
+					} else {
+						// Successfully updated - track it
+						updatedInThisIteration[tmpl.Name]++
 					}
 				} else {
 					// Throttled by maxSkew
@@ -1109,15 +1120,43 @@ func isNodeReady(node *lynqv1.LynqNode) bool {
 
 // countUpdatingNodes counts LynqNodes that are currently updating (updated to target generation but not Ready yet)
 // This is used to enforce maxSkew - the maximum number of nodes that can be updating simultaneously
+//
+// A node is considered "updating" if ANY of the following conditions are true:
+// 1. Template generation matches AND Ready condition is False
+// 2. Template generation matches AND ObservedGeneration != Generation (controller hasn't reconciled yet)
+// 3. Template generation matches AND recently updated (within safety margin) - handles async status updates
 func (r *LynqHubReconciler) countUpdatingNodes(nodes []*lynqv1.LynqNode, targetGen int64) int32 {
 	var count int32
 	targetGenStr := fmt.Sprintf("%d", targetGen)
 
 	for _, node := range nodes {
-		// Node is "updating" if it has been updated to the target generation but is not Ready yet
 		nodeGen := node.Annotations[lynqv1.AnnotationTemplateGeneration]
-		if nodeGen == targetGenStr && !isNodeReady(node) {
+		if nodeGen != targetGenStr {
+			continue
+		}
+
+		// Case 1: Node is explicitly not Ready
+		if !isNodeReady(node) {
 			count++
+			continue
+		}
+
+		// Case 2: LynqNode controller hasn't reconciled yet (status is stale)
+		// This happens when LynqHub updates the spec but LynqNode controller hasn't processed it yet
+		if node.Status.ObservedGeneration != node.Generation {
+			count++
+			continue
+		}
+
+		// Case 3: Recently updated - safety margin for async status updates
+		// StatusManager batches updates with up to 1 second delay, so we add a 5 second margin
+		if startTimeStr := node.Annotations[lynqv1.AnnotationRolloutUpdateStartTime]; startTimeStr != "" {
+			if startTime, err := time.Parse(time.RFC3339, startTimeStr); err == nil {
+				if time.Since(startTime) < 5*time.Second {
+					count++
+					continue
+				}
+			}
 		}
 	}
 	return count
@@ -1126,13 +1165,25 @@ func (r *LynqHubReconciler) countUpdatingNodes(nodes []*lynqv1.LynqNode, targetG
 // canUpdateNode checks if we can update/create a node based on the template's maxSkew setting
 // Returns true if maxSkew is not configured (unlimited) or if we're under the limit
 func (r *LynqHubReconciler) canUpdateNode(tmpl *lynqv1.LynqForm, templateNodes []*lynqv1.LynqNode) bool {
+	return r.canUpdateNodeWithCount(tmpl, templateNodes, 0)
+}
+
+// canUpdateNodeWithCount checks if we can update/create a node based on the template's maxSkew setting,
+// taking into account additional updates made in the current reconcile iteration
+// Returns true if maxSkew is not configured (unlimited) or if we're under the limit
+func (r *LynqHubReconciler) canUpdateNodeWithCount(tmpl *lynqv1.LynqForm, templateNodes []*lynqv1.LynqNode, additionalUpdates int32) bool {
 	// No rollout config means unlimited updates (current behavior)
 	if tmpl.Spec.Rollout == nil || tmpl.Spec.Rollout.MaxSkew == 0 {
 		return true
 	}
 
+	// Count nodes that are already updating based on their stored state
 	updatingCount := r.countUpdatingNodes(templateNodes, tmpl.Generation)
-	return updatingCount < tmpl.Spec.Rollout.MaxSkew
+
+	// Add the count of nodes we've updated in THIS iteration that aren't yet reflected in templateNodes
+	totalUpdating := updatingCount + additionalUpdates
+
+	return totalUpdating < tmpl.Spec.Rollout.MaxSkew
 }
 
 // SetupWithManager sets up the controller with the Manager.
