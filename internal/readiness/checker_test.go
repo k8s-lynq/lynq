@@ -160,6 +160,7 @@ func TestChecker_IsReady(t *testing.T) {
 						"observedGeneration": int64(1),
 						"availableReplicas":  int64(3),
 						"updatedReplicas":    int64(3),
+						"readyReplicas":      int64(3),
 					},
 				},
 			},
@@ -181,6 +182,29 @@ func TestChecker_IsReady(t *testing.T) {
 						"observedGeneration": int64(1),
 						"availableReplicas":  int64(1),
 						"updatedReplicas":    int64(1),
+						"readyReplicas":      int64(1),
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "Deployment - not ready (rolling update in progress)",
+			obj: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"apiVersion": "apps/v1",
+					"kind":       "Deployment",
+					"metadata": map[string]interface{}{
+						"generation": int64(2),
+					},
+					"spec": map[string]interface{}{
+						"replicas": int64(3),
+					},
+					"status": map[string]interface{}{
+						"observedGeneration": int64(2),
+						"availableReplicas":  int64(3), // Old pods still available
+						"updatedReplicas":    int64(2), // Only 2 pods updated
+						"readyReplicas":      int64(3), // Includes old pods
 					},
 				},
 			},
@@ -203,10 +227,33 @@ func TestChecker_IsReady(t *testing.T) {
 						"observedGeneration": int64(1),
 						"readyReplicas":      int64(3),
 						"updatedReplicas":    int64(3),
+						"currentReplicas":    int64(3),
 					},
 				},
 			},
 			want: true,
+		},
+		{
+			name: "StatefulSet - not ready (rolling update in progress)",
+			obj: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"apiVersion": "apps/v1",
+					"kind":       "StatefulSet",
+					"metadata": map[string]interface{}{
+						"generation": int64(2),
+					},
+					"spec": map[string]interface{}{
+						"replicas": int64(3),
+					},
+					"status": map[string]interface{}{
+						"observedGeneration": int64(2),
+						"readyReplicas":      int64(3),
+						"updatedReplicas":    int64(1), // Only 1 pod updated
+						"currentReplicas":    int64(3),
+					},
+				},
+			},
+			want: false,
 		},
 		// DaemonSet tests
 		{
@@ -215,23 +262,58 @@ func TestChecker_IsReady(t *testing.T) {
 				Object: map[string]interface{}{
 					"apiVersion": "apps/v1",
 					"kind":       "DaemonSet",
+					"metadata": map[string]interface{}{
+						"generation": int64(1),
+					},
 					"status": map[string]interface{}{
+						"observedGeneration":     int64(1),
 						"desiredNumberScheduled": int64(3),
+						"currentNumberScheduled": int64(3),
+						"updatedNumberScheduled": int64(3),
 						"numberReady":            int64(3),
+						"numberAvailable":        int64(3),
 					},
 				},
 			},
 			want: true,
 		},
 		{
-			name: "DaemonSet - not ready",
+			name: "DaemonSet - not ready (rolling update in progress)",
 			obj: &unstructured.Unstructured{
 				Object: map[string]interface{}{
 					"apiVersion": "apps/v1",
 					"kind":       "DaemonSet",
+					"metadata": map[string]interface{}{
+						"generation": int64(2),
+					},
 					"status": map[string]interface{}{
+						"observedGeneration":     int64(2),
 						"desiredNumberScheduled": int64(3),
+						"currentNumberScheduled": int64(3),
+						"updatedNumberScheduled": int64(1), // Only 1 pod updated
+						"numberReady":            int64(3),
+						"numberAvailable":        int64(3),
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "DaemonSet - not ready (numberReady mismatch)",
+			obj: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"apiVersion": "apps/v1",
+					"kind":       "DaemonSet",
+					"metadata": map[string]interface{}{
+						"generation": int64(1),
+					},
+					"status": map[string]interface{}{
+						"observedGeneration":     int64(1),
+						"desiredNumberScheduled": int64(3),
+						"currentNumberScheduled": int64(3),
+						"updatedNumberScheduled": int64(3),
 						"numberReady":            int64(1),
+						"numberAvailable":        int64(1),
 					},
 				},
 			},

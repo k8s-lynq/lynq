@@ -387,6 +387,173 @@ var _ = Describe("Rollout maxSkew Feature", Ordered, func() {
 			})
 		})
 	})
+
+	Context("Deployment rolling update readiness", func() {
+		const (
+			hubName  = "deploy-ready-hub"
+			formName = "deploy-ready-form"
+		)
+
+		BeforeEach(func() {
+			By("creating a LynqHub")
+			createHub(hubName)
+		})
+
+		AfterEach(func() {
+			By("cleaning up test data and resources")
+			deleteTestData("deploy-ready-node")
+
+			// Delete all Deployments created by the test
+			cmd := exec.Command("kubectl", "delete", "deployment", "-n", policyTestNamespace,
+				"-l", "lynq.sh/node", "--ignore-not-found=true")
+			_, _ = utils.Run(cmd)
+
+			// Delete LynqForm
+			cmd = exec.Command("kubectl", "delete", "lynqform", formName, "-n", policyTestNamespace, "--ignore-not-found=true")
+			_, _ = utils.Run(cmd)
+
+			// Delete LynqHub
+			cmd = exec.Command("kubectl", "delete", "lynqhub", hubName, "-n", policyTestNamespace, "--ignore-not-found=true")
+			_, _ = utils.Run(cmd)
+
+			time.Sleep(5 * time.Second)
+		})
+
+		It("should wait for Deployment rolling update to complete before marking LynqNode as Ready", func() {
+			By("Given a LynqForm with a Deployment using nginx:1.24")
+			formYAML := fmt.Sprintf(`
+apiVersion: operator.lynq.sh/v1
+kind: LynqForm
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  hubId: %s
+  deployments:
+    - id: nginx-deploy
+      nameTemplate: "{{ .uid }}-nginx"
+      spec:
+        apiVersion: apps/v1
+        kind: Deployment
+        spec:
+          replicas: 2
+          selector:
+            matchLabels:
+              app: "{{ .uid }}-nginx"
+          template:
+            metadata:
+              labels:
+                app: "{{ .uid }}-nginx"
+            spec:
+              containers:
+                - name: nginx
+                  image: nginx:1.24
+                  ports:
+                    - containerPort: 80
+`, formName, policyTestNamespace, hubName)
+
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = utils.StringReader(formYAML)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("And an active node in the database")
+			insertTestData("deploy-ready-node", true)
+
+			By("When the LynqNode is created and Deployment becomes Ready")
+			nodeName := fmt.Sprintf("deploy-ready-node-%s", formName)
+
+			// Wait for LynqNode to become Ready initially
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "lynqnode", nodeName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("True"), "LynqNode should be Ready")
+			}, 2*policyTestTimeout, policyTestInterval).Should(Succeed())
+
+			By("And the Deployment should have all pods ready")
+			deployName := "deploy-ready-node-nginx"
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "deployment", deployName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.status.readyReplicas}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("2"), "Deployment should have 2 ready replicas")
+			}, 2*policyTestTimeout, policyTestInterval).Should(Succeed())
+
+			By("When the Deployment image is updated to nginx:1.25 (triggers rolling update)")
+			// Update LynqForm to change the image
+			formYAML = fmt.Sprintf(`
+apiVersion: operator.lynq.sh/v1
+kind: LynqForm
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  hubId: %s
+  deployments:
+    - id: nginx-deploy
+      nameTemplate: "{{ .uid }}-nginx"
+      spec:
+        apiVersion: apps/v1
+        kind: Deployment
+        spec:
+          replicas: 2
+          selector:
+            matchLabels:
+              app: "{{ .uid }}-nginx"
+          template:
+            metadata:
+              labels:
+                app: "{{ .uid }}-nginx"
+            spec:
+              containers:
+                - name: nginx
+                  image: nginx:1.25
+                  ports:
+                    - containerPort: 80
+`, formName, policyTestNamespace, hubName)
+
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = utils.StringReader(formYAML)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Then the Deployment should eventually have updatedReplicas == 2")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "deployment", deployName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.status.updatedReplicas}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("2"), "Deployment should have 2 updated replicas")
+			}, 2*policyTestTimeout, policyTestInterval).Should(Succeed())
+
+			By("And the LynqNode should be Ready only after all pods are ready with the new image")
+			Eventually(func(g Gomega) {
+				// Check Deployment has all replicas ready
+				cmd := exec.Command("kubectl", "get", "deployment", deployName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.status.readyReplicas},{.status.updatedReplicas},{.status.availableReplicas}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("2,2,2"), "All Deployment status fields should be 2")
+
+				// Verify LynqNode is Ready
+				cmd = exec.Command("kubectl", "get", "lynqnode", nodeName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				output, err = utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("True"), "LynqNode should be Ready")
+			}, 2*policyTestTimeout, policyTestInterval).Should(Succeed())
+
+			By("And the LynqNode ready resources should equal desired resources")
+			cmd = exec.Command("kubectl", "get", "lynqnode", nodeName, "-n", policyTestNamespace,
+				"-o", "jsonpath={.status.readyResources},{.status.desiredResources}")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).To(Equal("1,1"), "readyResources should equal desiredResources")
+		})
+	})
 })
 
 // createFormWithRollout creates a LynqForm with rollout config

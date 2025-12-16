@@ -144,8 +144,15 @@ func (c *Checker) isServiceReady(obj *unstructured.Unstructured) bool {
 }
 
 // isDeploymentReady checks if a deployment is ready
+// A deployment is considered ready when:
+// 1. The deployment controller has observed the latest spec (observedGeneration == generation)
+// 2. All replicas are updated to the latest spec (updatedReplicas == replicas)
+// 3. All replicas are available (availableReplicas == replicas)
+// 4. All replicas are ready (readyReplicas == replicas)
+// This ensures that during a rolling update, we wait for all NEW pods to be ready,
+// not just that the old pods are still available.
 func (c *Checker) isDeploymentReady(obj *unstructured.Unstructured) bool {
-	// Check observed generation
+	// Check observed generation - controller must have processed the latest spec
 	generation, _, _ := unstructured.NestedInt64(obj.Object, "metadata", "generation")
 	observedGeneration, _, _ := unstructured.NestedInt64(obj.Object, "status", "observedGeneration")
 
@@ -167,12 +174,23 @@ func (c *Checker) isDeploymentReady(obj *unstructured.Unstructured) bool {
 
 	availableReplicas, _, _ := unstructured.NestedInt64(obj.Object, "status", "availableReplicas")
 	updatedReplicas, _, _ := unstructured.NestedInt64(obj.Object, "status", "updatedReplicas")
+	readyReplicas, _, _ := unstructured.NestedInt64(obj.Object, "status", "readyReplicas")
 
-	// Deployment is ready when actual replicas match desired replicas
-	return availableReplicas >= replicas && updatedReplicas >= replicas
+	// Deployment is ready when ALL conditions are met:
+	// - updatedReplicas == replicas: All pods are running the new spec
+	// - readyReplicas == replicas: All pods have passed readiness probes
+	// - availableReplicas == replicas: All pods are available for traffic
+	// Using == instead of >= to ensure the rollout is fully complete
+	return updatedReplicas == replicas && readyReplicas == replicas && availableReplicas == replicas
 }
 
 // isStatefulSetReady checks if a statefulset is ready
+// A statefulset is considered ready when:
+// 1. The controller has observed the latest spec (observedGeneration == generation)
+// 2. All replicas are updated to the latest spec (updatedReplicas == replicas)
+// 3. All replicas are ready (readyReplicas == replicas)
+// 4. All replicas are at current revision (currentReplicas == replicas)
+// This ensures that during a rolling update, we wait for all pods to be updated and ready.
 func (c *Checker) isStatefulSetReady(obj *unstructured.Unstructured) bool {
 	// Check observed generation
 	generation, _, _ := unstructured.NestedInt64(obj.Object, "metadata", "generation")
@@ -196,16 +214,48 @@ func (c *Checker) isStatefulSetReady(obj *unstructured.Unstructured) bool {
 
 	readyReplicas, _, _ := unstructured.NestedInt64(obj.Object, "status", "readyReplicas")
 	updatedReplicas, _, _ := unstructured.NestedInt64(obj.Object, "status", "updatedReplicas")
+	currentReplicas, _, _ := unstructured.NestedInt64(obj.Object, "status", "currentReplicas")
 
-	return readyReplicas >= replicas && updatedReplicas >= replicas
+	// StatefulSet is ready when ALL conditions are met:
+	// - updatedReplicas == replicas: All pods are running the new spec
+	// - readyReplicas == replicas: All pods have passed readiness probes
+	// - currentReplicas == replicas: All pods are at current revision
+	return updatedReplicas == replicas && readyReplicas == replicas && currentReplicas == replicas
 }
 
 // isDaemonSetReady checks if a daemonset is ready
+// A daemonset is considered ready when:
+// 1. All desired pods are scheduled (currentNumberScheduled == desiredNumberScheduled)
+// 2. All pods are updated to the latest spec (updatedNumberScheduled == desiredNumberScheduled)
+// 3. All pods are ready (numberReady == desiredNumberScheduled)
+// 4. All pods are available (numberAvailable == desiredNumberScheduled)
+// This ensures that during a rolling update, we wait for all pods to be updated and ready.
 func (c *Checker) isDaemonSetReady(obj *unstructured.Unstructured) bool {
-	desiredNumberScheduled, _, _ := unstructured.NestedInt64(obj.Object, "status", "desiredNumberScheduled")
-	numberReady, _, _ := unstructured.NestedInt64(obj.Object, "status", "numberReady")
+	// Check observed generation
+	generation, _, _ := unstructured.NestedInt64(obj.Object, "metadata", "generation")
+	observedGeneration, _, _ := unstructured.NestedInt64(obj.Object, "status", "observedGeneration")
 
-	return numberReady >= desiredNumberScheduled && desiredNumberScheduled > 0
+	if generation != observedGeneration {
+		return false
+	}
+
+	desiredNumberScheduled, _, _ := unstructured.NestedInt64(obj.Object, "status", "desiredNumberScheduled")
+
+	// DaemonSet with no nodes to schedule is not ready
+	if desiredNumberScheduled == 0 {
+		return false
+	}
+
+	currentNumberScheduled, _, _ := unstructured.NestedInt64(obj.Object, "status", "currentNumberScheduled")
+	updatedNumberScheduled, _, _ := unstructured.NestedInt64(obj.Object, "status", "updatedNumberScheduled")
+	numberReady, _, _ := unstructured.NestedInt64(obj.Object, "status", "numberReady")
+	numberAvailable, _, _ := unstructured.NestedInt64(obj.Object, "status", "numberAvailable")
+
+	// DaemonSet is ready when ALL conditions are met
+	return currentNumberScheduled == desiredNumberScheduled &&
+		updatedNumberScheduled == desiredNumberScheduled &&
+		numberReady == desiredNumberScheduled &&
+		numberAvailable == desiredNumberScheduled
 }
 
 // isJobReady checks if a job is complete
