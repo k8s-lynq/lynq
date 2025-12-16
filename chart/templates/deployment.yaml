@@ -51,6 +51,9 @@ spec:
         {{- if .Values.manager.metricsBindAddress }}
         - --metrics-bind-address={{ .Values.manager.metricsBindAddress }}
         {{- end }}
+        {{- if .Values.manager.logLevel }}
+        - --zap-log-level={{ .Values.manager.logLevel }}
+        {{- end }}
         {{- with .Values.manager.args }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

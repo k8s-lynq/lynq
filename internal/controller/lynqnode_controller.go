@@ -478,7 +478,7 @@ func (r *LynqNodeReconciler) emitTemplateAppliedEvent(ctx context.Context, node 
 		totalResources, resourceDetails,
 		registryName, node.Spec.UID, node.Namespace)
 
-	logger.Info("Applying template resources to cluster",
+	logger.V(1).Info("Applying template resources to cluster",
 		"node", node.Name,
 		"template", templateName,
 		"generation", templateGeneration,
@@ -531,7 +531,7 @@ func (r *LynqNodeReconciler) emitTemplateAppliedCompleteEvent(ctx context.Contex
 			totalResources, changedCount, readyCount,
 			registryName, node.Spec.UID, node.Namespace)
 
-		logger.Info("Template application completed successfully",
+		logger.V(1).Info("Template application completed successfully",
 			"node", node.Name,
 			"template", templateName,
 			"generation", templateGeneration,
@@ -1062,7 +1062,7 @@ func (r *LynqNodeReconciler) cleanupLynqNodeResources(ctx context.Context, node 
 
 	// Collect all resources
 	allResources := r.collectResourcesFromLynqNode(node)
-	logger.Info("Collected resources for cleanup", "count", len(allResources))
+	logger.V(1).Info("Collected resources for cleanup", "count", len(allResources))
 
 	// Track cleanup statistics
 	var cleanupErrors []string
@@ -1152,7 +1152,7 @@ func (r *LynqNodeReconciler) cleanupLynqNodeResources(ctx context.Context, node 
 	// Return error only if there were significant failures
 	// This allows cleanup to proceed even with partial failures
 	if len(cleanupErrors) > 0 {
-		logger.Info("Cleanup completed with some errors", "errorCount", len(cleanupErrors))
+		logger.V(1).Info("Cleanup completed with some errors", "errorCount", len(cleanupErrors))
 		// Return first few errors for visibility
 		maxErrors := 3
 		if len(cleanupErrors) > maxErrors {

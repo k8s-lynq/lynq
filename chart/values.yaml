@@ -70,6 +70,9 @@ manager:
   healthProbeBindAddress: ":8081"
   # -- Metrics bind address (0 disables metrics)
   metricsBindAddress: ":8443"
+  # -- Log level for the controller (debug, info, error)
+  # Use "debug" to see detailed reconciliation logs
+  logLevel: "info"
   # -- Additional command-line arguments
   args: []
   # -- Additional environment variables

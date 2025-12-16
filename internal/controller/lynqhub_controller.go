@@ -728,7 +728,7 @@ func (r *LynqHubReconciler) updateLynqNode(ctx context.Context, registry *lynqv1
 			totalResources, resourceDetails,
 			registry.Name, row.UID)
 
-		logger.Info("Applying template changes to LynqNode",
+		logger.V(1).Info("Applying template changes to LynqNode",
 			"node", node.Name,
 			"template", tmpl.Name,
 			"oldGeneration", oldTemplateGeneration,
@@ -743,7 +743,7 @@ func (r *LynqHubReconciler) updateLynqNode(ctx context.Context, registry *lynqv1
 			registry.Name, totalResources,
 			tmpl.Name, newTemplateGeneration)
 
-		logger.Info("Updating LynqNode data",
+		logger.V(1).Info("Updating LynqNode data",
 			"node", node.Name,
 			"template", tmpl.Name,
 			"totalResources", totalResources)
