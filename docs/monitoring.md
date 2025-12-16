@@ -54,7 +54,7 @@ After redeploying, confirm that a `ServiceMonitor` named `lynq-controller-manage
 
 ## Metrics Overview
 
-Lynq exposes 12 custom Prometheus metrics organized into four categories:
+Lynq exposes 15 custom Prometheus metrics organized into five categories:
 
 ### Metrics Summary
 
@@ -77,6 +77,10 @@ Lynq exposes 12 custom Prometheus metrics organized into four categories:
 | `lynqnode_conflicts_total` | Counter | Total resource conflicts | `lynqnode`, `namespace`, `resource_kind`, `conflict_policy` |
 | `lynqnode_resources_conflicted` | Gauge | Current resources in conflict state | `lynqnode`, `namespace` |
 | `lynqnode_degraded_status` | Gauge | LynqNode degraded status (0=Not degraded, 1=Degraded) | `lynqnode`, `namespace`, `reason` |
+| **Rollout Metrics (v1.1.16+)** |
+| `lynqform_rollout_updating_nodes` | Gauge | Nodes currently being updated | `form`, `namespace` |
+| `lynqform_rollout_phase` | Gauge | Rollout phase (0=Idle, 1=InProgress, 2=Failed, 3=Complete) | `form`, `namespace` |
+| `lynqform_rollout_progress` | Gauge | Rollout progress percentage | `form`, `namespace` |
 
 ::: tip Detailed Queries
 For comprehensive PromQL query examples, see [Prometheus Query Examples](prometheus-queries.md).
@@ -124,6 +128,21 @@ sum(lynqnode_resources_conflicted)
 
 # Conflict rate
 rate(lynqnode_conflicts_total[5m])
+```
+
+**Rollout (v1.1.16+):**
+```promql
+# Forms currently rolling out
+lynqform_rollout_phase == 1
+
+# Rollout progress by form
+lynqform_rollout_progress
+
+# Nodes currently updating
+sum(lynqform_rollout_updating_nodes)
+
+# Stalled rollouts (InProgress for too long)
+lynqform_rollout_phase == 1 and time() - lynqform_rollout_start_time > 3600
 ```
 
 ::: tip Complete Query Reference
