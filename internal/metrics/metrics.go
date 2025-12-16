@@ -131,6 +131,34 @@ var (
 		},
 		[]string{"lynqnode", "namespace", "reason"},
 	)
+
+	// FormRolloutUpdatingNodes tracks the number of nodes currently being updated for a LynqForm
+	FormRolloutUpdatingNodes = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "lynqform_rollout_updating_nodes",
+			Help: "Number of nodes currently being updated for a LynqForm (updated but not Ready yet)",
+		},
+		[]string{"form", "namespace"},
+	)
+
+	// FormRolloutPhase tracks the current rollout phase for a LynqForm
+	// Values: 0=Idle, 1=InProgress, 2=Failed, 3=Complete
+	FormRolloutPhase = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "lynqform_rollout_phase",
+			Help: "Current rollout phase for a LynqForm (0=Idle, 1=InProgress, 2=Failed, 3=Complete)",
+		},
+		[]string{"form", "namespace"},
+	)
+
+	// FormRolloutProgress tracks the rollout progress percentage for a LynqForm
+	FormRolloutProgress = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "lynqform_rollout_progress",
+			Help: "Rollout progress percentage for a LynqForm (readyUpdatedNodes/totalNodes * 100)",
+		},
+		[]string{"form", "namespace"},
+	)
 )
 
 func init() {
@@ -148,5 +176,26 @@ func init() {
 		LynqNodeConflictsTotal,
 		LynqNodeResourcesConflicted,
 		LynqNodeDegradedStatus,
+		// Rollout metrics
+		FormRolloutUpdatingNodes,
+		FormRolloutPhase,
+		FormRolloutProgress,
 	)
+}
+
+// RolloutPhaseToMetric converts a RolloutPhase to a numeric value for metrics
+// 0=Idle, 1=InProgress, 2=Failed, 3=Complete
+func RolloutPhaseToMetric(phase string) float64 {
+	switch phase {
+	case "Idle":
+		return 0
+	case "InProgress":
+		return 1
+	case "Failed":
+		return 2
+	case "Complete":
+		return 3
+	default:
+		return 0
+	}
 }

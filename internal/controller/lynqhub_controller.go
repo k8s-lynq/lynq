@@ -178,22 +178,59 @@ func (r *LynqHubReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		existing[key] = node
 	}
 
+	// Group existing nodes by template for maxSkew checking
+	nodesByTemplate := make(map[string][]*lynqv1.LynqNode)
+	for key, node := range existing {
+		nodesByTemplate[key.TemplateName] = append(nodesByTemplate[key.TemplateName], node)
+	}
+
+	// Track throttled updates for events
+	throttledByTemplate := make(map[string]int)
+
 	// Create/update nodes for each template-row combination
 	for key, desired := range desired {
+		tmpl := desired.Template
+		templateNodes := nodesByTemplate[tmpl.Name]
+
 		if existingLynqNode, exists := existing[key]; !exists {
-			// Create new LynqNode
-			if err := r.createLynqNode(ctx, registry, desired.Template, desired.Row); err != nil {
-				// Ignore AlreadyExists errors (can happen due to concurrent reconciliations)
-				if !errors.IsAlreadyExists(err) {
-					logger.Error(err, "Failed to create LynqNode", "template", key.TemplateName, "uid", key.UID)
+			// Create new LynqNode - check maxSkew before creating
+			if r.canUpdateNode(tmpl, templateNodes) {
+				if err := r.createLynqNode(ctx, registry, tmpl, desired.Row); err != nil {
+					// Ignore AlreadyExists errors (can happen due to concurrent reconciliations)
+					if !errors.IsAlreadyExists(err) {
+						logger.Error(err, "Failed to create LynqNode", "template", key.TemplateName, "uid", key.UID)
+					}
 				}
+			} else {
+				// Throttled by maxSkew
+				throttledByTemplate[tmpl.Name]++
 			}
 		} else {
 			// Update existing LynqNode if data or template changed
 			if r.shouldUpdateLynqNode(ctx, registry, existingLynqNode, desired.Row) {
-				if err := r.updateLynqNode(ctx, registry, desired.Template, existingLynqNode, desired.Row); err != nil {
-					logger.Error(err, "Failed to update LynqNode", "template", key.TemplateName, "uid", key.UID)
+				// Check maxSkew before updating
+				if r.canUpdateNode(tmpl, templateNodes) {
+					if err := r.updateLynqNode(ctx, registry, tmpl, existingLynqNode, desired.Row); err != nil {
+						logger.Error(err, "Failed to update LynqNode", "template", key.TemplateName, "uid", key.UID)
+					}
+				} else {
+					// Throttled by maxSkew
+					throttledByTemplate[tmpl.Name]++
 				}
+			}
+		}
+	}
+
+	// Emit events for throttled updates
+	for tmplName, throttledCount := range throttledByTemplate {
+		// Find the template to get maxSkew value
+		for _, tmpl := range templates {
+			if tmpl.Name == tmplName && tmpl.Spec.Rollout != nil {
+				r.Recorder.Eventf(registry, corev1.EventTypeNormal, "RolloutThrottled",
+					"LynqForm '%s': %d node updates throttled (maxSkew=%d, currently updating=%d)",
+					tmplName, throttledCount, tmpl.Spec.Rollout.MaxSkew,
+					r.countUpdatingNodes(nodesByTemplate[tmplName], tmpl.Generation))
+				break
 			}
 		}
 	}
@@ -547,11 +584,12 @@ func (r *LynqHubReconciler) createLynqNode(ctx context.Context, registry *lynqv1
 				"lynq.sh/uid": row.UID,
 			},
 			Annotations: map[string]string{
-				"lynq.sh/hostOrUrl":           row.HostOrURL,
-				"lynq.sh/activate":            row.Activate,
-				"lynq.sh/extra":               string(extraJSON),
-				"lynq.sh/template-generation": fmt.Sprintf("%d", tmpl.Generation),
-				"lynq.sh/hubId":               registry.Name,
+				"lynq.sh/hostOrUrl":                     row.HostOrURL,
+				"lynq.sh/activate":                      row.Activate,
+				"lynq.sh/extra":                         string(extraJSON),
+				lynqv1.AnnotationTemplateGeneration:     fmt.Sprintf("%d", tmpl.Generation),
+				"lynq.sh/hubId":                         registry.Name,
+				lynqv1.AnnotationRolloutUpdateStartTime: time.Now().Format(time.RFC3339),
 			},
 		},
 		Spec: *renderedSpec,
@@ -662,8 +700,10 @@ func (r *LynqHubReconciler) updateLynqNode(ctx context.Context, registry *lynqv1
 		latest.Annotations["lynq.sh/hostOrUrl"] = row.HostOrURL
 		latest.Annotations["lynq.sh/activate"] = row.Activate
 		latest.Annotations["lynq.sh/extra"] = string(extraJSON)
-		latest.Annotations["lynq.sh/template-generation"] = newTemplateGeneration
+		latest.Annotations[lynqv1.AnnotationTemplateGeneration] = newTemplateGeneration
 		latest.Annotations["lynq.sh/hubId"] = registry.Name
+		// Update rollout start time for progress deadline tracking
+		latest.Annotations[lynqv1.AnnotationRolloutUpdateStartTime] = time.Now().Format(time.RFC3339)
 
 		// Update spec with newly rendered resources
 		latest.Spec = *renderedSpec
@@ -1055,6 +1095,44 @@ func removeString(slice []string, str string) []string {
 		}
 	}
 	return result
+}
+
+// isNodeReady checks if a LynqNode has Ready condition set to True
+func isNodeReady(node *lynqv1.LynqNode) bool {
+	for _, cond := range node.Status.Conditions {
+		if cond.Type == "Ready" {
+			return cond.Status == metav1.ConditionTrue
+		}
+	}
+	return false
+}
+
+// countUpdatingNodes counts LynqNodes that are currently updating (updated to target generation but not Ready yet)
+// This is used to enforce maxSkew - the maximum number of nodes that can be updating simultaneously
+func (r *LynqHubReconciler) countUpdatingNodes(nodes []*lynqv1.LynqNode, targetGen int64) int32 {
+	var count int32
+	targetGenStr := fmt.Sprintf("%d", targetGen)
+
+	for _, node := range nodes {
+		// Node is "updating" if it has been updated to the target generation but is not Ready yet
+		nodeGen := node.Annotations[lynqv1.AnnotationTemplateGeneration]
+		if nodeGen == targetGenStr && !isNodeReady(node) {
+			count++
+		}
+	}
+	return count
+}
+
+// canUpdateNode checks if we can update/create a node based on the template's maxSkew setting
+// Returns true if maxSkew is not configured (unlimited) or if we're under the limit
+func (r *LynqHubReconciler) canUpdateNode(tmpl *lynqv1.LynqForm, templateNodes []*lynqv1.LynqNode) bool {
+	// No rollout config means unlimited updates (current behavior)
+	if tmpl.Spec.Rollout == nil || tmpl.Spec.Rollout.MaxSkew == 0 {
+		return true
+	}
+
+	updatingCount := r.countUpdatingNodes(templateNodes, tmpl.Generation)
+	return updatingCount < tmpl.Spec.Rollout.MaxSkew
 }
 
 // SetupWithManager sets up the controller with the Manager.

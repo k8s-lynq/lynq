@@ -37,6 +37,7 @@ import (
 
 	lynqv1 "github.com/k8s-lynq/lynq/api/v1"
 	"github.com/k8s-lynq/lynq/internal/graph"
+	"github.com/k8s-lynq/lynq/internal/metrics"
 )
 
 const (
@@ -221,34 +222,74 @@ func (r *LynqFormReconciler) collectAllResources(tmpl *lynqv1.LynqForm) []lynqv1
 	return resources
 }
 
+// rolloutStats holds rollout statistics for a template
+type rolloutStats struct {
+	totalNodes        int32
+	readyNodes        int32
+	updatedNodes      int32 // Nodes updated to target generation
+	updatingNodes     int32 // Updated but not Ready yet
+	readyUpdatedNodes int32 // Updated AND Ready
+}
+
 // checkLynqNodeStatuses checks the status of all nodes using this template
 func (r *LynqFormReconciler) checkLynqNodeStatuses(ctx context.Context, tmpl *lynqv1.LynqForm) (totalLynqNodes, readyLynqNodes int32, err error) {
+	stats := r.calculateRolloutStats(ctx, tmpl)
+	return stats.totalNodes, stats.readyNodes, nil
+}
+
+// calculateRolloutStats calculates rollout statistics for a template
+func (r *LynqFormReconciler) calculateRolloutStats(ctx context.Context, tmpl *lynqv1.LynqForm) rolloutStats {
+	stats := rolloutStats{}
+	targetGenStr := fmt.Sprintf("%d", tmpl.Generation)
+
 	// List all nodes that reference this template
 	nodeList := &lynqv1.LynqNodeList{}
 	if err := r.List(ctx, nodeList, client.InNamespace(tmpl.Namespace)); err != nil {
-		return 0, 0, fmt.Errorf("failed to list nodes: %w", err)
+		return stats
 	}
 
 	// Filter nodes that use this template
 	for _, node := range nodeList.Items {
-		if node.Spec.TemplateRef == tmpl.Name {
-			totalLynqNodes++
+		if node.Spec.TemplateRef != tmpl.Name {
+			continue
+		}
 
-			// Check if node is Ready
-			for _, condition := range node.Status.Conditions {
-				if condition.Type == ConditionTypeReady && condition.Status == metav1.ConditionTrue {
-					readyLynqNodes++
-					break
-				}
+		stats.totalNodes++
+
+		// Check if node is Ready
+		nodeReady := false
+		for _, condition := range node.Status.Conditions {
+			if condition.Type == ConditionTypeReady && condition.Status == metav1.ConditionTrue {
+				nodeReady = true
+				stats.readyNodes++
+				break
+			}
+		}
+
+		// Check if node has been updated to target generation
+		nodeGen := node.Annotations[lynqv1.AnnotationTemplateGeneration]
+		if nodeGen == targetGenStr {
+			stats.updatedNodes++
+			if nodeReady {
+				stats.readyUpdatedNodes++
+			} else {
+				stats.updatingNodes++
 			}
 		}
 	}
 
-	return totalLynqNodes, readyLynqNodes, nil
+	return stats
 }
 
 // updateStatus updates LynqForm status with retry on conflict
 func (r *LynqFormReconciler) updateStatus(ctx context.Context, tmpl *lynqv1.LynqForm, validationErrors []string, totalLynqNodes, readyLynqNodes int32) {
+	// For backward compatibility, calculate rollout stats
+	stats := r.calculateRolloutStats(ctx, tmpl)
+	r.updateStatusWithRollout(ctx, tmpl, validationErrors, stats)
+}
+
+// updateStatusWithRollout updates LynqForm status including rollout status
+func (r *LynqFormReconciler) updateStatusWithRollout(ctx context.Context, tmpl *lynqv1.LynqForm, validationErrors []string, stats rolloutStats) {
 	logger := log.FromContext(ctx)
 
 	// Retry status update on conflict
@@ -262,8 +303,11 @@ func (r *LynqFormReconciler) updateStatus(ctx context.Context, tmpl *lynqv1.Lynq
 
 		// Update status fields
 		latest.Status.ObservedGeneration = latest.Generation
-		latest.Status.TotalNodes = totalLynqNodes
-		latest.Status.ReadyNodes = readyLynqNodes
+		latest.Status.TotalNodes = stats.totalNodes
+		latest.Status.ReadyNodes = stats.readyNodes
+
+		// Update rollout status if maxSkew is configured
+		r.updateRolloutStatus(latest, stats)
 
 		// Prepare Valid condition
 		validCondition := metav1.Condition{
@@ -285,15 +329,15 @@ func (r *LynqFormReconciler) updateStatus(ctx context.Context, tmpl *lynqv1.Lynq
 			Type:               "Applied",
 			Status:             metav1.ConditionFalse,
 			Reason:             "NotAllNodesReady",
-			Message:            fmt.Sprintf("%d/%d nodes ready", readyLynqNodes, totalLynqNodes),
+			Message:            fmt.Sprintf("%d/%d nodes ready", stats.readyNodes, stats.totalNodes),
 			LastTransitionTime: metav1.Now(),
 		}
 
-		if totalLynqNodes > 0 && readyLynqNodes == totalLynqNodes {
+		if stats.totalNodes > 0 && stats.readyNodes == stats.totalNodes {
 			appliedCondition.Status = metav1.ConditionTrue
 			appliedCondition.Reason = "AllNodesReady"
-			appliedCondition.Message = fmt.Sprintf("All %d nodes ready", totalLynqNodes)
-		} else if totalLynqNodes == 0 {
+			appliedCondition.Message = fmt.Sprintf("All %d nodes ready", stats.totalNodes)
+		} else if stats.totalNodes == 0 {
 			appliedCondition.Reason = "NoNodes"
 			appliedCondition.Message = "No nodes using this template"
 		}
@@ -331,6 +375,78 @@ func (r *LynqFormReconciler) updateStatus(ctx context.Context, tmpl *lynqv1.Lynq
 	if err != nil {
 		logger.Error(err, "Failed to update LynqForm status after retries")
 	}
+}
+
+// updateRolloutStatus updates the rollout status based on current statistics
+func (r *LynqFormReconciler) updateRolloutStatus(tmpl *lynqv1.LynqForm, stats rolloutStats) {
+	// Only track rollout status if maxSkew is configured
+	if tmpl.Spec.Rollout == nil || tmpl.Spec.Rollout.MaxSkew == 0 {
+		// Clear rollout status if maxSkew is not configured
+		tmpl.Status.Rollout = nil
+		// Clear metrics when rollout is not configured
+		metrics.FormRolloutUpdatingNodes.DeleteLabelValues(tmpl.Name, tmpl.Namespace)
+		metrics.FormRolloutPhase.DeleteLabelValues(tmpl.Name, tmpl.Namespace)
+		metrics.FormRolloutProgress.DeleteLabelValues(tmpl.Name, tmpl.Namespace)
+		return
+	}
+
+	// Initialize rollout status if needed
+	if tmpl.Status.Rollout == nil {
+		tmpl.Status.Rollout = &lynqv1.RolloutStatus{}
+	}
+
+	rollout := tmpl.Status.Rollout
+	rollout.TargetGeneration = tmpl.Generation
+	rollout.TotalNodes = stats.totalNodes
+	rollout.UpdatedNodes = stats.updatedNodes
+	rollout.UpdatingNodes = stats.updatingNodes
+	rollout.ReadyUpdatedNodes = stats.readyUpdatedNodes
+
+	// Determine rollout phase
+	if stats.totalNodes == 0 {
+		rollout.Phase = lynqv1.RolloutPhaseIdle
+		rollout.Message = "No nodes using this template"
+	} else if stats.readyUpdatedNodes == stats.totalNodes {
+		// All nodes are updated and ready - rollout complete
+		rollout.Phase = lynqv1.RolloutPhaseComplete
+		rollout.Message = fmt.Sprintf("All %d nodes updated and ready", stats.totalNodes)
+		if rollout.CompletionTime == nil {
+			now := metav1.Now()
+			rollout.CompletionTime = &now
+		}
+	} else if stats.updatedNodes == 0 {
+		// No nodes have been updated yet - rollout not started or idle
+		rollout.Phase = lynqv1.RolloutPhaseIdle
+		rollout.Message = "Waiting for nodes to be updated"
+		// Reset completion time for new rollout
+		rollout.CompletionTime = nil
+		if rollout.StartTime == nil {
+			now := metav1.Now()
+			rollout.StartTime = &now
+		}
+	} else {
+		// Some nodes are updating - rollout in progress
+		rollout.Phase = lynqv1.RolloutPhaseInProgress
+		rollout.Message = fmt.Sprintf("Updating: %d/%d nodes updated (%d updating, %d ready)",
+			stats.updatedNodes, stats.totalNodes, stats.updatingNodes, stats.readyUpdatedNodes)
+		// Reset completion time while in progress
+		rollout.CompletionTime = nil
+		if rollout.StartTime == nil {
+			now := metav1.Now()
+			rollout.StartTime = &now
+		}
+	}
+
+	// Update metrics
+	metrics.FormRolloutUpdatingNodes.WithLabelValues(tmpl.Name, tmpl.Namespace).Set(float64(stats.updatingNodes))
+	metrics.FormRolloutPhase.WithLabelValues(tmpl.Name, tmpl.Namespace).Set(metrics.RolloutPhaseToMetric(string(rollout.Phase)))
+
+	// Calculate progress percentage
+	var progress float64
+	if stats.totalNodes > 0 {
+		progress = float64(stats.readyUpdatedNodes) / float64(stats.totalNodes) * 100
+	}
+	metrics.FormRolloutProgress.WithLabelValues(tmpl.Name, tmpl.Namespace).Set(progress)
 }
 
 // SetupWithManager sets up the controller with the Manager.

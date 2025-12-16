@@ -930,3 +930,461 @@ func TestCreateNodeIgnoresAlreadyExists(t *testing.T) {
 	// Verify that AlreadyExists error is returned (will be ignored by caller)
 	assert.Error(t, err, "createLynqNode should return error when node already exists")
 }
+
+// TestIsNodeReady tests the isNodeReady helper function
+func TestIsNodeReady(t *testing.T) {
+	tests := []struct {
+		name     string
+		node     *lynqv1.LynqNode
+		expected bool
+	}{
+		{
+			name: "node with Ready=True condition",
+			node: &lynqv1.LynqNode{
+				Status: lynqv1.LynqNodeStatus{
+					Conditions: []metav1.Condition{
+						{
+							Type:   "Ready",
+							Status: metav1.ConditionTrue,
+						},
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "node with Ready=False condition",
+			node: &lynqv1.LynqNode{
+				Status: lynqv1.LynqNodeStatus{
+					Conditions: []metav1.Condition{
+						{
+							Type:   "Ready",
+							Status: metav1.ConditionFalse,
+						},
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "node with Ready=Unknown condition",
+			node: &lynqv1.LynqNode{
+				Status: lynqv1.LynqNodeStatus{
+					Conditions: []metav1.Condition{
+						{
+							Type:   "Ready",
+							Status: metav1.ConditionUnknown,
+						},
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "node without Ready condition",
+			node: &lynqv1.LynqNode{
+				Status: lynqv1.LynqNodeStatus{
+					Conditions: []metav1.Condition{
+						{
+							Type:   "Degraded",
+							Status: metav1.ConditionTrue,
+						},
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "node with empty conditions",
+			node: &lynqv1.LynqNode{
+				Status: lynqv1.LynqNodeStatus{
+					Conditions: []metav1.Condition{},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "node with multiple conditions including Ready=True",
+			node: &lynqv1.LynqNode{
+				Status: lynqv1.LynqNodeStatus{
+					Conditions: []metav1.Condition{
+						{
+							Type:   "Degraded",
+							Status: metav1.ConditionFalse,
+						},
+						{
+							Type:   "Ready",
+							Status: metav1.ConditionTrue,
+						},
+					},
+				},
+			},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isNodeReady(tt.node)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// TestCountUpdatingNodes tests the countUpdatingNodes function for rollout tracking
+func TestCountUpdatingNodes(t *testing.T) {
+	tests := []struct {
+		name      string
+		nodes     []*lynqv1.LynqNode
+		targetGen int64
+		wantCount int32
+	}{
+		{
+			name:      "no nodes",
+			nodes:     []*lynqv1.LynqNode{},
+			targetGen: 1,
+			wantCount: 0,
+		},
+		{
+			name: "all nodes at target generation and Ready",
+			nodes: []*lynqv1.LynqNode{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Annotations: map[string]string{
+							lynqv1.AnnotationTemplateGeneration: "1",
+						},
+					},
+					Status: lynqv1.LynqNodeStatus{
+						Conditions: []metav1.Condition{
+							{Type: "Ready", Status: metav1.ConditionTrue},
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Annotations: map[string]string{
+							lynqv1.AnnotationTemplateGeneration: "1",
+						},
+					},
+					Status: lynqv1.LynqNodeStatus{
+						Conditions: []metav1.Condition{
+							{Type: "Ready", Status: metav1.ConditionTrue},
+						},
+					},
+				},
+			},
+			targetGen: 1,
+			wantCount: 0, // All nodes ready, none updating
+		},
+		{
+			name: "some nodes updating (at target gen but not Ready)",
+			nodes: []*lynqv1.LynqNode{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Annotations: map[string]string{
+							lynqv1.AnnotationTemplateGeneration: "2",
+						},
+					},
+					Status: lynqv1.LynqNodeStatus{
+						Conditions: []metav1.Condition{
+							{Type: "Ready", Status: metav1.ConditionTrue},
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Annotations: map[string]string{
+							lynqv1.AnnotationTemplateGeneration: "2",
+						},
+					},
+					Status: lynqv1.LynqNodeStatus{
+						Conditions: []metav1.Condition{
+							{Type: "Ready", Status: metav1.ConditionFalse},
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Annotations: map[string]string{
+							lynqv1.AnnotationTemplateGeneration: "2",
+						},
+					},
+					Status: lynqv1.LynqNodeStatus{
+						Conditions: []metav1.Condition{}, // No Ready condition
+					},
+				},
+			},
+			targetGen: 2,
+			wantCount: 2, // 2 nodes not ready
+		},
+		{
+			name: "nodes at different generations",
+			nodes: []*lynqv1.LynqNode{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Annotations: map[string]string{
+							lynqv1.AnnotationTemplateGeneration: "1", // Old gen
+						},
+					},
+					Status: lynqv1.LynqNodeStatus{
+						Conditions: []metav1.Condition{
+							{Type: "Ready", Status: metav1.ConditionFalse},
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Annotations: map[string]string{
+							lynqv1.AnnotationTemplateGeneration: "2", // Target gen, not ready
+						},
+					},
+					Status: lynqv1.LynqNodeStatus{
+						Conditions: []metav1.Condition{
+							{Type: "Ready", Status: metav1.ConditionFalse},
+						},
+					},
+				},
+			},
+			targetGen: 2,
+			wantCount: 1, // Only 1 node at target gen and not ready
+		},
+		{
+			name: "node without annotation",
+			nodes: []*lynqv1.LynqNode{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Annotations: nil, // No annotations
+					},
+					Status: lynqv1.LynqNodeStatus{
+						Conditions: []metav1.Condition{
+							{Type: "Ready", Status: metav1.ConditionFalse},
+						},
+					},
+				},
+			},
+			targetGen: 1,
+			wantCount: 0, // Node without annotation is not counted
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			require.NoError(t, lynqv1.AddToScheme(scheme))
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				Build()
+
+			r := &LynqHubReconciler{
+				Client: fakeClient,
+				Scheme: scheme,
+			}
+
+			count := r.countUpdatingNodes(tt.nodes, tt.targetGen)
+			assert.Equal(t, tt.wantCount, count)
+		})
+	}
+}
+
+// TestCanUpdateNode tests the canUpdateNode function for maxSkew enforcement
+func TestCanUpdateNode(t *testing.T) {
+	tests := []struct {
+		name          string
+		rollout       *lynqv1.RolloutConfig
+		templateGen   int64
+		nodes         []*lynqv1.LynqNode
+		wantCanUpdate bool
+	}{
+		{
+			name:          "no rollout config - unlimited updates",
+			rollout:       nil,
+			templateGen:   1,
+			nodes:         []*lynqv1.LynqNode{},
+			wantCanUpdate: true,
+		},
+		{
+			name: "maxSkew=0 - unlimited updates",
+			rollout: &lynqv1.RolloutConfig{
+				MaxSkew: 0,
+			},
+			templateGen:   1,
+			nodes:         []*lynqv1.LynqNode{},
+			wantCanUpdate: true,
+		},
+		{
+			name: "maxSkew=3, 0 nodes updating - can update",
+			rollout: &lynqv1.RolloutConfig{
+				MaxSkew: 3,
+			},
+			templateGen:   1,
+			nodes:         []*lynqv1.LynqNode{},
+			wantCanUpdate: true,
+		},
+		{
+			name: "maxSkew=3, 2 nodes updating - can update",
+			rollout: &lynqv1.RolloutConfig{
+				MaxSkew: 3,
+			},
+			templateGen: 2,
+			nodes: []*lynqv1.LynqNode{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Annotations: map[string]string{
+							lynqv1.AnnotationTemplateGeneration: "2",
+						},
+					},
+					Status: lynqv1.LynqNodeStatus{
+						Conditions: []metav1.Condition{
+							{Type: "Ready", Status: metav1.ConditionFalse},
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Annotations: map[string]string{
+							lynqv1.AnnotationTemplateGeneration: "2",
+						},
+					},
+					Status: lynqv1.LynqNodeStatus{
+						Conditions: []metav1.Condition{}, // No ready condition
+					},
+				},
+			},
+			wantCanUpdate: true, // 2 < 3
+		},
+		{
+			name: "maxSkew=3, 3 nodes updating - cannot update",
+			rollout: &lynqv1.RolloutConfig{
+				MaxSkew: 3,
+			},
+			templateGen: 2,
+			nodes: []*lynqv1.LynqNode{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Annotations: map[string]string{
+							lynqv1.AnnotationTemplateGeneration: "2",
+						},
+					},
+					Status: lynqv1.LynqNodeStatus{
+						Conditions: []metav1.Condition{
+							{Type: "Ready", Status: metav1.ConditionFalse},
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Annotations: map[string]string{
+							lynqv1.AnnotationTemplateGeneration: "2",
+						},
+					},
+					Status: lynqv1.LynqNodeStatus{
+						Conditions: []metav1.Condition{
+							{Type: "Ready", Status: metav1.ConditionFalse},
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Annotations: map[string]string{
+							lynqv1.AnnotationTemplateGeneration: "2",
+						},
+					},
+					Status: lynqv1.LynqNodeStatus{
+						Conditions: []metav1.Condition{
+							{Type: "Ready", Status: metav1.ConditionFalse},
+						},
+					},
+				},
+			},
+			wantCanUpdate: false, // 3 >= 3
+		},
+		{
+			name: "maxSkew=1 serial rollout - 1 updating cannot add more",
+			rollout: &lynqv1.RolloutConfig{
+				MaxSkew: 1,
+			},
+			templateGen: 3,
+			nodes: []*lynqv1.LynqNode{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Annotations: map[string]string{
+							lynqv1.AnnotationTemplateGeneration: "3",
+						},
+					},
+					Status: lynqv1.LynqNodeStatus{
+						Conditions: []metav1.Condition{
+							{Type: "Ready", Status: metav1.ConditionFalse},
+						},
+					},
+				},
+			},
+			wantCanUpdate: false, // 1 >= 1
+		},
+		{
+			name: "ready nodes don't count as updating",
+			rollout: &lynqv1.RolloutConfig{
+				MaxSkew: 2,
+			},
+			templateGen: 2,
+			nodes: []*lynqv1.LynqNode{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Annotations: map[string]string{
+							lynqv1.AnnotationTemplateGeneration: "2",
+						},
+					},
+					Status: lynqv1.LynqNodeStatus{
+						Conditions: []metav1.Condition{
+							{Type: "Ready", Status: metav1.ConditionTrue}, // Ready!
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Annotations: map[string]string{
+							lynqv1.AnnotationTemplateGeneration: "2",
+						},
+					},
+					Status: lynqv1.LynqNodeStatus{
+						Conditions: []metav1.Condition{
+							{Type: "Ready", Status: metav1.ConditionFalse},
+						},
+					},
+				},
+			},
+			wantCanUpdate: true, // Only 1 updating (other is ready)
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			require.NoError(t, lynqv1.AddToScheme(scheme))
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				Build()
+
+			r := &LynqHubReconciler{
+				Client: fakeClient,
+				Scheme: scheme,
+			}
+
+			tmpl := &lynqv1.LynqForm{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "test-template",
+					Namespace:  "default",
+					Generation: tt.templateGen,
+				},
+				Spec: lynqv1.LynqFormSpec{
+					HubID:   "test-hub",
+					Rollout: tt.rollout,
+				},
+			}
+
+			canUpdate := r.canUpdateNode(tmpl, tt.nodes)
+			assert.Equal(t, tt.wantCanUpdate, canUpdate)
+		})
+	}
+}
