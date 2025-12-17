@@ -356,7 +356,7 @@ Customize resource lifecycle behavior with powerful policies for creation, delet
 <div style="display: flex; align-items: center; gap: 1rem; padding: 1.25rem; background: var(--vp-c-bg-soft); border-radius: 8px; margin: 2.5rem 0">
   <div style="font-size: 2rem">✅</div>
   <div>
-    <strong style="font-size: 1.05rem">Validated on Kubernetes v1.28 – v1.33</strong>
+    <strong style="font-size: 1.05rem">Validated on Kubernetes v1.31 – v1.34</strong>
     <p style="margin: 0.5rem 0 0; font-size: 0.9rem; color: var(--vp-c-text-2)">
       Production-tested across multiple versions • See <a href="/installation#kubernetes-compatibility">compatibility details</a>
     </p>
