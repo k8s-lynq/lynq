@@ -20,8 +20,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -199,7 +201,7 @@ func (r *LynqHubReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 		if existingLynqNode, exists := existing[key]; !exists {
 			// Create new LynqNode - check maxSkew before creating
-			if r.canUpdateNodeWithCount(tmpl, templateNodes, updatedInThisIteration[tmpl.Name]) {
+			if r.canUpdateNodeWithCount(ctx, tmpl, templateNodes, updatedInThisIteration[tmpl.Name]) {
 				if err := r.createLynqNode(ctx, registry, tmpl, desired.Row); err != nil {
 					// Ignore AlreadyExists errors (can happen due to concurrent reconciliations)
 					if !errors.IsAlreadyExists(err) {
@@ -217,7 +219,7 @@ func (r *LynqHubReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			// Update existing LynqNode if data or template changed
 			if r.shouldUpdateLynqNode(ctx, registry, existingLynqNode, desired.Row) {
 				// Check maxSkew before updating
-				if r.canUpdateNodeWithCount(tmpl, templateNodes, updatedInThisIteration[tmpl.Name]) {
+				if r.canUpdateNodeWithCount(ctx, tmpl, templateNodes, updatedInThisIteration[tmpl.Name]) {
 					if err := r.updateLynqNode(ctx, registry, tmpl, existingLynqNode, desired.Row); err != nil {
 						logger.Error(err, "Failed to update LynqNode", "template", key.TemplateName, "uid", key.UID)
 					} else {
@@ -240,7 +242,7 @@ func (r *LynqHubReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 				r.Recorder.Eventf(registry, corev1.EventTypeNormal, "RolloutThrottled",
 					"LynqForm '%s': %d node updates throttled (maxSkew=%d, currently updating=%d)",
 					tmplName, throttledCount, tmpl.Spec.Rollout.MaxSkew,
-					r.countUpdatingNodes(nodesByTemplate[tmplName], tmpl.Generation))
+					r.countUpdatingNodes(ctx, nodesByTemplate[tmplName], tmpl.Generation))
 				break
 			}
 		}
@@ -1118,6 +1120,10 @@ func isNodeReady(node *lynqv1.LynqNode) bool {
 	return false
 }
 
+// safetyMarginDuration is the minimum time we consider a node as "updating" after it starts updating.
+// This covers the StatusManager batch delay (up to 1 second) plus a small safety buffer.
+const safetyMarginDuration = 2 * time.Second
+
 // countUpdatingNodes counts LynqNodes that are currently updating (updated to target generation but not Ready yet)
 // This is used to enforce maxSkew - the maximum number of nodes that can be updating simultaneously
 //
@@ -1125,9 +1131,11 @@ func isNodeReady(node *lynqv1.LynqNode) bool {
 // 1. Template generation matches AND Ready condition is False
 // 2. Template generation matches AND ObservedGeneration != Generation (controller hasn't reconciled yet)
 // 3. Template generation matches AND recently updated (within safety margin) - handles async status updates
-func (r *LynqHubReconciler) countUpdatingNodes(nodes []*lynqv1.LynqNode, targetGen int64) int32 {
+// 4. Template generation matches AND actual resources (Deployments, etc.) are not ready - direct cluster check
+func (r *LynqHubReconciler) countUpdatingNodes(ctx context.Context, nodes []*lynqv1.LynqNode, targetGen int64) int32 {
 	var count int32
 	targetGenStr := fmt.Sprintf("%d", targetGen)
+	logger := log.FromContext(ctx)
 
 	for _, node := range nodes {
 		nodeGen := node.Annotations[lynqv1.AnnotationTemplateGeneration]
@@ -1149,36 +1157,263 @@ func (r *LynqHubReconciler) countUpdatingNodes(nodes []*lynqv1.LynqNode, targetG
 		}
 
 		// Case 3: Recently updated - safety margin for async status updates
-		// StatusManager batches updates with up to 1 second delay, so we add a 5 second margin
+		// StatusManager batches updates with up to 1 second delay, so we add a 2 second margin
 		if startTimeStr := node.Annotations[lynqv1.AnnotationRolloutUpdateStartTime]; startTimeStr != "" {
 			if startTime, err := time.Parse(time.RFC3339, startTimeStr); err == nil {
-				if time.Since(startTime) < 5*time.Second {
+				if time.Since(startTime) < safetyMarginDuration {
 					count++
 					continue
 				}
 			}
 		}
+
+		// Case 4: Actual resource readiness check (critical for slow-starting Pods)
+		// Even if the LynqNode status says Ready and we're past the safety margin,
+		// we still check the actual Deployment/StatefulSet/DaemonSet status in the cluster.
+		// This ensures we don't start the next node's update before resources are truly ready.
+		if !r.isNodeResourcesActuallyReady(ctx, node) {
+			logger.V(1).Info("Node resources not actually ready",
+				"lynqnode", node.Name, "namespace", node.Namespace)
+			count++
+			continue
+		}
 	}
 	return count
 }
 
+// isNodeResourcesActuallyReady checks if all resources managed by a LynqNode are actually ready
+// by querying the cluster directly instead of relying on cached LynqNode status.
+// This is critical for maxSkew enforcement to ensure we don't start updating the next node
+// before the current node's resources (especially Deployments with slow-starting Pods) are truly ready.
+//
+// This function only checks workload resources (Deployment, StatefulSet, DaemonSet) that have
+// pods with potential startup delays. Other resources (ConfigMap, Secret, Service, etc.) are
+// trusted to be ready based on the LynqNode status.
+func (r *LynqHubReconciler) isNodeResourcesActuallyReady(ctx context.Context, node *lynqv1.LynqNode) bool {
+	logger := log.FromContext(ctx)
+
+	// If no applied resources tracked, trust the LynqNode status
+	// This can happen for newly created nodes or nodes without workload resources
+	if len(node.Status.AppliedResources) == 0 {
+		return true
+	}
+
+	// Check each applied resource for workload types (Deployment, StatefulSet, DaemonSet)
+	// Other resource types (ConfigMap, Secret, Service, etc.) are trusted as ready immediately
+	for _, appliedResource := range node.Status.AppliedResources {
+		kind, namespace, name := parseAppliedResource(appliedResource)
+		if kind == "" || name == "" {
+			continue
+		}
+
+		// Use the node's namespace if the resource namespace is empty
+		if namespace == "" {
+			namespace = node.Namespace
+		}
+
+		switch kind {
+		case "Deployment":
+			var deploy appsv1.Deployment
+			if err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &deploy); err != nil {
+				if errors.IsNotFound(err) {
+					logger.V(1).Info("Deployment not found, considering not ready",
+						"deployment", name, "namespace", namespace, "lynqnode", node.Name)
+				}
+				return false
+			}
+			if !isDeploymentActuallyReady(&deploy) {
+				logger.V(1).Info("Deployment not ready",
+					"deployment", name, "namespace", namespace, "lynqnode", node.Name,
+					"replicas", deploy.Spec.Replicas,
+					"updatedReplicas", deploy.Status.UpdatedReplicas,
+					"readyReplicas", deploy.Status.ReadyReplicas,
+					"availableReplicas", deploy.Status.AvailableReplicas)
+				return false
+			}
+		case "StatefulSet":
+			var sts appsv1.StatefulSet
+			if err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &sts); err != nil {
+				if errors.IsNotFound(err) {
+					logger.V(1).Info("StatefulSet not found, considering not ready",
+						"statefulset", name, "namespace", namespace, "lynqnode", node.Name)
+				}
+				return false
+			}
+			if !isStatefulSetActuallyReady(&sts) {
+				logger.V(1).Info("StatefulSet not ready",
+					"statefulset", name, "namespace", namespace, "lynqnode", node.Name,
+					"replicas", sts.Spec.Replicas,
+					"updatedReplicas", sts.Status.UpdatedReplicas,
+					"readyReplicas", sts.Status.ReadyReplicas)
+				return false
+			}
+		case "DaemonSet":
+			var ds appsv1.DaemonSet
+			if err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &ds); err != nil {
+				if errors.IsNotFound(err) {
+					logger.V(1).Info("DaemonSet not found, considering not ready",
+						"daemonset", name, "namespace", namespace, "lynqnode", node.Name)
+				}
+				return false
+			}
+			if !isDaemonSetActuallyReady(&ds) {
+				logger.V(1).Info("DaemonSet not ready",
+					"daemonset", name, "namespace", namespace, "lynqnode", node.Name,
+					"desiredNumberScheduled", ds.Status.DesiredNumberScheduled,
+					"updatedNumberScheduled", ds.Status.UpdatedNumberScheduled,
+					"numberReady", ds.Status.NumberReady)
+				return false
+			}
+		}
+		// For other resource types (ConfigMap, Secret, Service, etc.), we trust the LynqNode status
+		// as they are typically ready immediately after creation
+	}
+
+	return true
+}
+
+// parseAppliedResource parses the applied resource key format: "kind/namespace/name@id"
+// Returns kind, namespace, name
+func parseAppliedResource(key string) (kind, namespace, name string) {
+	// Format: "kind/namespace/name@id"
+	// Example: "Deployment/default/myapp@app-deployment"
+
+	// Remove the @id suffix if present
+	atIdx := strings.LastIndex(key, "@")
+	if atIdx != -1 {
+		key = key[:atIdx]
+	}
+
+	parts := strings.SplitN(key, "/", 3)
+	if len(parts) < 2 {
+		return "", "", ""
+	}
+
+	kind = parts[0]
+	if len(parts) == 2 {
+		// Format: "kind/name" (namespace is empty)
+		name = parts[1]
+		return kind, "", name
+	}
+	// Format: "kind/namespace/name"
+	namespace = parts[1]
+	name = parts[2]
+	return kind, namespace, name
+}
+
+// isDeploymentActuallyReady checks if a Deployment is truly ready by examining its status directly.
+// This is more stringent than checking the LynqNode status because:
+// 1. LynqNode status may be cached or stale due to StatusManager batching
+// 2. We need to ensure ALL replicas are updated and ready before proceeding
+func isDeploymentActuallyReady(deploy *appsv1.Deployment) bool {
+	// Check if controller has observed the latest spec
+	if deploy.Generation != deploy.Status.ObservedGeneration {
+		return false
+	}
+
+	replicas := int32(1)
+	if deploy.Spec.Replicas != nil {
+		replicas = *deploy.Spec.Replicas
+	}
+
+	// Deployment scaled to 0 is considered not ready for rolling update purposes
+	if replicas == 0 {
+		return false
+	}
+
+	// Basic replica count checks
+	if deploy.Status.UpdatedReplicas != replicas ||
+		deploy.Status.ReadyReplicas != replicas ||
+		deploy.Status.AvailableReplicas != replicas {
+		return false
+	}
+
+	// CRITICAL: Check the Progressing condition to detect rolling updates
+	// During a rolling update with replicas=1:
+	// - updatedReplicas=1 (new pod created)
+	// - readyReplicas=1 (OLD pod still ready)
+	// - availableReplicas=1 (OLD pod)
+	// All counts match but rollout is NOT complete!
+	//
+	// The Progressing condition tells us the actual rollout status:
+	// - Reason="NewReplicaSetAvailable" means rollout is COMPLETE
+	// - Reason="ReplicaSetUpdated" means rollout is IN PROGRESS
+	for _, cond := range deploy.Status.Conditions {
+		if cond.Type == appsv1.DeploymentProgressing {
+			// If Progressing is True with Reason "NewReplicaSetAvailable", rollout is complete
+			// Any other reason means the rollout is still in progress
+			if cond.Status == corev1.ConditionTrue && cond.Reason == "NewReplicaSetAvailable" {
+				return true
+			}
+			// If Progressing condition exists but doesn't indicate completion, rollout is in progress
+			return false
+		}
+	}
+
+	// If no Progressing condition found, fall back to replica counts only
+	// This shouldn't happen for a well-behaved Deployment controller
+	return true
+}
+
+// isStatefulSetActuallyReady checks if a StatefulSet is truly ready
+func isStatefulSetActuallyReady(sts *appsv1.StatefulSet) bool {
+	// Check if controller has observed the latest spec
+	if sts.Generation != sts.Status.ObservedGeneration {
+		return false
+	}
+
+	replicas := int32(1)
+	if sts.Spec.Replicas != nil {
+		replicas = *sts.Spec.Replicas
+	}
+
+	// StatefulSet scaled to 0 is considered not ready
+	if replicas == 0 {
+		return false
+	}
+
+	// All conditions must be met
+	return sts.Status.UpdatedReplicas == replicas &&
+		sts.Status.ReadyReplicas == replicas &&
+		sts.Status.CurrentReplicas == replicas
+}
+
+// isDaemonSetActuallyReady checks if a DaemonSet is truly ready
+func isDaemonSetActuallyReady(ds *appsv1.DaemonSet) bool {
+	// Check if controller has observed the latest spec
+	if ds.Generation != ds.Status.ObservedGeneration {
+		return false
+	}
+
+	// DaemonSet with no nodes to schedule is not ready
+	if ds.Status.DesiredNumberScheduled == 0 {
+		return false
+	}
+
+	// All conditions must be met
+	return ds.Status.CurrentNumberScheduled == ds.Status.DesiredNumberScheduled &&
+		ds.Status.UpdatedNumberScheduled == ds.Status.DesiredNumberScheduled &&
+		ds.Status.NumberReady == ds.Status.DesiredNumberScheduled &&
+		ds.Status.NumberAvailable == ds.Status.DesiredNumberScheduled
+}
+
 // canUpdateNode checks if we can update/create a node based on the template's maxSkew setting
 // Returns true if maxSkew is not configured (unlimited) or if we're under the limit
-func (r *LynqHubReconciler) canUpdateNode(tmpl *lynqv1.LynqForm, templateNodes []*lynqv1.LynqNode) bool {
-	return r.canUpdateNodeWithCount(tmpl, templateNodes, 0)
+func (r *LynqHubReconciler) canUpdateNode(ctx context.Context, tmpl *lynqv1.LynqForm, templateNodes []*lynqv1.LynqNode) bool {
+	return r.canUpdateNodeWithCount(ctx, tmpl, templateNodes, 0)
 }
 
 // canUpdateNodeWithCount checks if we can update/create a node based on the template's maxSkew setting,
 // taking into account additional updates made in the current reconcile iteration
 // Returns true if maxSkew is not configured (unlimited) or if we're under the limit
-func (r *LynqHubReconciler) canUpdateNodeWithCount(tmpl *lynqv1.LynqForm, templateNodes []*lynqv1.LynqNode, additionalUpdates int32) bool {
+func (r *LynqHubReconciler) canUpdateNodeWithCount(ctx context.Context, tmpl *lynqv1.LynqForm, templateNodes []*lynqv1.LynqNode, additionalUpdates int32) bool {
 	// No rollout config means unlimited updates (current behavior)
 	if tmpl.Spec.Rollout == nil || tmpl.Spec.Rollout.MaxSkew == 0 {
 		return true
 	}
 
 	// Count nodes that are already updating based on their stored state
-	updatingCount := r.countUpdatingNodes(templateNodes, tmpl.Generation)
+	updatingCount := r.countUpdatingNodes(ctx, templateNodes, tmpl.Generation)
 
 	// Add the count of nodes we've updated in THIS iteration that aren't yet reflected in templateNodes
 	totalUpdating := updatingCount + additionalUpdates

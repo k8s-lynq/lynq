@@ -1181,7 +1181,7 @@ func TestCountUpdatingNodes(t *testing.T) {
 				Scheme: scheme,
 			}
 
-			count := r.countUpdatingNodes(tt.nodes, tt.targetGen)
+			count := r.countUpdatingNodes(context.Background(), tt.nodes, tt.targetGen)
 			assert.Equal(t, tt.wantCount, count)
 		})
 	}
@@ -1383,7 +1383,7 @@ func TestCanUpdateNode(t *testing.T) {
 				},
 			}
 
-			canUpdate := r.canUpdateNode(tmpl, tt.nodes)
+			canUpdate := r.canUpdateNode(context.Background(), tmpl, tt.nodes)
 			assert.Equal(t, tt.wantCanUpdate, canUpdate)
 		})
 	}

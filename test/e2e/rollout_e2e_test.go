@@ -798,6 +798,360 @@ spec:
 		})
 	})
 
+	Context("maxSkew strict enforcement with slow-starting Pods", func() {
+		// BDD-style test for maxSkew enforcement with slow-starting Pods
+		// This test specifically verifies that maxSkew is enforced based on actual Pod readiness,
+		// not just time-based safety margins.
+		//
+		// Bug scenario being tested:
+		// - Pod has initialDelaySeconds: 15
+		// - Old implementation uses 5-second safety margin
+		// - Operator incorrectly starts second node update after 5 seconds
+		// - But the first Pod is still not ready (takes 15+ seconds)
+		// - This violates maxSkew=1
+
+		const (
+			hubName  = "slow-pod-hub"
+			formName = "slow-pod-form"
+		)
+
+		BeforeEach(func() {
+			By("creating a LynqHub")
+			createHub(hubName)
+		})
+
+		AfterEach(func() {
+			By("cleaning up test data and resources")
+			for i := 1; i <= 3; i++ {
+				deleteTestData(fmt.Sprintf("slow-pod-node-%d", i))
+			}
+
+			// Delete all Deployments created by the test
+			cmd := exec.Command("kubectl", "delete", "deployment", "-n", policyTestNamespace,
+				"-l", "lynq.sh/node", "--ignore-not-found=true")
+			_, _ = utils.Run(cmd)
+
+			// Delete LynqForm
+			cmd = exec.Command("kubectl", "delete", "lynqform", formName, "-n", policyTestNamespace, "--ignore-not-found=true")
+			_, _ = utils.Run(cmd)
+
+			// Delete LynqHub
+			cmd = exec.Command("kubectl", "delete", "lynqhub", hubName, "-n", policyTestNamespace, "--ignore-not-found=true")
+			_, _ = utils.Run(cmd)
+
+			time.Sleep(5 * time.Second)
+		})
+
+		Describe("Given a LynqHub with maxSkew=1 and slow-starting Pods", func() {
+			Context("When LynqForm template is updated triggering Deployment rollout", func() {
+				It("should wait for Pod readiness before updating next node", func() {
+					By("Given a LynqForm with maxSkew=1 and Deployment using initialDelaySeconds: 15")
+					// Use initialDelaySeconds: 15 to ensure Pod takes longer than the 5-second safety margin
+					formYAML := fmt.Sprintf(`
+apiVersion: operator.lynq.sh/v1
+kind: LynqForm
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  hubId: %s
+  rollout:
+    maxSkew: 1
+    progressDeadlineSeconds: 600
+  deployments:
+    - id: slow-nginx
+      nameTemplate: "{{ .uid }}-nginx"
+      spec:
+        apiVersion: apps/v1
+        kind: Deployment
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app: "{{ .uid }}-nginx"
+          template:
+            metadata:
+              labels:
+                app: "{{ .uid }}-nginx"
+            spec:
+              containers:
+                - name: nginx
+                  image: nginx:1.24
+                  ports:
+                    - containerPort: 80
+                  readinessProbe:
+                    httpGet:
+                      path: /
+                      port: 80
+                    initialDelaySeconds: 15
+                    periodSeconds: 2
+`, formName, policyTestNamespace, hubName)
+
+					cmd := exec.Command("kubectl", "apply", "-f", "-")
+					cmd.Stdin = utils.StringReader(formYAML)
+					_, err := utils.Run(cmd)
+					Expect(err).NotTo(HaveOccurred())
+
+					By("And 3 active nodes in the database")
+					for i := 1; i <= 3; i++ {
+						insertTestData(fmt.Sprintf("slow-pod-node-%d", i), true)
+					}
+
+					By("When initial LynqNodes are created and become Ready")
+					// Wait for all 3 nodes to become Ready initially (this takes time due to initialDelaySeconds: 15)
+					for i := 1; i <= 3; i++ {
+						nodeName := fmt.Sprintf("slow-pod-node-%d-%s", i, formName)
+						Eventually(func(g Gomega) {
+							cmd := exec.Command("kubectl", "get", "lynqnode", nodeName, "-n", policyTestNamespace,
+								"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+							output, err := utils.Run(cmd)
+							g.Expect(err).NotTo(HaveOccurred())
+							g.Expect(output).To(Equal("True"), "LynqNode %s should be Ready", nodeName)
+						}, 3*policyTestTimeout, policyTestInterval).Should(Succeed())
+					}
+
+					By("And all Deployments have ready replicas")
+					for i := 1; i <= 3; i++ {
+						deployName := fmt.Sprintf("slow-pod-node-%d-nginx", i)
+						Eventually(func(g Gomega) {
+							cmd := exec.Command("kubectl", "get", "deployment", deployName, "-n", policyTestNamespace,
+								"-o", "jsonpath={.status.readyReplicas}")
+							output, err := utils.Run(cmd)
+							g.Expect(err).NotTo(HaveOccurred())
+							g.Expect(output).To(Equal("1"), "Deployment %s should have 1 ready replica", deployName)
+						}, policyTestTimeout, policyTestInterval).Should(Succeed())
+					}
+
+					By("Recording initial Deployment generations before update")
+					// Track the initial generation of each Deployment BEFORE updating LynqForm
+					// This is critical for detecting when each Deployment starts rolling
+					initialGenerations := make(map[string]int64)
+					for i := 1; i <= 3; i++ {
+						deployName := fmt.Sprintf("slow-pod-node-%d-nginx", i)
+						cmd := exec.Command("kubectl", "get", "deployment", deployName, "-n", policyTestNamespace,
+							"-o", "jsonpath={.metadata.generation}")
+						output, err := utils.Run(cmd)
+						Expect(err).NotTo(HaveOccurred())
+						gen, _ := strconv.ParseInt(output, 10, 64)
+						initialGenerations[deployName] = gen
+						GinkgoWriter.Printf("Initial generation for %s: %d\n", deployName, gen)
+					}
+
+					By("When the LynqForm template is updated to trigger rolling update")
+					// Change the image to trigger a rolling update
+					// With initialDelaySeconds: 15, the new Pod won't be ready until at least 15 seconds after creation
+					formYAML = fmt.Sprintf(`
+apiVersion: operator.lynq.sh/v1
+kind: LynqForm
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  hubId: %s
+  rollout:
+    maxSkew: 1
+    progressDeadlineSeconds: 600
+  deployments:
+    - id: slow-nginx
+      nameTemplate: "{{ .uid }}-nginx"
+      spec:
+        apiVersion: apps/v1
+        kind: Deployment
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app: "{{ .uid }}-nginx"
+          template:
+            metadata:
+              labels:
+                app: "{{ .uid }}-nginx"
+            spec:
+              containers:
+                - name: nginx
+                  image: nginx:1.25
+                  ports:
+                    - containerPort: 80
+                  readinessProbe:
+                    httpGet:
+                      path: /
+                      port: 80
+                    initialDelaySeconds: 15
+                    periodSeconds: 2
+`, formName, policyTestNamespace, hubName)
+
+					cmd = exec.Command("kubectl", "apply", "-f", "-")
+					cmd.Stdin = utils.StringReader(formYAML)
+					_, err = utils.Run(cmd)
+					Expect(err).NotTo(HaveOccurred())
+
+					By("Waiting for first Deployment to start rolling update")
+					// Wait until at least one Deployment's generation increases, indicating rollout started
+					var firstRollingDeployment string
+					var firstRollingTime time.Time
+					Eventually(func(g Gomega) bool {
+						for i := 1; i <= 3; i++ {
+							deployName := fmt.Sprintf("slow-pod-node-%d-nginx", i)
+							cmd := exec.Command("kubectl", "get", "deployment", deployName, "-n", policyTestNamespace,
+								"-o", "jsonpath={.metadata.generation}")
+							output, err := utils.Run(cmd)
+							if err == nil && output != "" {
+								gen, _ := strconv.ParseInt(output, 10, 64)
+								if gen > initialGenerations[deployName] {
+									firstRollingDeployment = deployName
+									firstRollingTime = time.Now()
+									GinkgoWriter.Printf("First rolling update started: %s (gen %d -> %d)\n",
+										deployName, initialGenerations[deployName], gen)
+									return true
+								}
+							}
+						}
+						return false
+					}, 30*time.Second, 500*time.Millisecond).Should(BeTrue(), "At least one Deployment should start rolling")
+
+					By("Then monitoring for maxSkew violations during 20 seconds after first rollout starts")
+					// CRITICAL BUG DETECTION:
+					// Track when each Deployment's generation increases (indicating update started)
+					// With maxSkew=1 and initialDelaySeconds=15:
+					// - BUG: If using 5-second safety margin only, second update starts at ~5s
+					// - CORRECT: Second update should only start after first Pod is ready (~15s+)
+					//
+					// We detect violation by counting how many Deployments have increased generation
+					// while the first Pod is still not ready (new Pod not available)
+					updateStartTimes := make(map[string]time.Time)
+					updateStartTimes[firstRollingDeployment] = firstRollingTime
+
+					maxViolations := 0
+					var violationDetails []string
+					checkDuration := 20 * time.Second
+					checkInterval := 300 * time.Millisecond
+					monitoringStart := time.Now()
+
+					for time.Since(monitoringStart) < checkDuration {
+						// Count Deployments that have started rolling (generation increased)
+						rollingCount := 0
+						var rollingDeployments []string
+
+						for i := 1; i <= 3; i++ {
+							deployName := fmt.Sprintf("slow-pod-node-%d-nginx", i)
+							cmd := exec.Command("kubectl", "get", "deployment", deployName, "-n", policyTestNamespace,
+								"-o", "jsonpath={.metadata.generation},{.status.observedGeneration},{.status.updatedReplicas},{.status.readyReplicas},{.status.availableReplicas},{.spec.replicas}")
+							output, err := utils.Run(cmd)
+							if err == nil && output != "" {
+								parts := splitOutput(output)
+								if len(parts) >= 6 {
+									generation, _ := strconv.ParseInt(parts[0], 10, 64)
+									observedGen, _ := strconv.ParseInt(parts[1], 10, 64)
+									updated, _ := strconv.Atoi(parts[2])
+									ready, _ := strconv.Atoi(parts[3])
+									available, _ := strconv.Atoi(parts[4])
+									replicas, _ := strconv.Atoi(parts[5])
+
+									// Check if this Deployment has started rolling (generation increased from initial)
+									if generation > initialGenerations[deployName] {
+										// Record when this update started (first time we see increased generation)
+										if _, exists := updateStartTimes[deployName]; !exists {
+											updateStartTimes[deployName] = time.Now()
+											GinkgoWriter.Printf("[%.1fs] Update started for %s (gen %d -> %d)\n",
+												time.Since(firstRollingTime).Seconds(),
+												deployName, initialGenerations[deployName], generation)
+										}
+
+										// Check if this Deployment's rollout is still in progress
+										// Rollout is "in progress" when new Pod is not yet available
+										rolloutInProgress := observedGen < generation ||
+											int32(updated) < int32(replicas) ||
+											int32(available) < int32(replicas)
+
+										if rolloutInProgress {
+											rollingCount++
+											rollingDeployments = append(rollingDeployments,
+												fmt.Sprintf("%s(gen=%d,updated=%d,ready=%d,available=%d)",
+													deployName, generation, updated, ready, available))
+										}
+									}
+								}
+							}
+						}
+
+						elapsed := time.Since(firstRollingTime).Seconds()
+
+						// Log current state
+						if len(updateStartTimes) > 0 || rollingCount > 0 {
+							GinkgoWriter.Printf("[%.1fs] Updates started: %d, Currently rolling: %d %v\n",
+								elapsed, len(updateStartTimes), rollingCount, rollingDeployments)
+						}
+
+						// BUG DETECTION:
+						// Check if multiple Deployments have STARTED their updates (generation increased)
+						// within the first 12 seconds (before initialDelaySeconds=15 could complete)
+						// This is the KEY check - with maxSkew=1, only 1 update should START at a time
+						if elapsed < 12.0 && len(updateStartTimes) > 1 {
+							var updateTimings []string
+							for name, startTime := range updateStartTimes {
+								updateTimings = append(updateTimings,
+									fmt.Sprintf("%s started at %.1fs", name, startTime.Sub(firstRollingTime).Seconds()))
+							}
+							violation := fmt.Sprintf("[%.1fs] maxSkew VIOLATION: %d Deployments started updates before first Pod ready (initialDelaySeconds=15): %v",
+								elapsed, len(updateStartTimes), updateTimings)
+							violationDetails = append(violationDetails, violation)
+							if len(updateStartTimes) > maxViolations {
+								maxViolations = len(updateStartTimes)
+							}
+						}
+
+						// Also check for simultaneous rolling updates
+						if rollingCount > 1 {
+							violation := fmt.Sprintf("[%.1fs] maxSkew VIOLATION: %d Deployments rolling simultaneously: %v",
+								elapsed, rollingCount, rollingDeployments)
+							if !containsViolation(violationDetails, violation) {
+								violationDetails = append(violationDetails, violation)
+							}
+							if rollingCount > maxViolations {
+								maxViolations = rollingCount
+							}
+						}
+
+						time.Sleep(checkInterval)
+					}
+
+					// Assert no violations occurred during the monitoring period
+					// maxViolations should be 1 (only 1 Deployment should have started/be rolling at any time)
+					Expect(maxViolations).To(BeNumerically("<=", 1),
+						"maxSkew=1 violation detected! Multiple updates started or rolling simultaneously:\n%s",
+						strings.Join(violationDetails, "\n"))
+
+					By("And eventually all nodes should become Ready with the new image")
+					for i := 1; i <= 3; i++ {
+						nodeName := fmt.Sprintf("slow-pod-node-%d-%s", i, formName)
+						Eventually(func(g Gomega) {
+							cmd := exec.Command("kubectl", "get", "lynqnode", nodeName, "-n", policyTestNamespace,
+								"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+							output, err := utils.Run(cmd)
+							g.Expect(err).NotTo(HaveOccurred())
+							g.Expect(output).To(Equal("True"), "LynqNode %s should be Ready after rollout", nodeName)
+						}, 3*policyTestTimeout, policyTestInterval).Should(Succeed())
+					}
+
+					By("And all Deployments should be running nginx:1.25")
+					// Use Eventually because with maxSkew=1, nodes are updated sequentially
+					// and it may take time for all nodes to complete their rolling updates
+					for i := 1; i <= 3; i++ {
+						deployName := fmt.Sprintf("slow-pod-node-%d-nginx", i)
+						Eventually(func(g Gomega) {
+							cmd := exec.Command("kubectl", "get", "deployment", deployName, "-n", policyTestNamespace,
+								"-o", "jsonpath={.spec.template.spec.containers[0].image}")
+							output, err := utils.Run(cmd)
+							g.Expect(err).NotTo(HaveOccurred())
+							g.Expect(output).To(Equal("nginx:1.25"),
+								"Deployment %s should have image nginx:1.25", deployName)
+						}, 3*policyTestTimeout, policyTestInterval).Should(Succeed())
+					}
+				})
+			})
+		})
+	})
+
 	Context("Deployment rolling update readiness", func() {
 		const (
 			hubName  = "deploy-ready-hub"
@@ -999,4 +1353,15 @@ func splitOutput(output string) []string {
 		return []string{}
 	}
 	return strings.Split(output, ",")
+}
+
+// containsViolation checks if a violation message already exists in the list
+// Used to avoid duplicate violation messages during monitoring
+func containsViolation(violations []string, violation string) bool {
+	for _, v := range violations {
+		if v == violation {
+			return true
+		}
+	}
+	return false
 }
