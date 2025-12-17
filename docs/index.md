@@ -343,12 +343,44 @@ Customize resource lifecycle behavior with powerful policies for creation, delet
       Handle ownership conflicts: <code>Stuck</code> to prevent overwrites, or <code>Force</code> to take ownership with Server-Side Apply
     </p>
   </div>
+
 </div>
 
 <div style="text-align: center; margin-top: 2rem;">
   <a href="/policies" style="display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.75rem 1.5rem; background: var(--vp-c-brand-soft); color: var(--vp-c-brand); border-radius: 8px; text-decoration: none; font-weight: 600; transition: all 0.2s ease;">
     Explore Policy Simulators →
   </a>
+</div>
+
+## Safe Rollouts at Scale
+
+<p style="text-align: center; color: var(--vp-c-text-2); margin: 0 0 2.5rem; font-size: 1.05rem; line-height: 1.6; max-width: 800px; margin-left: auto; margin-right: auto;">
+Change templates confidently without cluster-wide disruptions. Control blast radius with <code>maxSkew</code> — just like Kubernetes Deployment rolling updates.
+</p>
+
+<RolloutAnimation />
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1.5rem; margin: 2.5rem 0">
+  <div style="padding: 1.5rem; background: var(--vp-c-bg-soft); border-radius: 8px; border: 1px solid var(--vp-c-divider);">
+    <strong style="display: block; margin-bottom: 0.75rem; font-size: 1.05rem; color: var(--vp-c-text-1);">🎯 Blast Radius Control</strong>
+    <p style="margin: 0; font-size: 0.9rem; color: var(--vp-c-text-2); line-height: 1.6">
+      Limit concurrent updates with <code>maxSkew</code>. A bad template change affects only N nodes, not your entire fleet
+    </p>
+  </div>
+
+  <div style="padding: 1.5rem; background: var(--vp-c-bg-soft); border-radius: 8px; border: 1px solid var(--vp-c-divider);">
+    <strong style="display: block; margin-bottom: 0.75rem; font-size: 1.05rem; color: var(--vp-c-text-1);">🔄 Sliding Window</strong>
+    <p style="margin: 0; font-size: 0.9rem; color: var(--vp-c-text-2); line-height: 1.6">
+      Not batch processing — as each node becomes Ready, the next update starts immediately. Parallel efficiency with controlled risk
+    </p>
+  </div>
+
+  <div style="padding: 1.5rem; background: var(--vp-c-bg-soft); border-radius: 8px; border: 1px solid var(--vp-c-divider);">
+    <strong style="display: block; margin-bottom: 0.75rem; font-size: 1.05rem; color: var(--vp-c-text-1);">📊 Real-time Progress</strong>
+    <p style="margin: 0; font-size: 0.9rem; color: var(--vp-c-text-2); line-height: 1.6">
+      Track rollout status via <code>kubectl get lynqforms</code> or Prometheus metrics. Know exactly what's updating and when
+    </p>
+  </div>
 </div>
 
 ## Production Ready
