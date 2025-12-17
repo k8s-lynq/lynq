@@ -323,3 +323,121 @@ func TestMetricLabels(t *testing.T) {
 	// All label combinations should work without panicking
 	assert.True(t, true, "All label combinations worked")
 }
+
+func TestFormRolloutUpdatingNodes(t *testing.T) {
+	FormRolloutUpdatingNodes.Reset()
+
+	// Set updating nodes count
+	FormRolloutUpdatingNodes.WithLabelValues("web-app", "default").Set(3)
+	FormRolloutUpdatingNodes.WithLabelValues("worker", "production").Set(5)
+
+	count := testutil.CollectAndCount(FormRolloutUpdatingNodes)
+	assert.Equal(t, 2, count)
+
+	expected := `
+# HELP lynqform_rollout_updating_nodes Number of nodes currently being updated for a LynqForm (updated but not Ready yet)
+# TYPE lynqform_rollout_updating_nodes gauge
+lynqform_rollout_updating_nodes{form="web-app",namespace="default"} 3
+lynqform_rollout_updating_nodes{form="worker",namespace="production"} 5
+`
+	err := testutil.CollectAndCompare(FormRolloutUpdatingNodes, strings.NewReader(expected))
+	assert.NoError(t, err)
+}
+
+func TestFormRolloutPhase(t *testing.T) {
+	FormRolloutPhase.Reset()
+
+	// Set rollout phases (0=Idle, 1=InProgress, 2=Failed, 3=Complete)
+	FormRolloutPhase.WithLabelValues("web-app", "default").Set(1)   // InProgress
+	FormRolloutPhase.WithLabelValues("worker", "production").Set(3) // Complete
+	FormRolloutPhase.WithLabelValues("api", "staging").Set(0)       // Idle
+
+	count := testutil.CollectAndCount(FormRolloutPhase)
+	assert.Equal(t, 3, count)
+
+	expected := `
+# HELP lynqform_rollout_phase Current rollout phase for a LynqForm (0=Idle, 1=InProgress, 2=Failed, 3=Complete)
+# TYPE lynqform_rollout_phase gauge
+lynqform_rollout_phase{form="api",namespace="staging"} 0
+lynqform_rollout_phase{form="web-app",namespace="default"} 1
+lynqform_rollout_phase{form="worker",namespace="production"} 3
+`
+	err := testutil.CollectAndCompare(FormRolloutPhase, strings.NewReader(expected))
+	assert.NoError(t, err)
+}
+
+func TestFormRolloutProgress(t *testing.T) {
+	FormRolloutProgress.Reset()
+
+	// Set rollout progress percentages
+	FormRolloutProgress.WithLabelValues("web-app", "default").Set(50.0)  // 50% progress
+	FormRolloutProgress.WithLabelValues("worker", "production").Set(100) // Complete
+
+	count := testutil.CollectAndCount(FormRolloutProgress)
+	assert.Equal(t, 2, count)
+
+	expected := `
+# HELP lynqform_rollout_progress Rollout progress percentage for a LynqForm (readyUpdatedNodes/totalNodes * 100)
+# TYPE lynqform_rollout_progress gauge
+lynqform_rollout_progress{form="web-app",namespace="default"} 50
+lynqform_rollout_progress{form="worker",namespace="production"} 100
+`
+	err := testutil.CollectAndCompare(FormRolloutProgress, strings.NewReader(expected))
+	assert.NoError(t, err)
+}
+
+func TestRolloutPhaseToMetric(t *testing.T) {
+	tests := []struct {
+		phase    string
+		expected float64
+	}{
+		{"Idle", 0},
+		{"InProgress", 1},
+		{"Failed", 2},
+		{"Complete", 3},
+		{"Unknown", 0}, // Unknown phase defaults to 0
+		{"", 0},        // Empty string defaults to 0
+		{"invalid", 0}, // Invalid phase defaults to 0
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.phase, func(t *testing.T) {
+			result := RolloutPhaseToMetric(tt.phase)
+			assert.Equal(t, tt.expected, result, "Phase %s should map to %f", tt.phase, tt.expected)
+		})
+	}
+}
+
+func TestRolloutMetricsRegistration(t *testing.T) {
+	// Test that all rollout metrics are properly defined
+	metrics := []prometheus.Collector{
+		FormRolloutUpdatingNodes,
+		FormRolloutPhase,
+		FormRolloutProgress,
+	}
+
+	for _, metric := range metrics {
+		assert.NotNil(t, metric, "Rollout metric should not be nil")
+
+		// Verify that the metric can be collected
+		count := testutil.CollectAndCount(metric)
+		assert.GreaterOrEqual(t, count, 0, "Should be able to collect rollout metric")
+	}
+}
+
+func TestRolloutMetricLabels(t *testing.T) {
+	// Reset rollout metrics
+	FormRolloutUpdatingNodes.Reset()
+	FormRolloutPhase.Reset()
+	FormRolloutProgress.Reset()
+
+	// Test label combinations work without panicking
+	FormRolloutUpdatingNodes.WithLabelValues("test-form", "test-namespace")
+	FormRolloutPhase.WithLabelValues("test-form", "test-namespace")
+	FormRolloutProgress.WithLabelValues("test-form", "test-namespace")
+
+	// Verify metrics can be collected
+	assert.GreaterOrEqual(t, testutil.CollectAndCount(FormRolloutUpdatingNodes), 0)
+	assert.GreaterOrEqual(t, testutil.CollectAndCount(FormRolloutPhase), 0)
+	assert.GreaterOrEqual(t, testutil.CollectAndCount(FormRolloutProgress), 0)
+}

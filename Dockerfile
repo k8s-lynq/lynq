@@ -1,5 +1,7 @@
 # Build the manager binary
-FROM golang:1.24 AS builder
+# Use BUILDPLATFORM to run Go build natively (not emulated)
+# Go cross-compiles to TARGETARCH, which is much faster than QEMU emulation
+FROM --platform=$BUILDPLATFORM golang:1.24 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 

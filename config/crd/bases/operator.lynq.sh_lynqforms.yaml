@@ -27,6 +27,14 @@ spec:
       jsonPath: .status.readyNodes
       name: Ready
       type: integer
+    - description: Rollout phase
+      jsonPath: .status.rollout.phase
+      name: Rollout
+      type: string
+    - description: Nodes currently updating
+      jsonPath: .status.rollout.updatingNodes
+      name: Updating
+      type: integer
     - description: Applied status
       jsonPath: .status.conditions[?(@.type=='Applied')].status
       name: Applied
@@ -1563,6 +1571,34 @@ spec:
                 x-kubernetes-list-map-keys:
                 - id
                 x-kubernetes-list-type: map
+              rollout:
+                description: |-
+                  Rollout defines the rollout strategy for LynqNode updates
+                  When configured, node updates are throttled based on maxSkew to prevent
+                  all nodes from updating simultaneously
+                properties:
+                  maxSkew:
+                    default: 0
+                    description: |-
+                      MaxSkew is the maximum number of LynqNodes that can be updating simultaneously
+                      0 (default) means unlimited - all nodes update at once (current behavior)
+                      1 means serial rollout - one node at a time
+                      N means up to N nodes can be updating in parallel
+                      Each LynqForm applies maxSkew independently (template-isolated strategy)
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  progressDeadlineSeconds:
+                    default: 600
+                    description: |-
+                      ProgressDeadlineSeconds is the maximum time in seconds for a node update to become ready
+                      before the rollout marks the node as failed
+                      Default: 600 (10 minutes)
+                    format: int32
+                    maximum: 3600
+                    minimum: 60
+                    type: integer
+                type: object
               secrets:
                 description: Secrets defines Secret resources to create
                 items:
@@ -2133,6 +2169,56 @@ spec:
                   form
                 format: int32
                 type: integer
+              rollout:
+                description: Rollout tracks the progress of template rollouts when
+                  rollout.maxSkew is configured
+                properties:
+                  completionTime:
+                    description: CompletionTime is when the rollout completed (success
+                      or failure)
+                    format: date-time
+                    type: string
+                  message:
+                    description: Message provides a human-readable status message
+                    type: string
+                  phase:
+                    description: Phase is the current phase of the rollout
+                    enum:
+                    - Idle
+                    - InProgress
+                    - Failed
+                    - Complete
+                    type: string
+                  readyUpdatedNodes:
+                    description: ReadyUpdatedNodes is the number of nodes that are
+                      updated AND Ready
+                    format: int32
+                    type: integer
+                  startTime:
+                    description: StartTime is when the rollout started
+                    format: date-time
+                    type: string
+                  targetGeneration:
+                    description: TargetGeneration is the LynqForm generation being
+                      rolled out
+                    format: int64
+                    type: integer
+                  totalNodes:
+                    description: TotalNodes is the total number of LynqNodes using
+                      this form
+                    format: int32
+                    type: integer
+                  updatedNodes:
+                    description: UpdatedNodes is the number of nodes that have been
+                      updated to the target generation
+                    format: int32
+                    type: integer
+                  updatingNodes:
+                    description: UpdatingNodes is the number of nodes currently updating
+                      (not Ready yet)
+                    format: int32
+                    type: integer
+                type: object
               totalNodes:
                 description: TotalNodes is the total number of LynqNodes using this
                   form

@@ -92,7 +92,7 @@ func main() {
 	flag.IntVar(&nodeConcurrency, "node-concurrency", 10,
 		"Number of concurrent reconciliations for LynqNode controller")
 	opts := zap.Options{
-		Development: true,
+		Development: false,
 	}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()

@@ -41,15 +41,21 @@ The operator relies only on GA/stable Kubernetes APIs and controller-runtime pat
 
 **Validated versions** (end-to-end tested and production-verified):
 
-| Kubernetes Version | Status |
-|--------------------|--------|
-| v1.28              | ✅ Validated |
-| v1.29              | ✅ Validated |
-| v1.30              | ✅ Validated |
-| v1.31              | ✅ Validated |
-| v1.32              | ✅ Validated |
-| v1.33              | ✅ Validated |
-| Other GA releases  | ⚠️ Expected to work |
+| Kubernetes Version | Lynq Version | Status |
+|--------------------|--------------|--------|
+| v1.34              | v1.1.16+     | ✅ Validated |
+| v1.33              | v1.1.16+     | ✅ Validated |
+| v1.32              | v1.1.16+     | ✅ Validated |
+| v1.31              | v1.1.16+     | ✅ Validated |
+| v1.30              | ≤ v1.1.15    | ✅ Validated |
+| v1.29              | ≤ v1.1.15    | ✅ Validated |
+| v1.28              | ≤ v1.1.15    | ✅ Validated |
+| Other GA releases  | -            | ⚠️ Expected to work |
+
+::: info Version Support Policy
+- **Kubernetes v1.31+**: Actively tested and validated with Lynq v1.1.16 and later releases
+- **Kubernetes v1.28–v1.30**: Validated up to Lynq v1.1.15. These versions are expected to work with newer Lynq releases but are no longer part of the active E2E test matrix
+:::
 
 ::: tip Compatibility Philosophy
 The operator is designed to work across Kubernetes version skew. Earlier or newer versions are expected to function, but validate in a staging environment before rolling out broadly.

@@ -15,6 +15,7 @@ import WhyLynqCards from '../components/WhyLynqCards.vue';
 import DependencyAnimationParallel from '../components/DependencyAnimationParallel.vue';
 import DependencyAnimationCycle from '../components/DependencyAnimationCycle.vue';
 import DependencyAnimationWaitForReady from '../components/DependencyAnimationWaitForReady.vue';
+import RolloutAnimation from '../components/RolloutAnimation.vue';
 import './custom.css';
 
 export default {
@@ -37,5 +38,6 @@ export default {
     app.component('DependencyAnimationParallel', DependencyAnimationParallel);
     app.component('DependencyAnimationCycle', DependencyAnimationCycle);
     app.component('DependencyAnimationWaitForReady', DependencyAnimationWaitForReady);
+    app.component('RolloutAnimation', RolloutAnimation);
   }
 };

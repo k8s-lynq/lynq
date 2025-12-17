@@ -82,6 +82,11 @@ metadata:
 spec:
   hubId: string                 # LynqHub name (required)
 
+  # Rollout configuration (optional, new in v1.1.16)
+  rollout:
+    maxSkew: int32                   # Max simultaneous updates (0=unlimited, default: 0)
+    progressDeadlineSeconds: int32   # Update timeout in seconds (default: 600)
+
   # Resource arrays
   serviceAccounts: []TResource
   deployments: []TResource
@@ -99,6 +104,29 @@ spec:
   horizontalPodAutoscalers: []TResource  # HorizontalPodAutoscaler resources
   manifests: []TResource             # Raw unstructured resources
 ```
+
+### Rollout Configuration
+
+::: tip New in v1.1.16
+The `rollout` configuration enables gradual LynqNode updates when templates change.
+:::
+
+```yaml
+spec:
+  rollout:
+    maxSkew: 5                       # Update up to 5 nodes simultaneously
+    progressDeadlineSeconds: 600     # 10 minute timeout per node
+```
+
+**maxSkew Behavior:**
+- `0` (default): Unlimited - all nodes update simultaneously (existing behavior)
+- `1`: Serial rollout - one node at a time
+- `N`: Parallel rollout with sliding window - up to N nodes updating at once
+
+**Template-Isolated Strategy:**
+- Each LynqForm applies maxSkew independently
+- Multiple LynqForms referencing the same LynqHub don't interfere with each other
+- Example: Form A (maxSkew=5) + Form B (maxSkew=5) = up to 10 total nodes updating
 
 ### TResource Structure
 
@@ -126,13 +154,40 @@ spec: object                         # Kubernetes resource spec (required)
 status:
   observedGeneration: int64
   validationErrors: []string         # Template validation errors
-  totalNodes: int32                # Total nodes using this template
-  readyNodes: int32                # Ready nodes
+  totalNodes: int32                  # Total nodes using this template
+  readyNodes: int32                  # Ready nodes
+  rollout:                           # Rollout status (only when maxSkew > 0)
+    phase: string                    # Idle | InProgress | Failed | Complete
+    targetGeneration: int64          # Target template generation
+    totalNodes: int32                # Total nodes for this template
+    updatedNodes: int32              # Nodes updated to target generation
+    updatingNodes: int32             # Currently updating (not Ready yet)
+    readyUpdatedNodes: int32         # Updated AND Ready
+    startTime: timestamp             # Rollout start time
+    completionTime: timestamp        # Rollout completion time
+    message: string                  # Status message
   conditions:
   - type: Valid
     status: "True"
     reason: ValidationSucceeded
 ```
+
+#### Rollout Status
+
+::: tip New in v1.1.16
+The `rollout` status tracks gradual rollout progress when `maxSkew` is configured.
+:::
+
+**Phase Values:**
+- `Idle`: No rollout in progress (all nodes at current generation)
+- `InProgress`: Rollout actively updating nodes
+- `Failed`: Rollout failed (progress deadline exceeded)
+- `Complete`: All nodes updated and ready
+
+**Tracking Fields:**
+- `updatedNodes`: Nodes that have been updated to the target generation
+- `updatingNodes`: Nodes currently being updated (updated but not Ready yet)
+- `readyUpdatedNodes`: Nodes that are both updated AND Ready
 
 ## LynqNode
 

@@ -88,14 +88,16 @@ spec:
 
   # Required value mappings (map database columns to node variables)
   valueMappings:
-    uid: node_id           # Unique node identifier
-    hostOrUrl: node_url    # Node URL/hostname
+    uid: node_id             # Unique node identifier
     activate: is_active      # Activation flag (boolean)
+    # hostOrUrl: node_url    # DEPRECATED v1.1.11+ (removed in v1.3.0)
 
   # Optional extra mappings (custom variables for templates)
+  # Use extraValueMappings for all custom fields including URLs/hosts
   extraValueMappings:
     planId: subscription_plan
     region: deployment_region
+    nodeUrl: node_url        # Use toHost() function in templates if needed
 ```
 
 ::: warning Production reminder
@@ -117,6 +119,35 @@ flowchart TB
     classDef block fill:#fff8e1,stroke:#ffca28,stroke-width:2px;
     class Template,Policies,Renderer,Node,Resources block;
 ```
+
+### Rollout Configuration
+
+::: tip New in v1.1.16
+Control how many LynqNodes update simultaneously when template changes.
+:::
+
+```yaml
+apiVersion: operator.lynq.sh/v1
+kind: LynqForm
+metadata:
+  name: my-template
+spec:
+  hubId: my-hub
+
+  # Gradual rollout configuration (optional)
+  rollout:
+    maxSkew: 5                       # Max simultaneous updates (0=unlimited)
+    progressDeadlineSeconds: 600     # Update timeout per node (default: 600)
+```
+
+**maxSkew Behavior:**
+- `0` (default): Unlimited - all nodes update simultaneously
+- `1`: Serial rollout - one node at a time
+- `N`: Parallel rollout with sliding window - up to N nodes updating at once
+
+**Template-Isolated Strategy:**
+- Each LynqForm applies `maxSkew` independently
+- Multiple LynqForms referencing the same LynqHub don't interfere
 
 ### Default Policies
 

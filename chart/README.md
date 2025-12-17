@@ -142,11 +142,28 @@ helm upgrade lynq k8s-lynq/lynq \
 | `image.repository` | Container image repository | `k8s-lynq/lynq` |
 | `image.tag` | Container image tag | `""` (uses Chart appVersion) |
 | `image.pullPolicy` | Image pull policy | `IfNotPresent` |
+| `manager.logLevel` | Log level (debug, info, error) | `info` |
 | `webhook.enabled` | Enable admission webhooks | `true` |
 | `certManager.enabled` | Enable cert-manager integration | `true` |
 | `monitoring.enabled` | Enable Prometheus ServiceMonitor | `false` |
 | `rbac.create` | Create RBAC resources | `true` |
 | `serviceAccount.create` | Create ServiceAccount | `true` |
+
+### Manager Configuration
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `manager.leaderElection` | Enable leader election | `true` |
+| `manager.healthProbeBindAddress` | Health probe bind address | `:8081` |
+| `manager.metricsBindAddress` | Metrics bind address | `:8443` |
+| `manager.logLevel` | Log verbosity level | `info` |
+| `manager.args` | Additional command-line arguments | `[]` |
+| `manager.env` | Additional environment variables | `[]` |
+
+**Log Levels:**
+- `info` (default): Shows important events (creation, deletion, errors)
+- `debug`: Shows detailed reconciliation logs (useful for troubleshooting)
+- `error`: Shows only errors
 
 ### Resource Configuration
 

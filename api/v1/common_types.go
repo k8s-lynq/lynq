@@ -156,3 +156,14 @@ type SecretRef struct {
 	// +kubebuilder:validation:Required
 	Key string `json:"key"`
 }
+
+// Rollout-related annotation keys
+const (
+	// AnnotationRolloutUpdateStartTime tracks when a node update started (RFC3339 format)
+	// Used to calculate progress deadline expiration
+	AnnotationRolloutUpdateStartTime = "lynq.sh/rollout-update-start"
+
+	// AnnotationTemplateGeneration stores the LynqForm generation at the time of node update
+	// Used to track which nodes have been updated to the current template version
+	AnnotationTemplateGeneration = "lynq.sh/template-generation"
+)
