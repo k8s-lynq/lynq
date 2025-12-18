@@ -1,5 +1,7 @@
-import { defineConfig } from "vitepress";
+import { defineConfig, createContentLoader } from "vitepress";
 import { withMermaid } from "vitepress-plugin-mermaid";
+import { writeFileSync } from "fs";
+import path from "path";
 
 // https://vitepress.dev/reference/site-config
 export default withMermaid(
@@ -19,8 +21,17 @@ export default withMermaid(
         { text: "Docs", link: "/quickstart" },
         { text: "Blog", link: "/blog/" },
         {
-          text: "GitHub",
-          link: "https://github.com/k8s-lynq/lynq",
+          text: "Links",
+          items: [
+            {
+              text: "GitHub",
+              link: "https://github.com/k8s-lynq/lynq",
+            },
+            {
+              text: "RSS Feed",
+              link: "/feed.xml",
+            },
+          ],
         },
       ],
 
@@ -338,6 +349,107 @@ export default withMermaid(
           content: "g7LPr3Wcm6hCm-Lm8iP5KVl11KvPv6Chxpjh3oNKHPw",
         },
       ],
+
+      // RSS feed link
+      [
+        "link",
+        {
+          rel: "alternate",
+          type: "application/rss+xml",
+          title: "Lynq Blog RSS Feed",
+          href: "https://lynq.sh/feed.xml",
+        },
+      ],
     ],
+
+    async buildEnd(siteConfig) {
+      const hostname = "https://lynq.sh";
+      const postsPerPage = 10;
+      const posts = await createContentLoader("blog/*.md").load();
+
+      const sortedPosts = posts
+        .filter((post) => post.url !== "/blog/")
+        .sort(
+          (a, b) =>
+            new Date(b.frontmatter.date) - new Date(a.frontmatter.date)
+        );
+
+      const totalPages = Math.ceil(sortedPosts.length / postsPerPage);
+      const getFeedUrl = (page) =>
+        page === 1 ? `${hostname}/feed.xml` : `${hostname}/feed-page-${page}.xml`;
+      const getFeedFilename = (page) =>
+        page === 1 ? "feed.xml" : `feed-page-${page}.xml`;
+
+      for (let page = 1; page <= totalPages; page++) {
+        const startIdx = (page - 1) * postsPerPage;
+        const pagePosts = sortedPosts.slice(startIdx, startIdx + postsPerPage);
+
+        const feedItems = pagePosts
+          .map((post) => {
+            const title = escapeXml(post.frontmatter.title || "Untitled");
+            const description = escapeXml(post.frontmatter.description || "");
+            const author = escapeXml(post.frontmatter.author || "Lynq Team");
+            const link = `${hostname}${post.url}`;
+            const pubDate = new Date(post.frontmatter.date).toUTCString();
+
+            return `    <item>
+      <title>${title}</title>
+      <link>${link}</link>
+      <guid>${link}</guid>
+      <pubDate>${pubDate}</pubDate>
+      <description>${description}</description>
+      <author>${author}</author>
+    </item>`;
+          })
+          .join("\n");
+
+        // RFC 5005 pagination links
+        const atomLinks = [
+          `    <atom:link href="${getFeedUrl(page)}" rel="self" type="application/rss+xml"/>`,
+        ];
+
+        if (totalPages > 1) {
+          atomLinks.push(
+            `    <atom:link href="${getFeedUrl(1)}" rel="first" type="application/rss+xml"/>`
+          );
+          if (page > 1) {
+            atomLinks.push(
+              `    <atom:link href="${getFeedUrl(page - 1)}" rel="previous" type="application/rss+xml"/>`
+            );
+          }
+          if (page < totalPages) {
+            atomLinks.push(
+              `    <atom:link href="${getFeedUrl(page + 1)}" rel="next" type="application/rss+xml"/>`
+            );
+          }
+          atomLinks.push(
+            `    <atom:link href="${getFeedUrl(totalPages)}" rel="last" type="application/rss+xml"/>`
+          );
+        }
+
+        const rss = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Lynq Blog${totalPages > 1 ? ` (Page ${page}/${totalPages})` : ""}</title>
+    <link>${hostname}/blog/</link>
+    <description>Insights and lessons learned from building Lynq</description>
+    <language>en</language>
+${atomLinks.join("\n")}
+${feedItems}
+  </channel>
+</rss>`;
+
+        writeFileSync(path.join(siteConfig.outDir, getFeedFilename(page)), rss);
+      }
+    },
   })
 );
+
+function escapeXml(str) {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
