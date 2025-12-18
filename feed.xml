@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Lynq Blog</title>
+    <link>https://lynq.sh/blog/</link>
+    <description>Insights and lessons learned from building Lynq</description>
+    <language>en</language>
+    <atom:link href="https://lynq.sh/feed.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>Implementing maxSkew: How to Safely Update Nodes at Scale</title>
+      <link>https://lynq.sh/blog/maxskew-implementation-lessons.html</link>
+      <guid>https://lynq.sh/blog/maxskew-implementation-lessons.html</guid>
+      <pubDate>Thu, 18 Dec 2025 00:00:00 GMT</pubDate>
+      <description>Lessons learned from implementing maxSkew to safely control large-scale rolling updates in a Kubernetes Operator.</description>
+      <author>Tim Kang</author>
+    </item>
+    <item>
+      <title>Why I Built Lynq: From Internal Tool to Open Source 👶</title>
+      <link>https://lynq.sh/blog/why-i-built-lynq.html</link>
+      <guid>https://lynq.sh/blog/why-i-built-lynq.html</guid>
+      <pubDate>Wed, 17 Dec 2025 00:00:00 GMT</pubDate>
+      <description>The journey of building Lynq - from solving internal provisioning challenges to discovering a new paradigm called Infrastructure as Data.</description>
+      <author>Tim Kang</author>
+    </item>
+  </channel>
+</rss>
