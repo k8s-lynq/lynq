@@ -454,35 +454,10 @@ spec:
 				deploymentName := fmt.Sprintf("%s-int-deploy", uid)
 
 				By("Then Deployment should be created with correct integer types")
-				// Debug: Print LynqNode status immediately
-				debugCmd := exec.Command("kubectl", "describe", "lynqnode", expectedNodeName, "-n", policyTestNamespace)
-				debugOutput, _ := utils.Run(debugCmd)
-				GinkgoWriter.Printf("DEBUG LynqNode describe:\n%s\n", debugOutput)
-
-				// Debug: Check controller logs
-				logsCmd := exec.Command("kubectl", "logs", "-n", "lynq-system", "deployment/lynq-controller-manager", "--tail=50")
-				logsOutput, _ := utils.Run(logsCmd)
-				GinkgoWriter.Printf("DEBUG Controller logs:\n%s\n", logsOutput)
-
 				Eventually(func(g Gomega) {
 					cmd := exec.Command("kubectl", "get", "deployment", deploymentName, "-n", policyTestNamespace)
-					output, err := utils.Run(cmd)
-					if err != nil {
-						// Debug: Print LynqNode status and events
-						debugCmd := exec.Command("kubectl", "describe", "lynqnode", expectedNodeName, "-n", policyTestNamespace)
-						debugOutput, _ := utils.Run(debugCmd)
-						GinkgoWriter.Printf("DEBUG LynqNode describe:\n%s\n", debugOutput)
-
-						eventsCmd := exec.Command("kubectl", "get", "events", "-n", policyTestNamespace, "--sort-by=.lastTimestamp")
-						eventsOutput, _ := utils.Run(eventsCmd)
-						GinkgoWriter.Printf("DEBUG Events:\n%s\n", eventsOutput)
-
-						// Also print controller logs again
-						logsCmd := exec.Command("kubectl", "logs", "-n", "lynq-system", "deployment/lynq-controller-manager", "--tail=100")
-						logsOutput, _ := utils.Run(logsCmd)
-						GinkgoWriter.Printf("DEBUG Controller logs (detailed):\n%s\n", logsOutput)
-					}
-					g.Expect(err).NotTo(HaveOccurred(), "Failed to get deployment, output: %s", output)
+					_, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
 				}, policyTestTimeout, policyTestInterval).Should(Succeed())
 
 				By("And replicas should be a valid integer (not quoted string)")
