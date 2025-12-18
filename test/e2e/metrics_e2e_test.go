@@ -258,13 +258,6 @@ func getOperatorMetrics() string {
 	output, err := utils.Run(cmd)
 	Expect(err).NotTo(HaveOccurred())
 
-	// Debug: check if output is empty or contains an error
-	if output == "" {
-		GinkgoWriter.Printf("WARNING: curl pod returned empty output\n")
-	} else if strings.Contains(output, "error") || strings.Contains(output, "Error") {
-		GinkgoWriter.Printf("WARNING: curl output may contain error: %s\n", output[:min(len(output), 500)])
-	}
-
 	// Cleanup pod
 	cleanupCmd := exec.Command("kubectl", "delete", "pod", podName, "-n", namespace, "--ignore-not-found=true")
 	_, _ = utils.Run(cleanupCmd)
@@ -272,30 +265,13 @@ func getOperatorMetrics() string {
 	return output
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // extractMetricValue extracts a metric value for a specific lynqnode and namespace
 func extractMetricValue(metricsOutput, metricName, lynqnodeName, lynqnodeNamespace string) float64 {
-	// First, check if the metrics output is empty or contains an error
 	if metricsOutput == "" {
-		GinkgoWriter.Printf("WARNING: metrics output is empty\n")
 		return -1
 	}
 
-	// Check if the metric type exists at all in the output
 	if !strings.Contains(metricsOutput, metricName) {
-		GinkgoWriter.Printf("WARNING: metric %s not found in output (output length: %d bytes)\n", metricName, len(metricsOutput))
-		// Print first 500 characters of output for debugging
-		if len(metricsOutput) > 500 {
-			GinkgoWriter.Printf("First 500 chars of output: %s...\n", metricsOutput[:500])
-		} else {
-			GinkgoWriter.Printf("Full output: %s\n", metricsOutput)
-		}
 		return -1
 	}
 
@@ -311,16 +287,7 @@ func extractMetricValue(metricsOutput, metricName, lynqnodeName, lynqnodeNamespa
 		re = regexp.MustCompile(pattern)
 		matches = re.FindStringSubmatch(metricsOutput)
 		if len(matches) < 2 {
-			// Log what metrics ARE present for this metric name
-			GinkgoWriter.Printf("DEBUG: Looking for %s with lynqnode=%s namespace=%s\n", metricName, lynqnodeName, lynqnodeNamespace)
-			// Find all lines containing the metric name for debugging
-			lines := strings.Split(metricsOutput, "\n")
-			for _, line := range lines {
-				if strings.HasPrefix(line, metricName+"{") {
-					GinkgoWriter.Printf("DEBUG: Found metric line: %s\n", line)
-				}
-			}
-			return -1 // Metric not found
+			return -1
 		}
 	}
 	value, err := strconv.ParseFloat(strings.TrimSpace(matches[1]), 64)
