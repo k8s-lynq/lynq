@@ -7,6 +7,14 @@
     <language>en</language>
     <atom:link href="https://lynq.sh/feed.xml" rel="self" type="application/rss+xml"/>
     <item>
+      <title>5 Kubernetes Lifecycle Mistakes and How Lynq Policies Prevent Them</title>
+      <link>https://lynq.sh/blog/managing-resource-lifecycle.html</link>
+      <guid>https://lynq.sh/blog/managing-resource-lifecycle.html</guid>
+      <pubDate>Thu, 18 Dec 2025 00:00:00 GMT</pubDate>
+      <description>Real-world problems that occur when managing Kubernetes resources at scale, and how Lynq&apos;s policy system prevents them.</description>
+      <author>Tim Kang</author>
+    </item>
+    <item>
       <title>Implementing maxSkew: How to Safely Update Nodes at Scale</title>
       <link>https://lynq.sh/blog/maxskew-implementation-lessons.html</link>
       <guid>https://lynq.sh/blog/maxskew-implementation-lessons.html</guid>
