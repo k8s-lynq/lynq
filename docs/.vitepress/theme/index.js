@@ -16,6 +16,9 @@ import DependencyAnimationParallel from '../components/DependencyAnimationParall
 import DependencyAnimationCycle from '../components/DependencyAnimationCycle.vue';
 import DependencyAnimationWaitForReady from '../components/DependencyAnimationWaitForReady.vue';
 import RolloutAnimation from '../components/RolloutAnimation.vue';
+import BlastRadiusAnimation from '../components/BlastRadiusAnimation.vue';
+import BlogPostMeta from '../components/BlogPostMeta.vue';
+import BlogPostFooter from '../components/BlogPostFooter.vue';
 import './custom.css';
 
 export default {
@@ -39,5 +42,8 @@ export default {
     app.component('DependencyAnimationCycle', DependencyAnimationCycle);
     app.component('DependencyAnimationWaitForReady', DependencyAnimationWaitForReady);
     app.component('RolloutAnimation', RolloutAnimation);
+    app.component('BlastRadiusAnimation', BlastRadiusAnimation);
+    app.component('BlogPostMeta', BlogPostMeta);
+    app.component('BlogPostFooter', BlogPostFooter);
   }
 };

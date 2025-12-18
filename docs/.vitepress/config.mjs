@@ -16,11 +16,12 @@ export default withMermaid(
       logo: "/logo.png",
 
       nav: [
-        { text: "Home", link: "/" },
-        { text: "About", link: "/about-lynq" },
-        { text: "Quick Start", link: "/quickstart" },
-        { text: "Documentation", link: "/architecture" },
-        { text: "API", link: "/api" },
+        { text: "Docs", link: "/quickstart" },
+        { text: "Blog", link: "/blog/" },
+        {
+          text: "GitHub",
+          link: "https://github.com/k8s-lynq/lynq",
+        },
       ],
 
       sidebar: [
