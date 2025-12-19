@@ -28,12 +28,17 @@ import (
 )
 
 var _ = Describe("PatchStrategy", Ordered, func() {
+	var testTable string
+
 	BeforeAll(func() {
-		setupPolicyTestNamespace()
+		By("setting up test table")
+		testTable = setupTestTable("patch_strategy")
 	})
 
 	AfterAll(func() {
-		cleanupPolicyTestNamespace()
+		By("cleaning up test table and resources")
+		cleanupTestTable(testTable)
+		cleanupTestResources()
 	})
 
 	Context("PatchStrategy", func() {
@@ -47,7 +52,7 @@ var _ = Describe("PatchStrategy", Ordered, func() {
 			)
 
 			BeforeEach(func() {
-				createHub(hubName)
+				createHubWithTable(hubName, testTable)
 				createForm(formName, hubName, `
   configMaps:
     - id: config-replace
@@ -63,7 +68,7 @@ var _ = Describe("PatchStrategy", Ordered, func() {
 
 			AfterEach(func() {
 				By("cleaning up test data and resources")
-				deleteTestData(uid)
+				deleteTestDataFromTable(testTable, uid)
 
 				cmd := exec.Command("kubectl", "delete", "configmap", configMapName, "-n", policyTestNamespace, "--ignore-not-found=true")
 				_, _ = utils.Run(cmd)
@@ -80,7 +85,7 @@ var _ = Describe("PatchStrategy", Ordered, func() {
 
 			It("should replace the entire resource, removing unspecified fields", func() {
 				By("Given test data in MySQL with active=true")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqHub controller creates LynqNode automatically")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -144,7 +149,7 @@ var _ = Describe("PatchStrategy", Ordered, func() {
 			)
 
 			BeforeEach(func() {
-				createHub(hubName)
+				createHubWithTable(hubName, testTable)
 				createForm(formName, hubName, `
   configMaps:
     - id: config-apply
@@ -160,7 +165,7 @@ var _ = Describe("PatchStrategy", Ordered, func() {
 
 			AfterEach(func() {
 				By("cleaning up test data and resources")
-				deleteTestData(uid)
+				deleteTestDataFromTable(testTable, uid)
 
 				cmd := exec.Command("kubectl", "delete", "configmap", configMapName, "-n", policyTestNamespace, "--ignore-not-found=true")
 				_, _ = utils.Run(cmd)
@@ -176,7 +181,7 @@ var _ = Describe("PatchStrategy", Ordered, func() {
 
 			It("should use Server-Side Apply and preserve fields managed by other controllers", func() {
 				By("Given test data in MySQL with active=true")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqHub controller creates LynqNode automatically")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -252,7 +257,7 @@ data:
 			)
 
 			BeforeEach(func() {
-				createHub(hubName)
+				createHubWithTable(hubName, testTable)
 				createForm(formName, hubName, `
   configMaps:
     - id: config-merge
@@ -268,7 +273,7 @@ data:
 
 			AfterEach(func() {
 				By("cleaning up test data and resources")
-				deleteTestData(uid)
+				deleteTestDataFromTable(testTable, uid)
 
 				cmd := exec.Command("kubectl", "delete", "configmap", configMapName, "-n", policyTestNamespace, "--ignore-not-found=true")
 				_, _ = utils.Run(cmd)
@@ -284,7 +289,7 @@ data:
 
 			It("should use strategic merge patch and preserve existing fields", func() {
 				By("Given test data in MySQL with active=true")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqHub controller creates LynqNode automatically")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)

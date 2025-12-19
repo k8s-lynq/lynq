@@ -28,14 +28,17 @@ import (
 )
 
 var _ = Describe("Resource Timeout and Failure Handling", Ordered, func() {
+	var testTable string
+
 	BeforeAll(func() {
-		By("setting up policy test namespace")
-		setupPolicyTestNamespace()
+		By("setting up test table")
+		testTable = setupTestTable("resource_timeout")
 	})
 
 	AfterAll(func() {
-		By("cleaning up policy test namespace")
-		cleanupPolicyTestNamespace()
+		By("cleaning up test table and resources")
+		cleanupTestTable(testTable)
+		cleanupTestResources()
 	})
 
 	Context("when resources fail to become ready within timeout", func() {
@@ -47,12 +50,12 @@ var _ = Describe("Resource Timeout and Failure Handling", Ordered, func() {
 
 		BeforeEach(func() {
 			By("creating a LynqHub")
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 		})
 
 		AfterEach(func() {
 			By("cleaning up test data and resources")
-			deleteTestData(uid)
+			deleteTestDataFromTable(testTable, uid)
 
 			// Delete all Deployments and ConfigMaps
 			cmd := exec.Command("kubectl", "delete", "deployment", "-n", policyTestNamespace,
@@ -102,7 +105,7 @@ var _ = Describe("Resource Timeout and Failure Handling", Ordered, func() {
 `)
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqNode is created")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -189,7 +192,7 @@ var _ = Describe("Resource Timeout and Failure Handling", Ordered, func() {
 `)
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqNode is created and times out")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)

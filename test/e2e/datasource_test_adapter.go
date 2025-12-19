@@ -210,6 +210,43 @@ spec:
 	return yaml
 }
 
+// GetHubYAMLWithMySQLNamespace returns LynqHub YAML with MySQL in a different namespace than the Hub
+func (m *MySQLTestAdapter) GetHubYAMLWithMySQLNamespace(hubName, hubNamespace, mysqlNamespace string, syncInterval string, tableName string, valueMappings, extraValueMappings map[string]string) string {
+	yaml := fmt.Sprintf(`apiVersion: operator.lynq.sh/v1
+kind: LynqHub
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  source:
+    type: mysql
+    syncInterval: %s
+    mysql:
+      host: %s
+      port: %d
+      database: %s
+      table: %s
+      username: %s
+      passwordRef:
+        name: mysql-root-password
+        key: password
+  valueMappings:
+`, hubName, hubNamespace, syncInterval, m.GetServiceHost(mysqlNamespace), m.GetDefaultPort(), m.Database, tableName, m.Username)
+
+	for k, v := range valueMappings {
+		yaml += fmt.Sprintf("    %s: %s\n", k, v)
+	}
+
+	if len(extraValueMappings) > 0 {
+		yaml += "  extraValueMappings:\n"
+		for k, v := range extraValueMappings {
+			yaml += fmt.Sprintf("    %s: %s\n", k, v)
+		}
+	}
+
+	return yaml
+}
+
 func (m *MySQLTestAdapter) ExecSQL(namespace, sql string) (string, error) {
 	cmd := exec.Command("kubectl", "exec", "-n", namespace, "deployment/mysql", "--",
 		"mysql", "-h", m.Host, fmt.Sprintf("-u%s", m.Username), fmt.Sprintf("-p%s", m.Password), m.Database, "-e", sql)
@@ -271,6 +308,14 @@ func InsertTestNodeWithValue(adapter TestDatasourceAdapter, namespace, uid, acti
 	})
 }
 
+// InsertTestNodeWithValueToTable inserts a test node with a custom active value to a specific table
+func InsertTestNodeWithValueToTable(adapter TestDatasourceAdapter, namespace, tableName, uid, activeValue string) error {
+	return adapter.InsertRow(namespace, tableName, map[string]string{
+		"id":     uid,
+		"active": activeValue,
+	})
+}
+
 // DeleteTestNode deletes a test node by uid
 func DeleteTestNode(adapter TestDatasourceAdapter, namespace, uid string) error {
 	return adapter.DeleteRow(namespace, "nodes", "id", uid)
@@ -289,6 +334,35 @@ func ApplyHub(adapter TestDatasourceAdapter, hubName, namespace, syncInterval st
 // ApplyHubWithExtraMappings applies a LynqHub configuration with extra value mappings
 func ApplyHubWithExtraMappings(adapter TestDatasourceAdapter, hubName, namespace, syncInterval string, extraMappings map[string]string) error {
 	yaml := adapter.GetHubYAML(hubName, namespace, syncInterval, "nodes",
+		map[string]string{"uid": "id", "activate": "active"}, extraMappings)
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = utils.StringReader(yaml)
+	_, err := utils.Run(cmd)
+	return err
+}
+
+// ApplyHubWithTable applies a LynqHub configuration with MySQL in a different namespace
+func ApplyHubWithTable(adapter TestDatasourceAdapter, hubName, hubNamespace, mysqlNamespace, syncInterval, tableName string) error {
+	// Cast to MySQLTestAdapter to access the custom method
+	mysqlAdapter, ok := adapter.(*MySQLTestAdapter)
+	if !ok {
+		return fmt.Errorf("ApplyHubWithTable only supports MySQLTestAdapter")
+	}
+	yaml := mysqlAdapter.GetHubYAMLWithMySQLNamespace(hubName, hubNamespace, mysqlNamespace, syncInterval, tableName,
+		map[string]string{"uid": "id", "activate": "active"}, nil)
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = utils.StringReader(yaml)
+	_, err := utils.Run(cmd)
+	return err
+}
+
+// ApplyHubWithTableAndMappings applies a LynqHub with custom table and extra mappings
+func ApplyHubWithTableAndMappings(adapter TestDatasourceAdapter, hubName, hubNamespace, mysqlNamespace, syncInterval, tableName string, extraMappings map[string]string) error {
+	mysqlAdapter, ok := adapter.(*MySQLTestAdapter)
+	if !ok {
+		return fmt.Errorf("ApplyHubWithTableAndMappings only supports MySQLTestAdapter")
+	}
+	yaml := mysqlAdapter.GetHubYAMLWithMySQLNamespace(hubName, hubNamespace, mysqlNamespace, syncInterval, tableName,
 		map[string]string{"uid": "id", "activate": "active"}, extraMappings)
 	cmd := exec.Command("kubectl", "apply", "-f", "-")
 	cmd.Stdin = utils.StringReader(yaml)

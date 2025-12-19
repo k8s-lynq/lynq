@@ -28,14 +28,17 @@ import (
 )
 
 var _ = Describe("Field-Level Ignore Control (ignoreFields)", Ordered, func() {
+	var testTable string
+
 	BeforeAll(func() {
-		By("setting up policy test namespace")
-		setupPolicyTestNamespace()
+		By("setting up test table")
+		testTable = setupTestTable("ignore_fields")
 	})
 
 	AfterAll(func() {
-		By("cleaning up policy test namespace")
-		cleanupPolicyTestNamespace()
+		By("cleaning up test table and resources")
+		cleanupTestTable(testTable)
+		cleanupTestResources()
 	})
 
 	Context("when ignoreFields is configured", func() {
@@ -47,12 +50,12 @@ var _ = Describe("Field-Level Ignore Control (ignoreFields)", Ordered, func() {
 
 		BeforeEach(func() {
 			By("creating a LynqHub")
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 		})
 
 		AfterEach(func() {
 			By("cleaning up test data and resources")
-			deleteTestData(uid)
+			deleteTestDataFromTable(testTable, uid)
 
 			// Delete all ConfigMaps and Deployments
 			cmd := exec.Command("kubectl", "delete", "configmap", "-n", policyTestNamespace,
@@ -93,7 +96,7 @@ var _ = Describe("Field-Level Ignore Control (ignoreFields)", Ordered, func() {
 `)
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqNode is created and reconciled")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -196,7 +199,7 @@ var _ = Describe("Field-Level Ignore Control (ignoreFields)", Ordered, func() {
 `)
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqNode is created")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -313,7 +316,7 @@ var _ = Describe("Field-Level Ignore Control (ignoreFields)", Ordered, func() {
 `)
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqNode is created")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -419,7 +422,7 @@ var _ = Describe("Field-Level Ignore Control (ignoreFields)", Ordered, func() {
 `)
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqNode is created")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -466,7 +469,7 @@ var _ = Describe("Field-Level Ignore Control (ignoreFields)", Ordered, func() {
 `)
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqNode is created")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)

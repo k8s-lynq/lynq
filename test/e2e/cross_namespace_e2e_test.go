@@ -32,9 +32,11 @@ var _ = Describe("Cross-Namespace Resources", Ordered, func() {
 		targetNamespace = "cross-ns-target"
 	)
 
+	var testTable string
+
 	BeforeAll(func() {
-		By("setting up policy test namespace")
-		setupPolicyTestNamespace()
+		By("setting up test table")
+		testTable = setupTestTable("cross_namespace")
 
 		By("creating target namespace for cross-namespace tests")
 		cmd := exec.Command("kubectl", "create", "ns", targetNamespace)
@@ -46,8 +48,9 @@ var _ = Describe("Cross-Namespace Resources", Ordered, func() {
 		cmd := exec.Command("kubectl", "delete", "ns", targetNamespace, "--wait=false", "--ignore-not-found=true")
 		_, _ = utils.Run(cmd)
 
-		By("cleaning up policy test namespace")
-		cleanupPolicyTestNamespace()
+		By("cleaning up test table and resources")
+		cleanupTestTable(testTable)
+		cleanupTestResources()
 	})
 
 	Context("when targetNamespace is specified", func() {
@@ -59,12 +62,12 @@ var _ = Describe("Cross-Namespace Resources", Ordered, func() {
 
 		BeforeEach(func() {
 			By("creating a LynqHub")
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 		})
 
 		AfterEach(func() {
 			By("cleaning up test data and resources")
-			deleteTestData(uid)
+			deleteTestDataFromTable(testTable, uid)
 
 			// Delete resources in target namespace
 			cmd := exec.Command("kubectl", "delete", "configmap", "-n", targetNamespace,
@@ -114,7 +117,7 @@ spec:
 				Expect(err).NotTo(HaveOccurred())
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqNode is created and reconciled")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -179,7 +182,7 @@ spec:
 				Expect(err).NotTo(HaveOccurred())
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("And the resource is created")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -193,7 +196,7 @@ spec:
 				}, policyTestTimeout, policyTestInterval).Should(Succeed())
 
 				By("When the MySQL data is deleted")
-				deleteTestData(uid)
+				deleteTestDataFromTable(testTable, uid)
 
 				By("Then the LynqNode should be deleted")
 				Eventually(func(g Gomega) {
@@ -239,7 +242,7 @@ spec:
 				Expect(err).NotTo(HaveOccurred())
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("And the resource is created")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -253,7 +256,7 @@ spec:
 				}, policyTestTimeout, policyTestInterval).Should(Succeed())
 
 				By("When the MySQL data is deleted")
-				deleteTestData(uid)
+				deleteTestDataFromTable(testTable, uid)
 
 				By("Then the LynqNode should be deleted")
 				Eventually(func(g Gomega) {
@@ -321,7 +324,7 @@ spec:
 				Expect(err).NotTo(HaveOccurred())
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqNode is created and reconciled")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -397,7 +400,7 @@ spec:
 				Expect(err).NotTo(HaveOccurred())
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqNode is created and reconciled")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)

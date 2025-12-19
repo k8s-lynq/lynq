@@ -28,14 +28,17 @@ import (
 )
 
 var _ = Describe("Finalizer Behavior", Ordered, func() {
+	var testTable string
+
 	BeforeAll(func() {
-		By("setting up policy test namespace")
-		setupPolicyTestNamespace()
+		By("setting up test table")
+		testTable = setupTestTable("finalizer")
 	})
 
 	AfterAll(func() {
-		By("cleaning up policy test namespace")
-		cleanupPolicyTestNamespace()
+		By("cleaning up test table and resources")
+		cleanupTestTable(testTable)
+		cleanupTestResources()
 	})
 
 	Context("LynqNode finalizer", func() {
@@ -48,12 +51,12 @@ var _ = Describe("Finalizer Behavior", Ordered, func() {
 
 		BeforeEach(func() {
 			By("creating a LynqHub")
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 		})
 
 		AfterEach(func() {
 			By("cleaning up test data and resources")
-			deleteTestData(uid)
+			deleteTestDataFromTable(testTable, uid)
 
 			// Clean up any remaining resources
 			cmd := exec.Command("kubectl", "delete", "configmap", "-n", policyTestNamespace,
@@ -88,7 +91,7 @@ var _ = Describe("Finalizer Behavior", Ordered, func() {
 `)
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqNode is created")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -121,7 +124,7 @@ var _ = Describe("Finalizer Behavior", Ordered, func() {
 `)
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("And LynqNode and its resources are created")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -135,7 +138,7 @@ var _ = Describe("Finalizer Behavior", Ordered, func() {
 				}, policyTestTimeout, policyTestInterval).Should(Succeed())
 
 				By("When MySQL data is deleted (triggering LynqNode deletion)")
-				deleteTestData(uid)
+				deleteTestDataFromTable(testTable, uid)
 
 				By("Then the LynqNode should be deleted")
 				Eventually(func(g Gomega) {
@@ -169,7 +172,7 @@ var _ = Describe("Finalizer Behavior", Ordered, func() {
 `)
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("And LynqNode and its resources are created")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -183,7 +186,7 @@ var _ = Describe("Finalizer Behavior", Ordered, func() {
 				}, policyTestTimeout, policyTestInterval).Should(Succeed())
 
 				By("When MySQL data is deleted (triggering LynqNode deletion)")
-				deleteTestData(uid)
+				deleteTestDataFromTable(testTable, uid)
 
 				By("Then the LynqNode should be deleted")
 				Eventually(func(g Gomega) {
@@ -241,7 +244,7 @@ var _ = Describe("Finalizer Behavior", Ordered, func() {
 `)
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("And both resources are created")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -263,7 +266,7 @@ var _ = Describe("Finalizer Behavior", Ordered, func() {
 				}, policyTestTimeout, policyTestInterval).Should(Succeed())
 
 				By("When MySQL data is deleted")
-				deleteTestData(uid)
+				deleteTestDataFromTable(testTable, uid)
 
 				By("Then the LynqNode should be deleted")
 				Eventually(func(g Gomega) {
@@ -316,7 +319,7 @@ var _ = Describe("Finalizer Behavior", Ordered, func() {
 `)
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("And LynqNode is Ready with all resources")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -331,7 +334,7 @@ var _ = Describe("Finalizer Behavior", Ordered, func() {
 				}, policyTestTimeout, policyTestInterval).Should(Succeed())
 
 				By("When MySQL data is deleted")
-				deleteTestData(uid)
+				deleteTestDataFromTable(testTable, uid)
 
 				By("Then the LynqNode deletion should complete (finalizer handled cleanup)")
 				Eventually(func(g Gomega) {

@@ -31,12 +31,17 @@ import (
 )
 
 var _ = Describe("Metrics Collection", Ordered, func() {
+	var testTable string
+
 	BeforeAll(func() {
-		setupPolicyTestNamespace()
+		By("setting up test table")
+		testTable = setupTestTable("metrics")
 	})
 
 	AfterAll(func() {
-		cleanupPolicyTestNamespace()
+		By("cleaning up test table and resources")
+		cleanupTestTable(testTable)
+		cleanupTestResources()
 	})
 
 	Context("Metrics Independence from Event/Log Suppression", func() {
@@ -50,7 +55,7 @@ var _ = Describe("Metrics Collection", Ordered, func() {
 			)
 
 			BeforeEach(func() {
-				createHub(hubName)
+				createHubWithTable(hubName, testTable)
 				createForm(formName, hubName, `
   deployments:
     - id: test-deployment
@@ -77,7 +82,7 @@ var _ = Describe("Metrics Collection", Ordered, func() {
 			})
 
 			AfterEach(func() {
-				deleteTestData(uid)
+				deleteTestDataFromTable(testTable, uid)
 
 				cmd := exec.Command("kubectl", "delete", "lynqform", formName, "-n", policyTestNamespace, "--ignore-not-found=true")
 				_, _ = utils.Run(cmd)
@@ -91,7 +96,7 @@ var _ = Describe("Metrics Collection", Ordered, func() {
 
 			It("should update lynqnode_resources_ready metric when deployment becomes ready", func() {
 				By("Given test data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
 				By("When LynqHub controller creates LynqNode")
@@ -137,7 +142,7 @@ var _ = Describe("Metrics Collection", Ordered, func() {
 			)
 
 			BeforeEach(func() {
-				createHub(hubName)
+				createHubWithTable(hubName, testTable)
 				// Create a form with an invalid image to cause failure
 				createForm(formName, hubName, `
   deployments:
@@ -165,7 +170,7 @@ var _ = Describe("Metrics Collection", Ordered, func() {
 			})
 
 			AfterEach(func() {
-				deleteTestData(uid)
+				deleteTestDataFromTable(testTable, uid)
 
 				cmd := exec.Command("kubectl", "delete", "lynqform", formName, "-n", policyTestNamespace, "--ignore-not-found=true")
 				_, _ = utils.Run(cmd)
@@ -179,7 +184,7 @@ var _ = Describe("Metrics Collection", Ordered, func() {
 
 			It("should update lynqnode_resources_failed metric when deployment fails", func() {
 				By("Given test data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
 				By("When LynqHub controller creates LynqNode")

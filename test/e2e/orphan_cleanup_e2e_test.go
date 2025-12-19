@@ -28,14 +28,17 @@ import (
 )
 
 var _ = Describe("Orphan Resource Cleanup", Ordered, func() {
+	var testTable string
+
 	BeforeAll(func() {
-		By("setting up policy test namespace")
-		setupPolicyTestNamespace()
+		By("setting up test table")
+		testTable = setupTestTable("orphan_cleanup")
 	})
 
 	AfterAll(func() {
-		By("cleaning up policy test namespace")
-		cleanupPolicyTestNamespace()
+		By("cleaning up test table and resources")
+		cleanupTestTable(testTable)
+		cleanupTestResources()
 	})
 
 	Context("when resources are removed from template", func() {
@@ -47,12 +50,12 @@ var _ = Describe("Orphan Resource Cleanup", Ordered, func() {
 
 		BeforeEach(func() {
 			By("creating a LynqHub")
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 		})
 
 		AfterEach(func() {
 			By("cleaning up test data and resources")
-			deleteTestData(uid)
+			deleteTestDataFromTable(testTable, uid)
 
 			// Delete all resources created by the test
 			cmd := exec.Command("kubectl", "delete", "configmap", "-n", policyTestNamespace,
@@ -99,7 +102,7 @@ var _ = Describe("Orphan Resource Cleanup", Ordered, func() {
 `)
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("And both resources are created")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -193,7 +196,7 @@ var _ = Describe("Orphan Resource Cleanup", Ordered, func() {
 `)
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("And both resources are created")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -309,7 +312,7 @@ var _ = Describe("Orphan Resource Cleanup", Ordered, func() {
 `)
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("And the resource is created")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -414,12 +417,12 @@ var _ = Describe("Orphan Resource Cleanup", Ordered, func() {
 
 		BeforeEach(func() {
 			By("creating a LynqHub")
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 		})
 
 		AfterEach(func() {
 			By("cleaning up test data and resources")
-			deleteTestData(uid)
+			deleteTestDataFromTable(testTable, uid)
 
 			cmd := exec.Command("kubectl", "delete", "configmap", "-n", policyTestNamespace,
 				"-l", "lynq.sh/node", "--ignore-not-found=true")
@@ -455,7 +458,7 @@ var _ = Describe("Orphan Resource Cleanup", Ordered, func() {
 `)
 
 			By("And active data in MySQL")
-			insertTestData(uid, true)
+			insertTestDataToTable(testTable, uid, true)
 
 			By("When LynqNode reconciles successfully")
 			expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)

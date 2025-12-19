@@ -29,14 +29,17 @@ import (
 )
 
 var _ = Describe("Dependency Graph", Ordered, func() {
+	var testTable string
+
 	BeforeAll(func() {
-		By("setting up policy test namespace")
-		setupPolicyTestNamespace()
+		By("setting up test table")
+		testTable = setupTestTable("dependency_graph")
 	})
 
 	AfterAll(func() {
-		By("cleaning up policy test namespace")
-		cleanupPolicyTestNamespace()
+		By("cleaning up test table and resources")
+		cleanupTestTable(testTable)
+		cleanupTestResources()
 	})
 
 	Context("when resources have dependencies via dependIds", func() {
@@ -48,12 +51,12 @@ var _ = Describe("Dependency Graph", Ordered, func() {
 
 		BeforeEach(func() {
 			By("creating a LynqHub")
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 		})
 
 		AfterEach(func() {
 			By("cleaning up test data and resources")
-			deleteTestData(uid)
+			deleteTestDataFromTable(testTable, uid)
 
 			// Delete all resources created by the test
 			cmd := exec.Command("kubectl", "delete", "configmap", "-n", policyTestNamespace,
@@ -111,7 +114,7 @@ var _ = Describe("Dependency Graph", Ordered, func() {
 `)
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqNode is created and reconciled")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -185,7 +188,7 @@ var _ = Describe("Dependency Graph", Ordered, func() {
 `)
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqNode is created and reconciled")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -254,7 +257,7 @@ var _ = Describe("Dependency Graph", Ordered, func() {
 `)
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqNode is created and reconciled")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -302,12 +305,12 @@ var _ = Describe("Dependency Graph", Ordered, func() {
 
 		BeforeEach(func() {
 			By("creating a LynqHub")
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 		})
 
 		AfterEach(func() {
 			By("cleaning up test data and resources")
-			deleteTestData(uid)
+			deleteTestDataFromTable(testTable, uid)
 
 			// Delete all resources created by the test
 			cmd := exec.Command("kubectl", "delete", "configmap", "-n", policyTestNamespace,

@@ -29,12 +29,17 @@ import (
 )
 
 var _ = Describe("Template Error Handling", Ordered, func() {
+	var testTable string
+
 	BeforeAll(func() {
-		setupPolicyTestNamespace()
+		By("setting up test table")
+		testTable = setupTestTable("template_error")
 	})
 
 	AfterAll(func() {
-		cleanupPolicyTestNamespace()
+		By("cleaning up test table and resources")
+		cleanupTestTable(testTable)
+		cleanupTestResources()
 	})
 
 	Context("Template Rendering Errors", func() {
@@ -46,11 +51,11 @@ var _ = Describe("Template Error Handling", Ordered, func() {
 			)
 
 			BeforeEach(func() {
-				createHub(hubName)
+				createHubWithTable(hubName, testTable)
 			})
 
 			AfterEach(func() {
-				deleteTestData(uid)
+				deleteTestDataFromTable(testTable, uid)
 
 				cmd := exec.Command("kubectl", "delete", "lynqform", formName, "-n", policyTestNamespace, "--ignore-not-found=true")
 				_, _ = utils.Run(cmd)
@@ -80,7 +85,7 @@ var _ = Describe("Template Error Handling", Ordered, func() {
 `)
 
 				By("And test data exists in the database")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When the LynqNode is created")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -132,7 +137,7 @@ var _ = Describe("Template Error Handling", Ordered, func() {
 			)
 
 			BeforeEach(func() {
-				createHub(hubName)
+				createHubWithTable(hubName, testTable)
 			})
 
 			AfterEach(func() {
@@ -231,7 +236,7 @@ spec:
 				// Create standard hub - the `default` function is used to provide fallback values
 				// when a variable exists but is empty. With strict template mode (missingkey=error),
 				// all variables used in templates must be defined in the hub configuration.
-				createHub(hubName)
+				createHubWithTable(hubName, testTable)
 
 				// Use `default` function with existing variables - the function handles empty/falsy values
 				// by providing a fallback. Here we use `.uid` which always has a value, and demonstrate
@@ -251,7 +256,7 @@ spec:
 			})
 
 			AfterEach(func() {
-				deleteTestData(uid)
+				deleteTestDataFromTable(testTable, uid)
 
 				cmd := exec.Command("kubectl", "delete", "lynqform", formName, "-n", policyTestNamespace, "--ignore-not-found=true")
 				_, _ = utils.Run(cmd)
@@ -267,7 +272,7 @@ spec:
 				// Form already created in BeforeEach
 
 				By("And test data in database with actual values")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqNode is created and template is rendered")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)

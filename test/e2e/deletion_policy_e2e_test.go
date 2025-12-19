@@ -28,14 +28,17 @@ import (
 )
 
 var _ = Describe("DeletionPolicy", Ordered, func() {
+	var testTable string
+
 	BeforeAll(func() {
-		By("setting up policy test namespace")
-		setupPolicyTestNamespace()
+		By("setting up test table")
+		testTable = setupTestTable("deletion_policy")
 	})
 
 	AfterAll(func() {
-		By("cleaning up policy test namespace")
-		cleanupPolicyTestNamespace()
+		By("cleaning up test table and resources")
+		cleanupTestTable(testTable)
+		cleanupTestResources()
 	})
 
 	Describe("Delete policy", func() {
@@ -47,7 +50,7 @@ var _ = Describe("DeletionPolicy", Ordered, func() {
 		)
 
 		BeforeEach(func() {
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 			createForm(formName, hubName, `
   configMaps:
     - id: config-delete
@@ -63,7 +66,7 @@ var _ = Describe("DeletionPolicy", Ordered, func() {
 
 		AfterEach(func() {
 			By("cleaning up test data and resources")
-			deleteTestData(uid)
+			deleteTestDataFromTable(testTable, uid)
 
 			cmd := exec.Command("kubectl", "delete", "configmap", configMapName, "-n", policyTestNamespace, "--ignore-not-found=true")
 			_, _ = utils.Run(cmd)
@@ -79,7 +82,7 @@ var _ = Describe("DeletionPolicy", Ordered, func() {
 
 		It("should use ownerReference for automatic garbage collection", func() {
 			By("Given test data in MySQL with active=true")
-			insertTestData(uid, true)
+			insertTestDataToTable(testTable, uid, true)
 
 			By("When LynqHub controller creates LynqNode automatically")
 			expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -99,7 +102,7 @@ var _ = Describe("DeletionPolicy", Ordered, func() {
 			Expect(output).To(Equal("LynqNode"))
 
 			By("When the MySQL data is deleted (simulating node deactivation)")
-			deleteTestData(uid)
+			deleteTestDataFromTable(testTable, uid)
 
 			By("Then the LynqHub controller should delete the LynqNode")
 			Eventually(func(g Gomega) {
@@ -126,7 +129,7 @@ var _ = Describe("DeletionPolicy", Ordered, func() {
 		)
 
 		BeforeEach(func() {
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 			createForm(formName, hubName, `
   configMaps:
     - id: config-retain
@@ -145,7 +148,7 @@ var _ = Describe("DeletionPolicy", Ordered, func() {
 			cmd := exec.Command("kubectl", "delete", "configmap", configMapName, "-n", policyTestNamespace, "--ignore-not-found=true")
 			_, _ = utils.Run(cmd)
 
-			deleteTestData(uid)
+			deleteTestDataFromTable(testTable, uid)
 
 			cmd = exec.Command("kubectl", "delete", "lynqform", formName, "-n", policyTestNamespace, "--ignore-not-found=true")
 			_, _ = utils.Run(cmd)
@@ -158,7 +161,7 @@ var _ = Describe("DeletionPolicy", Ordered, func() {
 
 		It("should use label-based tracking and preserve resource on deletion", func() {
 			By("Given test data in MySQL with active=true")
-			insertTestData(uid, true)
+			insertTestDataToTable(testTable, uid, true)
 
 			By("When LynqHub controller creates LynqNode automatically")
 			expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -184,7 +187,7 @@ var _ = Describe("DeletionPolicy", Ordered, func() {
 			Expect(output).To(Equal(expectedNodeName))
 
 			By("When the MySQL data is deleted (simulating node deactivation)")
-			deleteTestData(uid)
+			deleteTestDataFromTable(testTable, uid)
 
 			By("Then the LynqHub controller should delete the LynqNode")
 			Eventually(func(g Gomega) {
@@ -223,7 +226,7 @@ var _ = Describe("DeletionPolicy", Ordered, func() {
 			cmd := exec.Command("kubectl", "delete", "configmap", configMapName, "-n", policyTestNamespace, "--ignore-not-found=true")
 			_, _ = utils.Run(cmd)
 
-			deleteTestData(uid)
+			deleteTestDataFromTable(testTable, uid)
 
 			cmd = exec.Command("kubectl", "delete", "lynqform", formName, "-n", policyTestNamespace, "--ignore-not-found=true")
 			_, _ = utils.Run(cmd)
@@ -236,7 +239,7 @@ var _ = Describe("DeletionPolicy", Ordered, func() {
 
 		It("should preserve retained resource after LynqForm/LynqHub deletion and re-adopt on recreation", func() {
 			By("Given a LynqHub and LynqForm with DeletionPolicy:Retain")
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 			createForm(formName, hubName, `
   configMaps:
     - id: config-readopt
@@ -250,7 +253,7 @@ var _ = Describe("DeletionPolicy", Ordered, func() {
 `)
 
 			By("And active data in MySQL")
-			insertTestData(uid, true)
+			insertTestDataToTable(testTable, uid, true)
 
 			By("When LynqHub controller creates LynqNode automatically")
 			expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -379,7 +382,7 @@ var _ = Describe("DeletionPolicy", Ordered, func() {
 
 		It("should preserve retained resource after LynqHub deletion and re-adopt on recreation", func() {
 			By("Given a LynqHub and LynqForm with DeletionPolicy:Retain")
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 			createForm(formName, hubName, `
   configMaps:
     - id: config-readopt
@@ -393,7 +396,7 @@ var _ = Describe("DeletionPolicy", Ordered, func() {
 `)
 
 			By("And active data in MySQL")
-			insertTestData(uid, true)
+			insertTestDataToTable(testTable, uid, true)
 
 			By("When LynqHub controller creates LynqNode automatically")
 			expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -444,7 +447,7 @@ var _ = Describe("DeletionPolicy", Ordered, func() {
 			}, policyTestTimeout, policyTestInterval).Should(Succeed())
 
 			By("When both LynqHub and LynqForm are recreated")
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 			createForm(formName, hubName, `
   configMaps:
     - id: config-readopt

@@ -30,14 +30,17 @@ import (
 )
 
 var _ = Describe("Rollout maxSkew Feature", Ordered, func() {
+	var testTable string
+
 	BeforeAll(func() {
-		By("setting up policy test namespace")
-		setupPolicyTestNamespace()
+		By("setting up test table")
+		testTable = setupTestTable("rollout")
 	})
 
 	AfterAll(func() {
-		By("cleaning up policy test namespace")
-		cleanupPolicyTestNamespace()
+		By("cleaning up test table and resources")
+		cleanupTestTable(testTable)
+		cleanupTestResources()
 	})
 
 	Context("when maxSkew is configured in LynqForm", func() {
@@ -48,14 +51,14 @@ var _ = Describe("Rollout maxSkew Feature", Ordered, func() {
 
 		BeforeEach(func() {
 			By("creating a LynqHub")
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 		})
 
 		AfterEach(func() {
 			By("cleaning up test data and resources")
 			// Delete test data for all nodes
 			for i := 1; i <= 10; i++ {
-				deleteTestData(fmt.Sprintf("rollout-node-%d", i))
+				deleteTestDataFromTable(testTable, fmt.Sprintf("rollout-node-%d", i))
 			}
 
 			// Delete all ConfigMaps created by the test
@@ -90,7 +93,7 @@ var _ = Describe("Rollout maxSkew Feature", Ordered, func() {
 
 				By("And 5 active nodes")
 				for i := 1; i <= 5; i++ {
-					insertTestData(fmt.Sprintf("rollout-node-%d", i), true)
+					insertTestDataToTable(testTable, fmt.Sprintf("rollout-node-%d", i), true)
 				}
 
 				By("When LynqHub syncs")
@@ -132,7 +135,7 @@ var _ = Describe("Rollout maxSkew Feature", Ordered, func() {
 
 				By("And 6 active nodes")
 				for i := 1; i <= 6; i++ {
-					insertTestData(fmt.Sprintf("rollout-node-%d", i), true)
+					insertTestDataToTable(testTable, fmt.Sprintf("rollout-node-%d", i), true)
 				}
 
 				By("When LynqHub syncs")
@@ -192,7 +195,7 @@ var _ = Describe("Rollout maxSkew Feature", Ordered, func() {
 
 				By("And 3 active nodes")
 				for i := 1; i <= 3; i++ {
-					insertTestData(fmt.Sprintf("rollout-node-%d", i), true)
+					insertTestDataToTable(testTable, fmt.Sprintf("rollout-node-%d", i), true)
 				}
 
 				By("When LynqHub syncs")
@@ -242,7 +245,7 @@ var _ = Describe("Rollout maxSkew Feature", Ordered, func() {
 
 				By("And 4 active nodes")
 				for i := 1; i <= 4; i++ {
-					insertTestData(fmt.Sprintf("rollout-node-%d", i), true)
+					insertTestDataToTable(testTable, fmt.Sprintf("rollout-node-%d", i), true)
 				}
 
 				By("When LynqHub syncs and rollout progresses")
@@ -296,13 +299,13 @@ var _ = Describe("Rollout maxSkew Feature", Ordered, func() {
 
 		BeforeEach(func() {
 			By("creating a LynqHub")
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 		})
 
 		AfterEach(func() {
 			By("cleaning up test data and resources")
 			for i := 1; i <= 5; i++ {
-				deleteTestData(fmt.Sprintf("multi-node-%d", i))
+				deleteTestDataFromTable(testTable, fmt.Sprintf("multi-node-%d", i))
 			}
 
 			cmd := exec.Command("kubectl", "delete", "configmap", "-n", policyTestNamespace,
@@ -345,7 +348,7 @@ var _ = Describe("Rollout maxSkew Feature", Ordered, func() {
 
 				By("And 4 active nodes")
 				for i := 1; i <= 4; i++ {
-					insertTestData(fmt.Sprintf("multi-node-%d", i), true)
+					insertTestDataToTable(testTable, fmt.Sprintf("multi-node-%d", i), true)
 				}
 
 				By("When LynqHub syncs")
@@ -410,13 +413,13 @@ var _ = Describe("Rollout maxSkew Feature", Ordered, func() {
 
 		BeforeEach(func() {
 			By("creating a LynqHub")
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 		})
 
 		AfterEach(func() {
 			By("cleaning up test data and resources")
 			for i := 1; i <= 3; i++ {
-				deleteTestData(fmt.Sprintf("maxskew-node-%d", i))
+				deleteTestDataFromTable(testTable, fmt.Sprintf("maxskew-node-%d", i))
 			}
 
 			// Delete all Deployments created by the test
@@ -490,7 +493,7 @@ spec:
 
 			By("And 3 active nodes in the database")
 			for i := 1; i <= 3; i++ {
-				insertTestData(fmt.Sprintf("maxskew-node-%d", i), true)
+				insertTestDataToTable(testTable, fmt.Sprintf("maxskew-node-%d", i), true)
 			}
 
 			By("When initial LynqNodes are created and become Ready")
@@ -678,7 +681,7 @@ spec:
 
 			By("And 2 active nodes in the database")
 			for i := 1; i <= 2; i++ {
-				insertTestData(fmt.Sprintf("maxskew-node-%d", i), true)
+				insertTestDataToTable(testTable, fmt.Sprintf("maxskew-node-%d", i), true)
 			}
 
 			By("When all nodes and Deployments become Ready")
@@ -817,13 +820,13 @@ spec:
 
 		BeforeEach(func() {
 			By("creating a LynqHub")
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 		})
 
 		AfterEach(func() {
 			By("cleaning up test data and resources")
 			for i := 1; i <= 3; i++ {
-				deleteTestData(fmt.Sprintf("slow-pod-node-%d", i))
+				deleteTestDataFromTable(testTable, fmt.Sprintf("slow-pod-node-%d", i))
 			}
 
 			// Delete all Deployments created by the test
@@ -894,7 +897,7 @@ spec:
 
 					By("And 3 active nodes in the database")
 					for i := 1; i <= 3; i++ {
-						insertTestData(fmt.Sprintf("slow-pod-node-%d", i), true)
+						insertTestDataToTable(testTable, fmt.Sprintf("slow-pod-node-%d", i), true)
 					}
 
 					By("When initial LynqNodes are created and become Ready")
@@ -1160,12 +1163,12 @@ spec:
 
 		BeforeEach(func() {
 			By("creating a LynqHub")
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 		})
 
 		AfterEach(func() {
 			By("cleaning up test data and resources")
-			deleteTestData("deploy-ready-node")
+			deleteTestDataFromTable(testTable, "deploy-ready-node")
 
 			// Delete all Deployments created by the test
 			cmd := exec.Command("kubectl", "delete", "deployment", "-n", policyTestNamespace,
@@ -1222,7 +1225,7 @@ spec:
 			Expect(err).NotTo(HaveOccurred())
 
 			By("And an active node in the database")
-			insertTestData("deploy-ready-node", true)
+			insertTestDataToTable(testTable, "deploy-ready-node", true)
 
 			By("When the LynqNode is created and Deployment becomes Ready")
 			nodeName := fmt.Sprintf("deploy-ready-node-%s", formName)
