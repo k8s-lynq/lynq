@@ -28,12 +28,17 @@ import (
 )
 
 var _ = Describe("Resource Health Check", Ordered, func() {
+	var testTable string
+
 	BeforeAll(func() {
-		setupPolicyTestNamespace()
+		By("setting up test table")
+		testTable = setupTestTable("health_check")
 	})
 
 	AfterAll(func() {
-		cleanupPolicyTestNamespace()
+		By("cleaning up test table and resources")
+		cleanupTestTable(testTable)
+		cleanupTestResources()
 	})
 
 	Context("Resource Health Check", func() {
@@ -46,7 +51,7 @@ var _ = Describe("Resource Health Check", Ordered, func() {
 			)
 
 			BeforeEach(func() {
-				createHub(hubName)
+				createHubWithTable(hubName, testTable)
 				createForm(formName, hubName, `
   deployments:
     - id: busybox-deployment
@@ -75,7 +80,7 @@ var _ = Describe("Resource Health Check", Ordered, func() {
 
 			AfterEach(func() {
 				By("cleaning up test data and resources")
-				deleteTestData(uid)
+				deleteTestDataFromTable(testTable, uid)
 
 				cmd := exec.Command("kubectl", "delete", "deployment", deploymentName, "-n", policyTestNamespace, "--ignore-not-found=true")
 				_, _ = utils.Run(cmd)
@@ -91,7 +96,7 @@ var _ = Describe("Resource Health Check", Ordered, func() {
 
 			It("should create Deployment and verify it becomes Ready", func() {
 				By("Given test data in MySQL with active=true")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqHub controller creates LynqNode automatically")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)

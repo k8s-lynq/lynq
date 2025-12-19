@@ -58,8 +58,6 @@ var _ = BeforeSuite(func() {
 	_, err := utils.Run(cmd)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager(Operator) image")
 
-	// TODO(user): If you want to change the e2e test vendor from Kind, ensure the image is
-	// built and available before running the tests. Also, remove the following block.
 	By("loading the manager(Operator) image on Kind")
 	err = utils.LoadImageToKindClusterWithName(projectImage)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager(Operator) image into Kind")
@@ -269,12 +267,24 @@ spec:
 		return nil
 	}
 	Eventually(verifyLynqCABundleInjection, "2m", "1s").Should(Succeed(), "caBundle was not injected into Lynq WebhookConfigurations")
+
+	// Setup shared MySQL instance for all tests
+	By("setting up shared MySQL instance")
+	_, _ = fmt.Fprintf(GinkgoWriter, "Deploying shared MySQL in mysql-shared namespace...\n")
+	setupSharedMySQL()
+	_, _ = fmt.Fprintf(GinkgoWriter, "Shared MySQL is ready\n")
+
+	// Setup policy-test namespace
+	By("setting up policy-test namespace")
+	_, _ = fmt.Fprintf(GinkgoWriter, "Creating policy-test namespace...\n")
+	setupPolicyTestNamespace()
+	_, _ = fmt.Fprintf(GinkgoWriter, "policy-test namespace is ready\n")
 })
 
 var _ = AfterSuite(func() {
-	// Cleanup all test namespaces first
+	// Cleanup all test namespaces first (including mysql-shared)
 	By("cleaning up all test namespaces")
-	testNamespaces := []string{"policy-test", "lynq-test"}
+	testNamespaces := []string{"policy-test", "lynq-test", "mysql-shared"}
 	for _, ns := range testNamespaces {
 		cmd := exec.Command("kubectl", "get", "namespace", ns)
 		_, err := utils.Run(cmd)

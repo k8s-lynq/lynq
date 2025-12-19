@@ -44,14 +44,17 @@ func verifyConfigMapValue(configMapName, namespace, dataKey, expectedValue strin
 }
 
 var _ = Describe("Template Functions", Ordered, func() {
+	var testTable string
+
 	BeforeAll(func() {
-		By("setting up policy test namespace")
-		setupPolicyTestNamespace()
+		By("setting up test table")
+		testTable = setupTestTable("template_functions")
 	})
 
 	AfterAll(func() {
-		By("cleaning up policy test namespace")
-		cleanupPolicyTestNamespace()
+		By("cleaning up test table and resources")
+		cleanupTestTable(testTable)
+		cleanupTestResources()
 	})
 
 	Context("Custom template functions", func() {
@@ -78,7 +81,7 @@ spec:
       host: mysql.%s.svc.cluster.local
       port: 3306
       database: testdb
-      table: nodes
+      table: %s
       username: root
       passwordRef:
         name: mysql-root-password
@@ -86,7 +89,7 @@ spec:
   valueMappings:
     uid: id
     activate: active
-`, hubName, policyTestNamespace, policyTestNamespace)
+`, hubName, policyTestNamespace, sharedMySQLNamespace, testTable)
 			cmd := exec.Command("kubectl", "apply", "-f", "-")
 			cmd.Stdin = utils.StringReader(hubYAML)
 			_, err := utils.Run(cmd)
@@ -95,7 +98,7 @@ spec:
 
 		AfterEach(func() {
 			By("cleaning up test data and resources")
-			deleteTestData(uid)
+			deleteTestDataFromTable(testTable, uid)
 
 			// Delete all ConfigMaps
 			cmd := exec.Command("kubectl", "delete", "configmap", "-n", policyTestNamespace,
@@ -121,8 +124,8 @@ spec:
 				longUID := "long-uid-for-trunc"
 
 				// Insert data with long UID
-				insertSQL := fmt.Sprintf("INSERT INTO nodes (id, active) VALUES ('%s', 1) ON DUPLICATE KEY UPDATE active=1;", longUID)
-				cmd := exec.Command("kubectl", "exec", "-n", policyTestNamespace, "deployment/mysql", "--",
+				insertSQL := fmt.Sprintf("INSERT INTO %s (id, active) VALUES ('%s', 1) ON DUPLICATE KEY UPDATE active=1;", testTable, longUID)
+				cmd := exec.Command("kubectl", "exec", "-n", sharedMySQLNamespace, "deployment/mysql", "--",
 					"mysql", "-h", "127.0.0.1", "-uroot", "-ptest-password", "testdb", "-e", insertSQL)
 				_, err := utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred())
@@ -173,8 +176,8 @@ spec:
 				Expect(output).To(Equal(longUID))
 
 				// Cleanup
-				deleteSQL := fmt.Sprintf("DELETE FROM nodes WHERE id='%s';", longUID)
-				cmd = exec.Command("kubectl", "exec", "-n", policyTestNamespace, "deployment/mysql", "--",
+				deleteSQL := fmt.Sprintf("DELETE FROM %s WHERE id='%s';", testTable, longUID)
+				cmd = exec.Command("kubectl", "exec", "-n", sharedMySQLNamespace, "deployment/mysql", "--",
 					"mysql", "-h", "127.0.0.1", "-uroot", "-ptest-password", "testdb", "-e", deleteSQL)
 				_, _ = utils.Run(cmd)
 			})
@@ -183,7 +186,7 @@ spec:
 		Describe("sha1sum function", func() {
 			It("should generate SHA1 hash of input string", func() {
 				By("Given active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("And a LynqForm using sha1sum function")
 				createForm(formName, hubName, `
@@ -219,7 +222,7 @@ spec:
 		Describe("Sprig functions", func() {
 			It("should support common Sprig functions like default, upper, lower, b64enc", func() {
 				By("Given active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("And a LynqForm using various Sprig functions")
 				createForm(formName, hubName, `
@@ -254,7 +257,7 @@ spec:
 		Describe("Template variables", func() {
 			It("should provide hubId and templateRef variables", func() {
 				By("Given active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("And a LynqForm using context variables")
 				createForm(formName, hubName, `
@@ -310,7 +313,7 @@ spec:
 		Describe("labelsTemplate and annotationsTemplate", func() {
 			It("should support template expressions in labels and annotations", func() {
 				By("Given active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("And a LynqForm with templated labels and annotations")
 				createForm(formName, hubName, `
@@ -369,9 +372,15 @@ spec:
 		Describe("Typed template functions (int, float, bool)", func() {
 			It("should convert string values to proper integer types for Kubernetes API", func() {
 				By("Given active data in MySQL with numeric values as strings")
+				// Add extra columns for this test (replicas and app_port)
+				alterSQL := fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS replicas VARCHAR(10) DEFAULT '1', ADD COLUMN IF NOT EXISTS app_port VARCHAR(10) DEFAULT '80';", testTable)
+				cmd := exec.Command("kubectl", "exec", "-n", sharedMySQLNamespace, "deployment/mysql", "--",
+					"mysql", "-h", "127.0.0.1", "-uroot", "-ptest-password", "testdb", "-e", alterSQL)
+				_, _ = utils.Run(cmd)
+
 				// Insert test data with extra value mappings for replicas and port
-				insertSQL := fmt.Sprintf("INSERT INTO nodes (id, active, replicas, app_port) VALUES ('%s', 1, '3', '8080') ON DUPLICATE KEY UPDATE active=1, replicas='3', app_port='8080';", uid)
-				cmd := exec.Command("kubectl", "exec", "-n", policyTestNamespace, "deployment/mysql", "--",
+				insertSQL := fmt.Sprintf("INSERT INTO %s (id, active, replicas, app_port) VALUES ('%s', 1, '3', '8080') ON DUPLICATE KEY UPDATE active=1, replicas='3', app_port='8080';", testTable, uid)
+				cmd = exec.Command("kubectl", "exec", "-n", sharedMySQLNamespace, "deployment/mysql", "--",
 					"mysql", "-h", "127.0.0.1", "-uroot", "-ptest-password", "testdb", "-e", insertSQL)
 				_, err := utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred())
@@ -392,7 +401,7 @@ spec:
       host: mysql.%s.svc.cluster.local
       port: 3306
       database: testdb
-      table: nodes
+      table: %s
       username: root
       passwordRef:
         name: mysql-root-password
@@ -403,7 +412,7 @@ spec:
   extraValueMappings:
     replicas: replicas
     appPort: app_port
-`, hubName, policyTestNamespace, policyTestNamespace)
+`, hubName, policyTestNamespace, sharedMySQLNamespace, testTable)
 				cmd = exec.Command("kubectl", "apply", "-f", "-")
 				cmd.Stdin = utils.StringReader(hubYAML)
 				_, err = utils.Run(cmd)
@@ -454,35 +463,10 @@ spec:
 				deploymentName := fmt.Sprintf("%s-int-deploy", uid)
 
 				By("Then Deployment should be created with correct integer types")
-				// Debug: Print LynqNode status immediately
-				debugCmd := exec.Command("kubectl", "describe", "lynqnode", expectedNodeName, "-n", policyTestNamespace)
-				debugOutput, _ := utils.Run(debugCmd)
-				GinkgoWriter.Printf("DEBUG LynqNode describe:\n%s\n", debugOutput)
-
-				// Debug: Check controller logs
-				logsCmd := exec.Command("kubectl", "logs", "-n", "lynq-system", "deployment/lynq-controller-manager", "--tail=50")
-				logsOutput, _ := utils.Run(logsCmd)
-				GinkgoWriter.Printf("DEBUG Controller logs:\n%s\n", logsOutput)
-
 				Eventually(func(g Gomega) {
 					cmd := exec.Command("kubectl", "get", "deployment", deploymentName, "-n", policyTestNamespace)
-					output, err := utils.Run(cmd)
-					if err != nil {
-						// Debug: Print LynqNode status and events
-						debugCmd := exec.Command("kubectl", "describe", "lynqnode", expectedNodeName, "-n", policyTestNamespace)
-						debugOutput, _ := utils.Run(debugCmd)
-						GinkgoWriter.Printf("DEBUG LynqNode describe:\n%s\n", debugOutput)
-
-						eventsCmd := exec.Command("kubectl", "get", "events", "-n", policyTestNamespace, "--sort-by=.lastTimestamp")
-						eventsOutput, _ := utils.Run(eventsCmd)
-						GinkgoWriter.Printf("DEBUG Events:\n%s\n", eventsOutput)
-
-						// Also print controller logs again
-						logsCmd := exec.Command("kubectl", "logs", "-n", "lynq-system", "deployment/lynq-controller-manager", "--tail=100")
-						logsOutput, _ := utils.Run(logsCmd)
-						GinkgoWriter.Printf("DEBUG Controller logs (detailed):\n%s\n", logsOutput)
-					}
-					g.Expect(err).NotTo(HaveOccurred(), "Failed to get deployment, output: %s", output)
+					_, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
 				}, policyTestTimeout, policyTestInterval).Should(Succeed())
 
 				By("And replicas should be a valid integer (not quoted string)")
@@ -502,7 +486,7 @@ spec:
 
 			It("should convert string values to boolean types", func() {
 				By("Given active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("And a LynqForm using bool function")
 				createForm(formName, hubName, `
@@ -535,7 +519,7 @@ spec:
 
 			It("should convert string values to float types", func() {
 				By("Given active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("And a LynqForm using float function")
 				createForm(formName, hubName, `
@@ -585,7 +569,7 @@ spec:
 
 			It("should handle int function with default values for optional fields", func() {
 				By("Given active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("And a LynqForm using int with default function")
 				createForm(formName, hubName, `
@@ -628,7 +612,7 @@ spec:
 
 			It("should gracefully handle invalid values with int function (returns 0)", func() {
 				By("Given active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("And a LynqForm using int function with invalid string input")
 				createForm(formName, hubName, `

@@ -28,23 +28,26 @@ import (
 )
 
 const (
-	policyTestNamespace = "policy-test"
-	policyTestTimeout   = 5 * time.Minute
-	policyTestInterval  = 2 * time.Second
+	sharedMySQLNamespace = "mysql-shared"
+	policyTestNamespace  = "policy-test"
+	policyTestTimeout    = 5 * time.Minute
+	policyTestInterval   = 2 * time.Second
 )
 
-// setupPolicyTestNamespace creates the test namespace and deploys MySQL for testing
-func setupPolicyTestNamespace() {
-	// Wait for any existing namespace to be fully deleted
-	Eventually(func() error {
-		cmd := exec.Command("kubectl", "get", "namespace", policyTestNamespace)
-		_, err := utils.Run(cmd)
-		return err // Should return error when namespace doesn't exist
-	}, 2*time.Minute, 2*time.Second).Should(HaveOccurred(), "Namespace should not exist before creation")
+// setupSharedMySQL creates mysql-shared namespace and deploys MySQL (idempotent)
+func setupSharedMySQL() {
+	// Check if MySQL is already running
+	cmd := exec.Command("kubectl", "get", "ns", sharedMySQLNamespace)
+	if _, err := utils.Run(cmd); err == nil {
+		// Namespace exists, verify MySQL is ready
+		verifyMySQLReady()
+		return
+	}
 
-	cmd := exec.Command("kubectl", "create", "ns", policyTestNamespace)
+	// Create mysql-shared namespace
+	cmd = exec.Command("kubectl", "create", "ns", sharedMySQLNamespace)
 	_, err := utils.Run(cmd)
-	Expect(err).NotTo(HaveOccurred(), "Failed to create test namespace")
+	Expect(err).NotTo(HaveOccurred(), "Failed to create mysql-shared namespace")
 
 	mysqlYAML := fmt.Sprintf(`
 apiVersion: v1
@@ -124,7 +127,7 @@ spec:
           periodSeconds: 10
           timeoutSeconds: 10
           failureThreshold: 30
-`, policyTestNamespace, policyTestNamespace, policyTestNamespace)
+`, sharedMySQLNamespace, sharedMySQLNamespace, sharedMySQLNamespace)
 
 	cmd = exec.Command("kubectl", "apply", "-f", "-")
 	cmd.Stdin = utils.StringReader(mysqlYAML)
@@ -133,25 +136,23 @@ spec:
 
 	// Wait for MySQL pods to be scheduled and running first
 	Eventually(func(g Gomega) {
-		cmd := exec.Command("kubectl", "get", "pods", "-n", policyTestNamespace,
+		cmd := exec.Command("kubectl", "get", "pods", "-n", sharedMySQLNamespace,
 			"-l", "app=mysql", "-o", "jsonpath={.items[0].status.phase}")
 		output, err := utils.Run(cmd)
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(output).To(Equal("Running"))
 	}, 3*time.Minute, 5*time.Second).Should(Succeed(), "MySQL pod should be running")
 
-	// Wait for MySQL deployment to become Available (increased timeout for CI environments)
-	// Print debug info after 4 minutes if still failing
+	// Wait for MySQL deployment to become Available
 	deploymentStartTime := time.Now()
 	debugPrinted := false
 	Eventually(func(g Gomega) {
 		cmd := exec.Command("kubectl", "wait", "deployment", "mysql",
-			"-n", policyTestNamespace,
+			"-n", sharedMySQLNamespace,
 			"--for", "condition=Available",
 			"--timeout", "2m")
 		_, err := utils.Run(cmd)
 
-		// Print debug info once after 4 minutes of failures
 		if err != nil && !debugPrinted && time.Since(deploymentStartTime) > 4*time.Minute {
 			debugPrinted = true
 			fmt.Println("\n" + strings.Repeat("=", 80))
@@ -164,34 +165,59 @@ spec:
 		g.Expect(err).NotTo(HaveOccurred())
 	}, 8*time.Minute, 10*time.Second).Should(Succeed(), "MySQL deployment should be available")
 
-	// Wait for MySQL to be truly ready to accept connections
-	schemaSQL := `
-CREATE TABLE IF NOT EXISTS nodes (
-  id VARCHAR(255) PRIMARY KEY,
-  active BOOLEAN NOT NULL DEFAULT TRUE,
-  replicas VARCHAR(255),
-  app_port VARCHAR(255)
-);
-`
-	schemaStartTime := time.Now()
-	schemaDebugPrinted := false
+	// Verify MySQL is accepting connections
+	verifyMySQLReady()
+}
+
+// verifyMySQLReady ensures MySQL is accepting connections
+func verifyMySQLReady() {
 	Eventually(func(g Gomega) {
-		cmd := exec.Command("kubectl", "exec", "-n", policyTestNamespace, "deployment/mysql", "--",
-			"mysql", "-h", "127.0.0.1", "-uroot", "-ptest-password", "testdb", "-e", schemaSQL)
+		cmd := exec.Command("kubectl", "exec", "-n", sharedMySQLNamespace, "deployment/mysql", "--",
+			"mysqladmin", "-h", "127.0.0.1", "-uroot", "-ptest-password", "ping")
 		_, err := utils.Run(cmd)
-
-		// Print debug info once after 90 seconds of failures
-		if err != nil && !schemaDebugPrinted && time.Since(schemaStartTime) > 90*time.Second {
-			schemaDebugPrinted = true
-			fmt.Println("\n" + strings.Repeat("=", 80))
-			fmt.Println("MySQL schema creation taking too long - Debug Information")
-			fmt.Println(strings.Repeat("=", 80))
-			printMySQLSchemaDebugInfo()
-			fmt.Println(strings.Repeat("=", 80))
-		}
-
 		g.Expect(err).NotTo(HaveOccurred())
-	}, 2*time.Minute, 5*time.Second).Should(Succeed(), "Failed to create database schema")
+	}, 2*time.Minute, 5*time.Second).Should(Succeed(), "MySQL should be accepting connections")
+}
+
+// setupPolicyTestNamespace creates the test namespace (idempotent, no MySQL)
+func setupPolicyTestNamespace() {
+	// Check if namespace already exists
+	cmd := exec.Command("kubectl", "get", "ns", policyTestNamespace)
+	if _, err := utils.Run(cmd); err == nil {
+		// Namespace exists, just ensure it's active
+		return
+	}
+
+	// Create namespace
+	cmd = exec.Command("kubectl", "create", "ns", policyTestNamespace)
+	_, err := utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred(), "Failed to create test namespace")
+
+	// Copy MySQL secret to policy-test namespace for Hub authentication
+	copySecretCmd := exec.Command("kubectl", "get", "secret", "mysql-root-password",
+		"-n", sharedMySQLNamespace, "-o", "yaml")
+	secretYAML, err := utils.Run(copySecretCmd)
+	Expect(err).NotTo(HaveOccurred(), "Failed to get MySQL secret")
+
+	// Replace namespace in the secret YAML
+	secretYAML = strings.Replace(secretYAML, fmt.Sprintf("namespace: %s", sharedMySQLNamespace),
+		fmt.Sprintf("namespace: %s", policyTestNamespace), 1)
+	// Remove resourceVersion to allow creation
+	lines := strings.Split(secretYAML, "\n")
+	var filteredLines []string
+	for _, line := range lines {
+		if !strings.Contains(line, "resourceVersion:") &&
+			!strings.Contains(line, "uid:") &&
+			!strings.Contains(line, "creationTimestamp:") {
+			filteredLines = append(filteredLines, line)
+		}
+	}
+	secretYAML = strings.Join(filteredLines, "\n")
+
+	applyCmd := exec.Command("kubectl", "apply", "-f", "-")
+	applyCmd.Stdin = utils.StringReader(secretYAML)
+	_, err = utils.Run(applyCmd)
+	Expect(err).NotTo(HaveOccurred(), "Failed to copy MySQL secret to policy-test namespace")
 }
 
 // printMySQLDebugInfo prints debugging information when MySQL deployment fails
@@ -199,31 +225,31 @@ func printMySQLDebugInfo() {
 	fmt.Println("\n=== MySQL Deployment Failed - Debug Information ===")
 
 	// Get pod status
-	cmd := exec.Command("kubectl", "get", "pods", "-n", policyTestNamespace, "-l", "app=mysql", "-o", "wide")
+	cmd := exec.Command("kubectl", "get", "pods", "-n", sharedMySQLNamespace, "-l", "app=mysql", "-o", "wide")
 	if output, err := utils.Run(cmd); err == nil {
 		fmt.Printf("\nPod Status:\n%s\n", output)
 	}
 
 	// Get pod events
-	cmd = exec.Command("kubectl", "get", "events", "-n", policyTestNamespace, "--sort-by=.lastTimestamp")
+	cmd = exec.Command("kubectl", "get", "events", "-n", sharedMySQLNamespace, "--sort-by=.lastTimestamp")
 	if output, err := utils.Run(cmd); err == nil {
 		fmt.Printf("\nNamespace Events:\n%s\n", output)
 	}
 
 	// Get pod logs
-	cmd = exec.Command("kubectl", "logs", "-n", policyTestNamespace, "-l", "app=mysql", "--tail=100")
+	cmd = exec.Command("kubectl", "logs", "-n", sharedMySQLNamespace, "-l", "app=mysql", "--tail=100")
 	if output, err := utils.Run(cmd); err == nil {
 		fmt.Printf("\nMySQL Logs (last 100 lines):\n%s\n", output)
 	}
 
 	// Get pod description
-	cmd = exec.Command("kubectl", "describe", "pod", "-n", policyTestNamespace, "-l", "app=mysql")
+	cmd = exec.Command("kubectl", "describe", "pod", "-n", sharedMySQLNamespace, "-l", "app=mysql")
 	if output, err := utils.Run(cmd); err == nil {
 		fmt.Printf("\nPod Description:\n%s\n", output)
 	}
 
 	// Get deployment status
-	cmd = exec.Command("kubectl", "describe", "deployment", "mysql", "-n", policyTestNamespace)
+	cmd = exec.Command("kubectl", "describe", "deployment", "mysql", "-n", sharedMySQLNamespace)
 	if output, err := utils.Run(cmd); err == nil {
 		fmt.Printf("\nDeployment Description:\n%s\n", output)
 	}
@@ -231,35 +257,8 @@ func printMySQLDebugInfo() {
 	fmt.Println("=== End of Debug Information ===")
 }
 
-// printMySQLSchemaDebugInfo prints debugging information when MySQL schema creation fails
-func printMySQLSchemaDebugInfo() {
-	fmt.Println("\n=== MySQL Schema Creation Failed - Debug Information ===")
-
-	// Get MySQL version info
-	cmd := exec.Command("kubectl", "exec", "-n", policyTestNamespace, "deployment/mysql", "--",
-		"mysql", "-h", "127.0.0.1", "-uroot", "-ptest-password", "-e", "SHOW VARIABLES LIKE '%version%';")
-	if output, err := utils.Run(cmd); err == nil {
-		fmt.Printf("\nMySQL Version Info:\n%s\n", output)
-	}
-
-	// Check MySQL process status
-	cmd = exec.Command("kubectl", "exec", "-n", policyTestNamespace, "deployment/mysql", "--",
-		"mysqladmin", "-h", "127.0.0.1", "-uroot", "-ptest-password", "status")
-	if output, err := utils.Run(cmd); err == nil {
-		fmt.Printf("\nMySQL Status:\n%s\n", output)
-	}
-
-	// Get recent MySQL logs
-	cmd = exec.Command("kubectl", "logs", "-n", policyTestNamespace, "-l", "app=mysql", "--tail=50")
-	if output, err := utils.Run(cmd); err == nil {
-		fmt.Printf("\nRecent MySQL Logs:\n%s\n", output)
-	}
-
-	fmt.Println("=== End of Debug Information ===")
-}
-
-// cleanupPolicyTestNamespace cleans up the test namespace and all resources
-func cleanupPolicyTestNamespace() {
+// cleanupTestResources deletes all Lynq resources in policy-test namespace
+func cleanupTestResources() {
 	// Delete all LynqNodes first
 	cmd := exec.Command("kubectl", "delete", "lynqnodes", "--all", "-n", policyTestNamespace, "--ignore-not-found=true", "--wait=false")
 	_, _ = utils.Run(cmd)
@@ -272,31 +271,66 @@ func cleanupPolicyTestNamespace() {
 	cmd = exec.Command("kubectl", "delete", "lynqhubs", "--all", "-n", policyTestNamespace, "--ignore-not-found=true", "--wait=false")
 	_, _ = utils.Run(cmd)
 
-	// Delete namespace
-	cmd = exec.Command("kubectl", "delete", "ns", policyTestNamespace, "--wait=false", "--ignore-not-found=true")
-	_, _ = utils.Run(cmd)
-
-	// Force cleanup if namespace is stuck
-	_ = utils.CleanupNamespace(policyTestNamespace)
+	// Wait briefly for resources to be deleted
+	time.Sleep(2 * time.Second)
 }
 
-// insertTestData inserts a test data row into MySQL using the adapter
-func insertTestData(uid string, active bool) {
+// getUniqueTableName generates unique table name for test isolation
+func getUniqueTableName(testPrefix string) string {
+	// Replace spaces and special chars with underscores
+	safe := strings.ReplaceAll(testPrefix, " ", "_")
+	safe = strings.ReplaceAll(safe, "-", "_")
+	// Use timestamp for uniqueness
+	return fmt.Sprintf("nodes_%s_%d", safe, time.Now().UnixNano()%1000000)
+}
+
+// setupTestTable creates a test table and returns its name
+func setupTestTable(testPrefix string) string {
+	tableName := getUniqueTableName(testPrefix)
 	adapter := GetTestDatasource()
-	err := InsertTestNode(adapter, policyTestNamespace, uid, active)
+	err := adapter.CreateTable(sharedMySQLNamespace, tableName, []ColumnDef{
+		{Name: "id", Type: "VARCHAR(255)", PrimaryKey: true},
+		{Name: "active", Type: "BOOLEAN", NotNull: true, Default: "TRUE"},
+		{Name: "replicas", Type: "VARCHAR(255)"},
+		{Name: "app_port", Type: "VARCHAR(255)"},
+	})
+	Expect(err).NotTo(HaveOccurred(), "Failed to create test table: "+tableName)
+	return tableName
+}
+
+// cleanupTestTable drops the test table
+func cleanupTestTable(tableName string) {
+	if tableName == "" {
+		return
+	}
+	adapter := GetTestDatasource()
+	_ = adapter.DropTable(sharedMySQLNamespace, tableName)
+}
+
+// createHubWithTable creates a LynqHub pointing to MySQL in sharedMySQLNamespace with specific table
+func createHubWithTable(name, tableName string) {
+	err := ApplyHubWithTable(GetTestDatasource(), name, policyTestNamespace, sharedMySQLNamespace, "5s", tableName)
 	Expect(err).NotTo(HaveOccurred())
 }
 
-// deleteTestData deletes a test data row from MySQL using the adapter
-func deleteTestData(uid string) {
+// insertTestDataToTable inserts a test data row into a specific table
+func insertTestDataToTable(tableName, uid string, active bool) {
 	adapter := GetTestDatasource()
-	_ = DeleteTestNode(adapter, policyTestNamespace, uid)
+	activeStr := "0"
+	if active {
+		activeStr = "1"
+	}
+	err := adapter.InsertRow(sharedMySQLNamespace, tableName, map[string]string{
+		"id":     uid,
+		"active": activeStr,
+	})
+	Expect(err).NotTo(HaveOccurred())
 }
 
-// createHub creates a LynqHub pointing to the configured datasource
-func createHub(name string) {
-	err := ApplyHub(GetTestDatasource(), name, policyTestNamespace, "5s")
-	Expect(err).NotTo(HaveOccurred())
+// deleteTestDataFromTable deletes a test data row from a specific table
+func deleteTestDataFromTable(tableName, uid string) {
+	adapter := GetTestDatasource()
+	_ = adapter.DeleteRow(sharedMySQLNamespace, tableName, "id", uid)
 }
 
 // createForm creates a LynqForm with the given resources

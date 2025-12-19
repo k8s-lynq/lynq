@@ -28,14 +28,17 @@ import (
 )
 
 var _ = Describe("Multi-Template Support", Ordered, func() {
+	var testTable string
+
 	BeforeAll(func() {
-		By("setting up policy test namespace")
-		setupPolicyTestNamespace()
+		By("setting up test table")
+		testTable = setupTestTable("multi_template")
 	})
 
 	AfterAll(func() {
-		By("cleaning up policy test namespace")
-		cleanupPolicyTestNamespace()
+		By("cleaning up test table and resources")
+		cleanupTestTable(testTable)
+		cleanupTestResources()
 	})
 
 	Context("when multiple LynqForms reference the same LynqHub", func() {
@@ -49,13 +52,13 @@ var _ = Describe("Multi-Template Support", Ordered, func() {
 
 		BeforeEach(func() {
 			By("creating a LynqHub")
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 		})
 
 		AfterEach(func() {
 			By("cleaning up test data and resources")
-			deleteTestData(uid1)
-			deleteTestData(uid2)
+			deleteTestDataFromTable(testTable, uid1)
+			deleteTestDataFromTable(testTable, uid2)
 
 			// Delete all ConfigMaps created by the test
 			cmd := exec.Command("kubectl", "delete", "configmap", "-n", policyTestNamespace,
@@ -100,8 +103,8 @@ var _ = Describe("Multi-Template Support", Ordered, func() {
 `)
 
 				By("And two active rows in MySQL")
-				insertTestData(uid1, true)
-				insertTestData(uid2, true)
+				insertTestDataToTable(testTable, uid1, true)
+				insertTestDataToTable(testTable, uid2, true)
 
 				By("When LynqHub controller syncs")
 				// Wait for sync to happen (syncInterval: 5s)
@@ -171,8 +174,8 @@ var _ = Describe("Multi-Template Support", Ordered, func() {
 `)
 
 				By("And two active rows in MySQL")
-				insertTestData(uid1, true)
-				insertTestData(uid2, true)
+				insertTestDataToTable(testTable, uid1, true)
+				insertTestDataToTable(testTable, uid2, true)
 
 				By("When all LynqNodes become Ready")
 				expectedNodes := []string{
@@ -244,7 +247,7 @@ var _ = Describe("Multi-Template Support", Ordered, func() {
         data:
           tier: worker
 `)
-				insertTestData(uid1, true)
+				insertTestDataToTable(testTable, uid1, true)
 
 				By("And LynqNodes are created for both templates")
 				node1 := fmt.Sprintf("%s-%s", uid1, formName1)
@@ -253,7 +256,7 @@ var _ = Describe("Multi-Template Support", Ordered, func() {
 				waitForLynqNode(node2)
 
 				By("When the row is deleted from MySQL")
-				deleteTestData(uid1)
+				deleteTestDataFromTable(testTable, uid1)
 
 				By("Then both LynqNodes should be deleted")
 				Eventually(func(g Gomega) {
@@ -293,7 +296,7 @@ var _ = Describe("Multi-Template Support", Ordered, func() {
         data:
           tier: worker
 `)
-				insertTestData(uid1, true)
+				insertTestDataToTable(testTable, uid1, true)
 
 				By("And LynqNodes exist for both templates")
 				node1 := fmt.Sprintf("%s-%s", uid1, formName1)

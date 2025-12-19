@@ -28,14 +28,17 @@ import (
 )
 
 var _ = Describe("LynqHub Garbage Collection", Ordered, func() {
+	var testTable string
+
 	BeforeAll(func() {
-		By("setting up policy test namespace")
-		setupPolicyTestNamespace()
+		By("setting up test table")
+		testTable = setupTestTable("garbage_collection")
 	})
 
 	AfterAll(func() {
-		By("cleaning up policy test namespace")
-		cleanupPolicyTestNamespace()
+		By("cleaning up test table and resources")
+		cleanupTestTable(testTable)
+		cleanupTestResources()
 	})
 
 	Context("when database rows are deactivated or deleted", func() {
@@ -46,14 +49,14 @@ var _ = Describe("LynqHub Garbage Collection", Ordered, func() {
 
 		BeforeEach(func() {
 			By("creating a LynqHub")
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 		})
 
 		AfterEach(func() {
 			By("cleaning up test data and resources")
 			// Clean all test UIDs
 			for _, uid := range []string{"gc-uid-1", "gc-uid-2", "gc-uid-3", "deactivate-uid", "delete-uid"} {
-				deleteTestData(uid)
+				deleteTestDataFromTable(testTable, uid)
 			}
 
 			// Delete all ConfigMaps
@@ -97,7 +100,7 @@ var _ = Describe("LynqHub Garbage Collection", Ordered, func() {
 				const uid = "deactivate-uid"
 
 				By("And active data in MySQL (activate=true)")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqNode is created")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -113,8 +116,8 @@ var _ = Describe("LynqHub Garbage Collection", Ordered, func() {
 				}, policyTestTimeout, policyTestInterval).Should(Succeed())
 
 				By("When the activate flag is set to false in MySQL")
-				updateSQL := fmt.Sprintf("UPDATE nodes SET active=0 WHERE id='%s';", uid)
-				cmd := exec.Command("kubectl", "exec", "-n", policyTestNamespace, "deployment/mysql", "--",
+				updateSQL := fmt.Sprintf("UPDATE %s SET active=0 WHERE id='%s';", testTable, uid)
+				cmd := exec.Command("kubectl", "exec", "-n", sharedMySQLNamespace, "deployment/mysql", "--",
 					"mysql", "-h", "127.0.0.1", "-uroot", "-ptest-password", "testdb", "-e", updateSQL)
 				_, err := utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred())
@@ -151,7 +154,7 @@ var _ = Describe("LynqHub Garbage Collection", Ordered, func() {
 				const uid = "delete-uid"
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqNode is created")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -167,7 +170,7 @@ var _ = Describe("LynqHub Garbage Collection", Ordered, func() {
 				}, policyTestTimeout, policyTestInterval).Should(Succeed())
 
 				By("When the database row is deleted")
-				deleteTestData(uid)
+				deleteTestDataFromTable(testTable, uid)
 
 				By("Then the LynqNode should be deleted after sync")
 				Eventually(func(g Gomega) {
@@ -200,9 +203,9 @@ var _ = Describe("LynqHub Garbage Collection", Ordered, func() {
 `)
 
 				By("And multiple active rows in MySQL")
-				insertTestData("gc-uid-1", true)
-				insertTestData("gc-uid-2", true)
-				insertTestData("gc-uid-3", true)
+				insertTestDataToTable(testTable, "gc-uid-1", true)
+				insertTestDataToTable(testTable, "gc-uid-2", true)
+				insertTestDataToTable(testTable, "gc-uid-3", true)
 
 				By("When all LynqNodes are created")
 				for _, uid := range []string{"gc-uid-1", "gc-uid-2", "gc-uid-3"} {
@@ -221,8 +224,8 @@ var _ = Describe("LynqHub Garbage Collection", Ordered, func() {
 				}
 
 				By("When gc-uid-2 is deactivated")
-				updateSQL := "UPDATE nodes SET active=0 WHERE id='gc-uid-2';"
-				cmd := exec.Command("kubectl", "exec", "-n", policyTestNamespace, "deployment/mysql", "--",
+				updateSQL := fmt.Sprintf("UPDATE %s SET active=0 WHERE id='gc-uid-2';", testTable)
+				cmd := exec.Command("kubectl", "exec", "-n", sharedMySQLNamespace, "deployment/mysql", "--",
 					"mysql", "-h", "127.0.0.1", "-uroot", "-ptest-password", "testdb", "-e", updateSQL)
 				_, err := utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred())
@@ -274,7 +277,7 @@ var _ = Describe("LynqHub Garbage Collection", Ordered, func() {
 				const uid = "deactivate-uid"
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqNode is created")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -290,8 +293,8 @@ var _ = Describe("LynqHub Garbage Collection", Ordered, func() {
 				}, policyTestTimeout, policyTestInterval).Should(Succeed())
 
 				By("When the activate flag is set to false in MySQL")
-				updateSQL := fmt.Sprintf("UPDATE nodes SET active=0 WHERE id='%s';", uid)
-				cmd := exec.Command("kubectl", "exec", "-n", policyTestNamespace, "deployment/mysql", "--",
+				updateSQL := fmt.Sprintf("UPDATE %s SET active=0 WHERE id='%s';", testTable, uid)
+				cmd := exec.Command("kubectl", "exec", "-n", sharedMySQLNamespace, "deployment/mysql", "--",
 					"mysql", "-h", "127.0.0.1", "-uroot", "-ptest-password", "testdb", "-e", updateSQL)
 				_, err := utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred())
@@ -344,7 +347,7 @@ var _ = Describe("LynqHub Garbage Collection", Ordered, func() {
 				const uid = "deactivate-uid"
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqNode is created")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -360,8 +363,8 @@ var _ = Describe("LynqHub Garbage Collection", Ordered, func() {
 				}, policyTestTimeout, policyTestInterval).Should(Succeed())
 
 				By("When the activate flag is set to false")
-				updateSQL := fmt.Sprintf("UPDATE nodes SET active=0 WHERE id='%s';", uid)
-				cmd := exec.Command("kubectl", "exec", "-n", policyTestNamespace, "deployment/mysql", "--",
+				updateSQL := fmt.Sprintf("UPDATE %s SET active=0 WHERE id='%s';", testTable, uid)
+				cmd := exec.Command("kubectl", "exec", "-n", sharedMySQLNamespace, "deployment/mysql", "--",
 					"mysql", "-h", "127.0.0.1", "-uroot", "-ptest-password", "testdb", "-e", updateSQL)
 				_, err := utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred())
@@ -374,8 +377,8 @@ var _ = Describe("LynqHub Garbage Collection", Ordered, func() {
 				}, policyTestTimeout, policyTestInterval).Should(Succeed())
 
 				By("When the activate flag is set back to true")
-				updateSQL = fmt.Sprintf("UPDATE nodes SET active=1 WHERE id='%s';", uid)
-				cmd = exec.Command("kubectl", "exec", "-n", policyTestNamespace, "deployment/mysql", "--",
+				updateSQL = fmt.Sprintf("UPDATE %s SET active=1 WHERE id='%s';", testTable, uid)
+				cmd = exec.Command("kubectl", "exec", "-n", sharedMySQLNamespace, "deployment/mysql", "--",
 					"mysql", "-h", "127.0.0.1", "-uroot", "-ptest-password", "testdb", "-e", updateSQL)
 				_, err = utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred())

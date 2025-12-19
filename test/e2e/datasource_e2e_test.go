@@ -29,12 +29,17 @@ import (
 )
 
 var _ = Describe("Datasource Behavior", Ordered, func() {
+	var testTable string
+
 	BeforeAll(func() {
-		setupPolicyTestNamespace()
+		By("setting up test table")
+		testTable = setupTestTable("datasource")
 	})
 
 	AfterAll(func() {
-		cleanupPolicyTestNamespace()
+		By("cleaning up test table and resources")
+		cleanupTestTable(testTable)
+		cleanupTestResources()
 	})
 
 	Context("Database Synchronization", func() {
@@ -62,7 +67,7 @@ spec:
       host: mysql.%s.svc.cluster.local
       port: 3306
       database: testdb
-      table: nodes
+      table: %s
       username: root
       passwordRef:
         name: mysql-root-password
@@ -70,7 +75,7 @@ spec:
   valueMappings:
     uid: id
     activate: active
-`, hubName, policyTestNamespace, policyTestNamespace)
+`, hubName, policyTestNamespace, sharedMySQLNamespace, testTable)
 				cmd := exec.Command("kubectl", "apply", "-f", "-")
 				cmd.Stdin = utils.StringReader(hubYAML)
 				_, err := utils.Run(cmd)
@@ -89,8 +94,8 @@ spec:
 			})
 
 			AfterEach(func() {
-				deleteTestData(uid1)
-				deleteTestData(uid2)
+				deleteTestDataFromTable(testTable, uid1)
+				deleteTestDataFromTable(testTable, uid2)
 
 				cmd := exec.Command("kubectl", "delete", "lynqform", formName, "-n", policyTestNamespace, "--ignore-not-found=true")
 				_, _ = utils.Run(cmd)
@@ -104,14 +109,14 @@ spec:
 
 			It("should create new LynqNode when a new row is added to the database", func() {
 				By("Given test data in MySQL with one active row")
-				insertTestData(uid1, true)
+				insertTestDataToTable(testTable, uid1, true)
 
 				expectedNodeName1 := fmt.Sprintf("%s-%s", uid1, formName)
 				By("When LynqHub controller syncs and creates first LynqNode")
 				waitForLynqNode(expectedNodeName1)
 
 				By("And a new row is added to the database")
-				insertTestData(uid2, true)
+				insertTestDataToTable(testTable, uid2, true)
 
 				By("Then after sync interval, a new LynqNode should be created automatically")
 				expectedNodeName2 := fmt.Sprintf("%s-%s", uid2, formName)
@@ -140,7 +145,7 @@ spec:
 			)
 
 			BeforeEach(func() {
-				createHub(hubName)
+				createHubWithTable(hubName, testTable)
 				createForm(formName, hubName, `
   configMaps:
     - id: test-config
@@ -154,7 +159,7 @@ spec:
 			})
 
 			AfterEach(func() {
-				deleteTestData(uid)
+				deleteTestDataFromTable(testTable, uid)
 
 				cmd := exec.Command("kubectl", "delete", "lynqform", formName, "-n", policyTestNamespace, "--ignore-not-found=true")
 				_, _ = utils.Run(cmd)
@@ -167,7 +172,7 @@ spec:
 
 			It("should delete LynqNode when activate value changes to false", func() {
 				By("Given a LynqNode that is Ready with active=true")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
 				waitForLynqNode(expectedNodeName)
@@ -182,8 +187,8 @@ spec:
 				}, policyTestTimeout, policyTestInterval).Should(Succeed())
 
 				By("When the activate value is changed to false in the database")
-				updateSQL := fmt.Sprintf("UPDATE nodes SET active=0 WHERE id='%s';", uid)
-				cmd := exec.Command("kubectl", "exec", "-n", policyTestNamespace, "deployment/mysql", "--",
+				updateSQL := fmt.Sprintf("UPDATE %s SET active=0 WHERE id='%s';", testTable, uid)
+				cmd := exec.Command("kubectl", "exec", "-n", sharedMySQLNamespace, "deployment/mysql", "--",
 					"mysql", "-h", "127.0.0.1", "-uroot", "-ptest-password", "testdb", "-e", updateSQL)
 				_, err := utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred())
@@ -216,13 +221,14 @@ spec:
 			)
 
 			BeforeEach(func() {
-				// Drop and recreate table with VARCHAR active column to ensure correct type
+				// Alter testTable to have VARCHAR active column instead of BOOLEAN
 				// This is needed for testing truthy string values like "true", "TRUE", "yes", etc.
-				adapter := GetTestDatasource()
-				err := RecreateNodesTableWithVarchar(adapter, policyTestNamespace)
-				Expect(err).NotTo(HaveOccurred(), "Failed to recreate nodes table with VARCHAR column")
-
-				createHub(hubName)
+				alterSQL := fmt.Sprintf("ALTER TABLE %s MODIFY active VARCHAR(50) NOT NULL DEFAULT 'true';", testTable)
+				cmd := exec.Command("kubectl", "exec", "-n", sharedMySQLNamespace, "deployment/mysql", "--",
+					"mysql", "-h", "127.0.0.1", "-uroot", "-ptest-password", "testdb", "-e", alterSQL)
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to alter active column to VARCHAR")
+				createHubWithTable(hubName, testTable)
 				createForm(formName, hubName, `
   configMaps:
     - id: test-config
@@ -236,9 +242,7 @@ spec:
 			})
 
 			AfterEach(func() {
-				// Drop and recreate table with original BOOLEAN column for other tests
-				adapter := GetTestDatasource()
-				_ = RecreateNodesTableWithBoolean(adapter, policyTestNamespace)
+				// No need to restore table schema - testTable will be dropped in AfterAll
 
 				cmd := exec.Command("kubectl", "delete", "lynqform", formName, "-n", policyTestNamespace, "--ignore-not-found=true")
 				_, _ = utils.Run(cmd)
@@ -267,7 +271,7 @@ spec:
 				}
 				for _, uid := range truthyUIDs {
 					value := truthyValues[uid]
-					err := InsertTestNodeWithValue(adapter, policyTestNamespace, uid, value)
+					err := InsertTestNodeWithValueToTable(adapter, sharedMySQLNamespace, testTable, uid, value)
 					Expect(err).NotTo(HaveOccurred())
 				}
 
@@ -280,7 +284,7 @@ spec:
 				}
 				for _, uid := range falsyUIDs {
 					value := falsyValues[uid]
-					err := InsertTestNodeWithValue(adapter, policyTestNamespace, uid, value)
+					err := InsertTestNodeWithValueToTable(adapter, sharedMySQLNamespace, testTable, uid, value)
 					Expect(err).NotTo(HaveOccurred())
 				}
 
@@ -327,8 +331,8 @@ spec:
 			BeforeEach(func() {
 				// Add plan_id column to nodes table
 				// Try to add column, ignore error if it already exists
-				alterSQL := "ALTER TABLE nodes ADD COLUMN plan_id VARCHAR(50) DEFAULT 'basic';"
-				cmd := exec.Command("kubectl", "exec", "-n", policyTestNamespace, "deployment/mysql", "--",
+				alterSQL := fmt.Sprintf("ALTER TABLE %s ADD COLUMN plan_id VARCHAR(50) DEFAULT 'basic';", testTable)
+				cmd := exec.Command("kubectl", "exec", "-n", sharedMySQLNamespace, "deployment/mysql", "--",
 					"mysql", "-h", "127.0.0.1", "-uroot", "-ptest-password", "testdb", "-e", alterSQL)
 				output, err := utils.Run(cmd)
 				// Ignore "Duplicate column name" error (MySQL error 1060)
@@ -351,7 +355,7 @@ spec:
       host: mysql.%s.svc.cluster.local
       port: 3306
       database: testdb
-      table: nodes
+      table: %s
       username: root
       passwordRef:
         name: mysql-root-password
@@ -361,7 +365,7 @@ spec:
     activate: active
   extraValueMappings:
     planId: plan_id
-`, hubName, policyTestNamespace, policyTestNamespace)
+`, hubName, policyTestNamespace, sharedMySQLNamespace, testTable)
 				cmd = exec.Command("kubectl", "apply", "-f", "-")
 				cmd.Stdin = utils.StringReader(hubYAML)
 				_, err = utils.Run(cmd)
@@ -382,11 +386,11 @@ spec:
 			})
 
 			AfterEach(func() {
-				deleteTestData(uid)
+				deleteTestDataFromTable(testTable, uid)
 
 				// Drop plan_id column (ignore error if it doesn't exist)
-				alterSQL := "ALTER TABLE nodes DROP COLUMN plan_id;"
-				cmd := exec.Command("kubectl", "exec", "-n", policyTestNamespace, "deployment/mysql", "--",
+				alterSQL := fmt.Sprintf("ALTER TABLE %s DROP COLUMN plan_id;", testTable)
+				cmd := exec.Command("kubectl", "exec", "-n", sharedMySQLNamespace, "deployment/mysql", "--",
 					"mysql", "-h", "127.0.0.1", "-uroot", "-ptest-password", "testdb", "-e", alterSQL)
 				_, _ = utils.Run(cmd) // Ignore error if column doesn't exist
 
@@ -401,8 +405,8 @@ spec:
 
 			It("should render extraValueMappings variables in templates", func() {
 				By("Given a row with plan_id='premium' in the database")
-				insertSQL := fmt.Sprintf("INSERT INTO nodes (id, active, plan_id) VALUES ('%s', 1, 'premium') ON DUPLICATE KEY UPDATE active=1, plan_id='premium';", uid)
-				cmd := exec.Command("kubectl", "exec", "-n", policyTestNamespace, "deployment/mysql", "--",
+				insertSQL := fmt.Sprintf("INSERT INTO %s (id, active, plan_id) VALUES ('%s', 1, 'premium') ON DUPLICATE KEY UPDATE active=1, plan_id='premium';", testTable, uid)
+				cmd := exec.Command("kubectl", "exec", "-n", sharedMySQLNamespace, "deployment/mysql", "--",
 					"mysql", "-h", "127.0.0.1", "-uroot", "-ptest-password", "testdb", "-e", insertSQL)
 				_, err := utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred())
@@ -463,7 +467,7 @@ spec:
       host: mysql.%s.svc.cluster.local
       port: 3306
       database: testdb
-      table: nodes
+      table: %s
       username: root
       passwordRef:
         name: mysql-root-password
@@ -471,7 +475,7 @@ spec:
   valueMappings:
     uid: nonexistent_column
     activate: active
-`, hubName, policyTestNamespace, policyTestNamespace)
+`, hubName, policyTestNamespace, sharedMySQLNamespace, testTable)
 				cmd := exec.Command("kubectl", "apply", "-f", "-")
 				cmd.Stdin = utils.StringReader(hubYAML)
 				_, err := utils.Run(cmd)

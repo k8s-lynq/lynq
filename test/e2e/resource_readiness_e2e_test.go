@@ -28,12 +28,17 @@ import (
 )
 
 var _ = Describe("Resource Readiness and Types", Ordered, func() {
+	var testTable string
+
 	BeforeAll(func() {
-		setupPolicyTestNamespace()
+		By("setting up test table")
+		testTable = setupTestTable("resource_readiness")
 	})
 
 	AfterAll(func() {
-		cleanupPolicyTestNamespace()
+		By("cleaning up test table and resources")
+		cleanupTestTable(testTable)
+		cleanupTestResources()
 	})
 
 	//nolint:dupl // Test contexts intentionally have similar structure for readability
@@ -45,11 +50,11 @@ var _ = Describe("Resource Readiness and Types", Ordered, func() {
 		)
 
 		BeforeEach(func() {
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 		})
 
 		AfterEach(func() {
-			deleteTestData(uid)
+			deleteTestDataFromTable(testTable, uid)
 
 			cmd := exec.Command("kubectl", "delete", "statefulset", uid+"-sts", "-n", policyTestNamespace, "--ignore-not-found=true")
 			_, _ = utils.Run(cmd)
@@ -92,7 +97,7 @@ var _ = Describe("Resource Readiness and Types", Ordered, func() {
 `)
 
 			By("And test data in MySQL")
-			insertTestData(uid, true)
+			insertTestDataToTable(testTable, uid, true)
 
 			expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
 			By("When LynqNode is created")
@@ -135,11 +140,11 @@ var _ = Describe("Resource Readiness and Types", Ordered, func() {
 		)
 
 		BeforeEach(func() {
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 		})
 
 		AfterEach(func() {
-			deleteTestData(uid)
+			deleteTestDataFromTable(testTable, uid)
 
 			cmd := exec.Command("kubectl", "delete", "job", uid+"-job", "-n", policyTestNamespace, "--ignore-not-found=true")
 			_, _ = utils.Run(cmd)
@@ -176,7 +181,7 @@ var _ = Describe("Resource Readiness and Types", Ordered, func() {
 `)
 
 			By("And test data in MySQL")
-			insertTestData(uid, true)
+			insertTestDataToTable(testTable, uid, true)
 
 			expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
 			By("When LynqNode is created")
@@ -218,11 +223,11 @@ var _ = Describe("Resource Readiness and Types", Ordered, func() {
 		)
 
 		BeforeEach(func() {
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 		})
 
 		AfterEach(func() {
-			deleteTestData(uid)
+			deleteTestDataFromTable(testTable, uid)
 
 			cmd := exec.Command("kubectl", "delete", "lynqform", formName, "-n", policyTestNamespace, "--ignore-not-found=true")
 			_, _ = utils.Run(cmd)
@@ -256,7 +261,7 @@ var _ = Describe("Resource Readiness and Types", Ordered, func() {
 `)
 
 			By("And test data in MySQL")
-			insertTestData(uid, true)
+			insertTestDataToTable(testTable, uid, true)
 
 			expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
 			By("When LynqNode is created")
@@ -296,11 +301,11 @@ var _ = Describe("Resource Readiness and Types", Ordered, func() {
 		)
 
 		BeforeEach(func() {
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 		})
 
 		AfterEach(func() {
-			deleteTestData(uid)
+			deleteTestDataFromTable(testTable, uid)
 
 			cmd := exec.Command("kubectl", "delete", "deployment", uid+"-deploy", "-n", policyTestNamespace, "--ignore-not-found=true")
 			_, _ = utils.Run(cmd)
@@ -341,7 +346,7 @@ var _ = Describe("Resource Readiness and Types", Ordered, func() {
 `)
 
 			By("And test data in MySQL")
-			insertTestData(uid, true)
+			insertTestDataToTable(testTable, uid, true)
 
 			expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
 			By("When LynqNode is created")
@@ -374,11 +379,11 @@ var _ = Describe("Resource Readiness and Types", Ordered, func() {
 		)
 
 		BeforeEach(func() {
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 		})
 
 		AfterEach(func() {
-			deleteTestData(uid)
+			deleteTestDataFromTable(testTable, uid)
 
 			cmd := exec.Command("kubectl", "delete", "cronjob", uid+"-cron", "-n", policyTestNamespace, "--ignore-not-found=true")
 			_, _ = utils.Run(cmd)
@@ -415,7 +420,7 @@ var _ = Describe("Resource Readiness and Types", Ordered, func() {
 `)
 
 			By("And test data in MySQL")
-			insertTestData(uid, true)
+			insertTestDataToTable(testTable, uid, true)
 
 			expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
 			By("When LynqNode is created")
@@ -458,11 +463,11 @@ var _ = Describe("Resource Readiness and Types", Ordered, func() {
 		)
 
 		BeforeEach(func() {
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 		})
 
 		AfterEach(func() {
-			deleteTestData(uid)
+			deleteTestDataFromTable(testTable, uid)
 
 			cmd := exec.Command("kubectl", "delete", "daemonset", uid+"-ds", "-n", policyTestNamespace, "--ignore-not-found=true")
 			_, _ = utils.Run(cmd)
@@ -502,7 +507,7 @@ var _ = Describe("Resource Readiness and Types", Ordered, func() {
 `)
 
 			By("And test data in MySQL")
-			insertTestData(uid, true)
+			insertTestDataToTable(testTable, uid, true)
 
 			expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
 			By("When LynqNode is created")
@@ -536,11 +541,11 @@ var _ = Describe("Resource Readiness and Types", Ordered, func() {
 		)
 
 		BeforeEach(func() {
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 		})
 
 		AfterEach(func() {
-			deleteTestData(uid)
+			deleteTestDataFromTable(testTable, uid)
 
 			cmd := exec.Command("kubectl", "delete", "networkpolicy", uid+"-netpol", "-n", policyTestNamespace, "--ignore-not-found=true")
 			_, _ = utils.Run(cmd)
@@ -577,7 +582,7 @@ var _ = Describe("Resource Readiness and Types", Ordered, func() {
 `)
 
 			By("And test data in MySQL")
-			insertTestData(uid, true)
+			insertTestDataToTable(testTable, uid, true)
 
 			expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
 			By("When LynqNode is created")
@@ -602,11 +607,11 @@ var _ = Describe("Resource Readiness and Types", Ordered, func() {
 		)
 
 		BeforeEach(func() {
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 		})
 
 		AfterEach(func() {
-			deleteTestData(uid)
+			deleteTestDataFromTable(testTable, uid)
 
 			cmd := exec.Command("kubectl", "delete", "hpa", uid+"-hpa", "-n", policyTestNamespace, "--ignore-not-found=true")
 			_, _ = utils.Run(cmd)
@@ -674,7 +679,7 @@ var _ = Describe("Resource Readiness and Types", Ordered, func() {
 `)
 
 			By("And test data in MySQL")
-			insertTestData(uid, true)
+			insertTestDataToTable(testTable, uid, true)
 
 			expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
 			By("When LynqNode is created")
@@ -708,11 +713,11 @@ var _ = Describe("Resource Readiness and Types", Ordered, func() {
 		)
 
 		BeforeEach(func() {
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 		})
 
 		AfterEach(func() {
-			deleteTestData(uid)
+			deleteTestDataFromTable(testTable, uid)
 
 			// Delete namespace created by test
 			cmd := exec.Command("kubectl", "delete", "namespace", uid+"-ns", "--ignore-not-found=true", "--wait=false")
@@ -742,7 +747,7 @@ var _ = Describe("Resource Readiness and Types", Ordered, func() {
 `)
 
 			By("And test data in MySQL")
-			insertTestData(uid, true)
+			insertTestDataToTable(testTable, uid, true)
 
 			expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
 			By("When LynqNode is created")

@@ -94,9 +94,9 @@ var _ = Describe("Manager", Ordered, func() {
 			cmd = exec.Command("kubectl", "describe", "pod", controllerPodName, "-n", namespace)
 			podDescription, err := utils.Run(cmd)
 			if err == nil {
-				fmt.Println("Pod description:\n", podDescription)
+				_, _ = fmt.Fprintf(GinkgoWriter, "Pod description:\n%s", podDescription)
 			} else {
-				fmt.Println("Failed to describe controller pod")
+				_, _ = fmt.Fprintf(GinkgoWriter, "Failed to describe controller pod: %s", err)
 			}
 		}
 	})
@@ -228,15 +228,6 @@ var _ = Describe("Manager", Ordered, func() {
 		})
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
-
-		// TODO: Customize the e2e test suite with scenarios specific to your project.
-		// Consider applying sample/CR(s) and check their status and/or verifying
-		// the reconciliation by using the metrics, i.e.:
-		// metricsOutput := getMetricsOutput()
-		// Expect(metricsOutput).To(ContainSubstring(
-		//    fmt.Sprintf(`controller_runtime_reconcile_total{controller="%s",result="success"} 1`,
-		//    strings.ToLower("lynqnode"), // Example: lynqnode, lynqhub, or lynqform
-		// ))
 	})
 })
 

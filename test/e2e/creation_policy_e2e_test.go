@@ -28,14 +28,17 @@ import (
 )
 
 var _ = Describe("CreationPolicy", Ordered, func() {
+	var testTable string
+
 	BeforeAll(func() {
-		By("setting up policy test namespace")
-		setupPolicyTestNamespace()
+		By("setting up test table")
+		testTable = setupTestTable("creation_policy")
 	})
 
 	AfterAll(func() {
-		By("cleaning up policy test namespace")
-		cleanupPolicyTestNamespace()
+		By("cleaning up test table and resources")
+		cleanupTestTable(testTable)
+		cleanupTestResources()
 	})
 
 	Describe("Once policy", func() {
@@ -47,7 +50,7 @@ var _ = Describe("CreationPolicy", Ordered, func() {
 		)
 
 		BeforeEach(func() {
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 			createForm(formName, hubName, `
   configMaps:
     - id: config-once
@@ -63,7 +66,7 @@ var _ = Describe("CreationPolicy", Ordered, func() {
 
 		AfterEach(func() {
 			By("cleaning up test data and resources")
-			deleteTestData(uid)
+			deleteTestDataFromTable(testTable, uid)
 
 			cmd := exec.Command("kubectl", "delete", "configmap", configMapName, "-n", policyTestNamespace, "--ignore-not-found=true")
 			_, _ = utils.Run(cmd)
@@ -79,7 +82,7 @@ var _ = Describe("CreationPolicy", Ordered, func() {
 
 		It("should create resource only once and never update", func() {
 			By("Given test data in MySQL with active=true")
-			insertTestData(uid, true)
+			insertTestDataToTable(testTable, uid, true)
 
 			By("When LynqHub controller creates LynqNode automatically")
 			expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -130,7 +133,7 @@ var _ = Describe("CreationPolicy", Ordered, func() {
 		)
 
 		BeforeEach(func() {
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 			createForm(formName, hubName, `
   configMaps:
     - id: config-whenneeded
@@ -146,7 +149,7 @@ var _ = Describe("CreationPolicy", Ordered, func() {
 
 		AfterEach(func() {
 			By("cleaning up test data and resources")
-			deleteTestData(uid)
+			deleteTestDataFromTable(testTable, uid)
 
 			cmd := exec.Command("kubectl", "delete", "configmap", configMapName, "-n", policyTestNamespace, "--ignore-not-found=true")
 			_, _ = utils.Run(cmd)
@@ -162,7 +165,7 @@ var _ = Describe("CreationPolicy", Ordered, func() {
 
 		It("should update resource when spec changes", func() {
 			By("Given test data in MySQL with active=true")
-			insertTestData(uid, true)
+			insertTestDataToTable(testTable, uid, true)
 
 			By("When LynqHub controller creates LynqNode automatically")
 			expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)

@@ -28,12 +28,17 @@ import (
 )
 
 var _ = Describe("ConflictPolicy", Ordered, func() {
+	var testTable string
+
 	BeforeAll(func() {
-		setupPolicyTestNamespace()
+		By("setting up test table")
+		testTable = setupTestTable("conflict_policy")
 	})
 
 	AfterAll(func() {
-		cleanupPolicyTestNamespace()
+		By("cleaning up test table and resources")
+		cleanupTestTable(testTable)
+		cleanupTestResources()
 	})
 
 	Context("ConflictPolicy", func() {
@@ -47,7 +52,7 @@ var _ = Describe("ConflictPolicy", Ordered, func() {
 			)
 
 			BeforeEach(func() {
-				createHub(hubName)
+				createHubWithTable(hubName, testTable)
 				createForm(formName, hubName, `
   configMaps:
     - id: config-stuck
@@ -66,7 +71,7 @@ var _ = Describe("ConflictPolicy", Ordered, func() {
 				cmd := exec.Command("kubectl", "delete", "configmap", configMapName, "-n", policyTestNamespace, "--ignore-not-found=true")
 				_, _ = utils.Run(cmd)
 
-				deleteTestData(uid)
+				deleteTestDataFromTable(testTable, uid)
 
 				// Delete LynqForm (LynqNode will be auto-cleaned)
 				cmd = exec.Command("kubectl", "delete", "lynqform", formName, "-n", policyTestNamespace, "--ignore-not-found=true")
@@ -95,7 +100,7 @@ data:
 				Expect(err).NotTo(HaveOccurred())
 
 				By("When test data is inserted and LynqHub creates LynqNode")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
 				waitForLynqNode(expectedNodeName)
 
@@ -119,7 +124,7 @@ data:
 			)
 
 			BeforeEach(func() {
-				createHub(hubName)
+				createHubWithTable(hubName, testTable)
 				createForm(formName, hubName, `
   configMaps:
     - id: config-force
@@ -138,7 +143,7 @@ data:
 				cmd := exec.Command("kubectl", "delete", "configmap", configMapName, "-n", policyTestNamespace, "--ignore-not-found=true")
 				_, _ = utils.Run(cmd)
 
-				deleteTestData(uid)
+				deleteTestDataFromTable(testTable, uid)
 
 				// Delete LynqForm (LynqNode will be auto-cleaned)
 				cmd = exec.Command("kubectl", "delete", "lynqform", formName, "-n", policyTestNamespace, "--ignore-not-found=true")
@@ -167,7 +172,7 @@ data:
 				Expect(err).NotTo(HaveOccurred())
 
 				By("When test data is inserted and LynqHub creates LynqNode")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
 				waitForLynqNode(expectedNodeName)
 
@@ -190,7 +195,7 @@ data:
 			)
 
 			BeforeEach(func() {
-				createHub(hubName)
+				createHubWithTable(hubName, testTable)
 				createForm(formName, hubName, `
   configMaps:
     - id: config-stuck-recovery
@@ -209,7 +214,7 @@ data:
 				cmd := exec.Command("kubectl", "delete", "configmap", configMapName, "-n", policyTestNamespace, "--ignore-not-found=true")
 				_, _ = utils.Run(cmd)
 
-				deleteTestData(uid)
+				deleteTestDataFromTable(testTable, uid)
 
 				cmd = exec.Command("kubectl", "delete", "lynqform", formName, "-n", policyTestNamespace, "--ignore-not-found=true")
 				_, _ = utils.Run(cmd)
@@ -239,7 +244,7 @@ data:
 				Expect(err).NotTo(HaveOccurred())
 
 				By("When test data is inserted and LynqHub creates LynqNode")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
 				waitForLynqNode(expectedNodeName)
 

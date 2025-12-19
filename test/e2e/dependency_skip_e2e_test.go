@@ -29,14 +29,17 @@ import (
 )
 
 var _ = Describe("SkipOnDependencyFailure Behavior", Ordered, func() {
+	var testTable string
+
 	BeforeAll(func() {
-		By("setting up policy test namespace")
-		setupPolicyTestNamespace()
+		By("setting up test table")
+		testTable = setupTestTable("dependency_skip")
 	})
 
 	AfterAll(func() {
-		By("cleaning up policy test namespace")
-		cleanupPolicyTestNamespace()
+		By("cleaning up test table and resources")
+		cleanupTestTable(testTable)
+		cleanupTestResources()
 	})
 
 	Context("when skipOnDependencyFailure flag controls dependent resource creation", func() {
@@ -46,7 +49,7 @@ var _ = Describe("SkipOnDependencyFailure Behavior", Ordered, func() {
 
 		BeforeEach(func() {
 			By("creating a LynqHub")
-			createHub(hubName)
+			createHubWithTable(hubName, testTable)
 		})
 
 		AfterEach(func() {
@@ -78,7 +81,7 @@ var _ = Describe("SkipOnDependencyFailure Behavior", Ordered, func() {
 			)
 
 			AfterEach(func() {
-				deleteTestData(uid)
+				deleteTestDataFromTable(testTable, uid)
 			})
 
 			It("should skip dependent resource when dependency fails and track in status", func() {
@@ -118,7 +121,7 @@ var _ = Describe("SkipOnDependencyFailure Behavior", Ordered, func() {
 `)
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqNode is created and dependency fails")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -177,7 +180,7 @@ var _ = Describe("SkipOnDependencyFailure Behavior", Ordered, func() {
 			)
 
 			AfterEach(func() {
-				deleteTestData(uid)
+				deleteTestDataFromTable(testTable, uid)
 			})
 
 			It("should create dependent resource even when dependency fails", func() {
@@ -218,7 +221,7 @@ var _ = Describe("SkipOnDependencyFailure Behavior", Ordered, func() {
 `)
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqNode is created")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -275,7 +278,7 @@ var _ = Describe("SkipOnDependencyFailure Behavior", Ordered, func() {
 			)
 
 			AfterEach(func() {
-				deleteTestData(uid)
+				deleteTestDataFromTable(testTable, uid)
 			})
 
 			It("should cascade skip through multiple dependency levels", func() {
@@ -324,7 +327,7 @@ var _ = Describe("SkipOnDependencyFailure Behavior", Ordered, func() {
 `)
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqNode is created")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -380,7 +383,7 @@ var _ = Describe("SkipOnDependencyFailure Behavior", Ordered, func() {
 			)
 
 			AfterEach(func() {
-				deleteTestData(uid)
+				deleteTestDataFromTable(testTable, uid)
 			})
 
 			It("should handle mixed skip settings: A (fails) -> B (skip=false, created) -> C (skip=true, created because B succeeded)", func() {
@@ -430,7 +433,7 @@ var _ = Describe("SkipOnDependencyFailure Behavior", Ordered, func() {
 `)
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqNode is created")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -478,7 +481,7 @@ var _ = Describe("SkipOnDependencyFailure Behavior", Ordered, func() {
 			)
 
 			AfterEach(func() {
-				deleteTestData(uid)
+				deleteTestDataFromTable(testTable, uid)
 			})
 
 			It("should NOT emit DependencySkipped event when dependency is just not ready yet", func() {
@@ -519,7 +522,7 @@ var _ = Describe("SkipOnDependencyFailure Behavior", Ordered, func() {
 `)
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqNode is created")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
@@ -584,7 +587,7 @@ var _ = Describe("SkipOnDependencyFailure Behavior", Ordered, func() {
 			)
 
 			AfterEach(func() {
-				deleteTestData(uid)
+				deleteTestDataFromTable(testTable, uid)
 			})
 
 			It("should display skipped count in kubectl get lynqnodes output", func() {
@@ -624,7 +627,7 @@ var _ = Describe("SkipOnDependencyFailure Behavior", Ordered, func() {
 `)
 
 				By("And active data in MySQL")
-				insertTestData(uid, true)
+				insertTestDataToTable(testTable, uid, true)
 
 				By("When LynqNode is created and dependency times out")
 				expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
