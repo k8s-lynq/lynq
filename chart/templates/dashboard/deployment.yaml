@@ -1,0 +1,69 @@
+{{- if .Values.dashboard.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "lynq-operator.fullname" . }}-dashboard
+  namespace: {{ include "lynq-operator.namespace" . }}
+  labels:
+    {{- include "lynq-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dashboard
+spec:
+  replicas: {{ .Values.dashboard.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "lynq-operator.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: dashboard
+  template:
+    metadata:
+      {{- with .Values.dashboard.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "lynq-operator.labels" . | nindent 8 }}
+        app.kubernetes.io/component: dashboard
+        {{- with .Values.dashboard.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "lynq-operator.dashboardServiceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.dashboard.podSecurityContext | nindent 8 }}
+      containers:
+        - name: dashboard
+          image: "{{ .Values.dashboard.image.registry }}/{{ .Values.dashboard.image.repository }}:{{ .Values.dashboard.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.dashboard.image.pullPolicy }}
+          args:
+            - "-mode"
+            - "cluster"
+            - "-addr"
+            - ":{{ .Values.dashboard.service.targetPort }}"
+          ports:
+            - name: http
+              containerPort: {{ .Values.dashboard.service.targetPort }}
+              protocol: TCP
+          livenessProbe:
+            {{- toYaml .Values.dashboard.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.dashboard.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.dashboard.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.dashboard.securityContext | nindent 12 }}
+      {{- with .Values.dashboard.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.dashboard.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.dashboard.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./ui/src:/app/src
+      - ./ui/public:/app/public
+    environment:
+      - VITE_API_URL=http://bff:8080
+    depends_on:
+      - bff
+
+  bff:
+    build:
+      context: ./bff
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - ~/.kube/config:/root/.kube/config:ro
+    environment:
+      - APP_MODE=local
+    command: ["/app/bff", "-mode", "local"]

@@ -1,0 +1,63 @@
+# =============================================================================
+# Docker Ignore - Lynq Dashboard
+# =============================================================================
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+!README.md
+LICENSE
+docs/
+
+# IDE and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build outputs (we build fresh in Docker)
+ui/dist/
+ui/node_modules/
+bff/bff
+
+# Development files
+*.log
+*.local
+.env
+.env.*
+!.env.example
+
+# Test files
+**/*_test.go
+**/test/
+**/tests/
+**/__tests__/
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.spec.tsx
+coverage/
+.nyc_output/
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+docker-compose*.yaml
+.docker/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+Jenkinsfile
+
+# Misc
+Makefile
+*.md
+IMPLEMENTATION_PLAN.md

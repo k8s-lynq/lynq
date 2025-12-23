@@ -36,6 +36,9 @@ INSTALLED COMPONENTS:
 {{- if .Values.monitoring.enabled }}
   ✓ Prometheus ServiceMonitor
 {{- end }}
+{{- if .Values.dashboard.enabled }}
+  ✓ Lynq Dashboard
+{{- end }}
 
 NEXT STEPS:
 
@@ -103,6 +106,32 @@ CONFIGURATION:
 
     Check webhook certificates:
     kubectl get certificate -n {{ include "lynq-operator.namespace" . }}
+
+{{- end }}
+
+{{- if .Values.dashboard.enabled }}
+🖥️  DASHBOARD ENABLED
+    The Lynq Dashboard has been deployed.
+
+    Access the dashboard:
+    kubectl port-forward -n {{ include "lynq-operator.namespace" . }} svc/{{ include "lynq-operator.fullname" . }}-dashboard 8080:{{ .Values.dashboard.service.port }}
+
+    Then open: http://localhost:8080
+
+{{- if .Values.dashboard.ingress.enabled }}
+    Ingress is enabled. Access via:
+{{- range .Values.dashboard.ingress.hosts }}
+    - http{{ if $.Values.dashboard.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+{{- end }}
+
+{{- else }}
+ℹ️  DASHBOARD DISABLED
+    The Lynq Dashboard is not installed. To enable:
+
+    helm upgrade {{ .Release.Name }} lynq/lynq \
+      --set dashboard.enabled=true \
+      -n {{ include "lynq-operator.namespace" . }}
 
 {{- end }}
 

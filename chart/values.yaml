@@ -224,3 +224,121 @@ commonLabels: {}
 
 # Additional annotations to add to all resources
 commonAnnotations: {}
+
+# Dashboard configuration
+dashboard:
+  # -- Enable Lynq Dashboard deployment
+  enabled: false
+
+  # -- Number of dashboard replicas
+  replicaCount: 1
+
+  image:
+    # -- Dashboard container image registry
+    registry: ghcr.io
+    # -- Dashboard container image repository
+    repository: k8s-lynq/lynq-dashboard
+    # -- Dashboard image pull policy
+    pullPolicy: IfNotPresent
+    # -- Dashboard image tag (defaults to chart appVersion)
+    tag: ""
+
+  serviceAccount:
+    # -- Create a dedicated service account for dashboard
+    create: true
+    # -- Service account name
+    name: ""
+    # -- Annotations for dashboard service account
+    annotations: {}
+
+  rbac:
+    # -- Create RBAC resources for dashboard (ClusterRole, ClusterRoleBinding)
+    create: true
+
+  # -- Pod annotations for dashboard
+  podAnnotations: {}
+
+  # -- Pod labels for dashboard
+  podLabels: {}
+
+  # Pod security context for dashboard
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+
+  # Container security context for dashboard
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+
+  # Dashboard service configuration
+  service:
+    # -- Service type
+    type: ClusterIP
+    # -- Service port
+    port: 80
+    # -- Target port (container port)
+    targetPort: 8080
+    # -- Service annotations
+    annotations: {}
+
+  # Dashboard ingress configuration
+  ingress:
+    # -- Enable ingress for dashboard
+    enabled: false
+    # -- Ingress class name
+    className: ""
+    # -- Ingress annotations
+    annotations: {}
+    # -- Ingress hosts configuration
+    hosts:
+      - host: lynq-dashboard.local
+        paths:
+          - path: /
+            pathType: Prefix
+    # -- Ingress TLS configuration
+    tls: []
+    #  - secretName: lynq-dashboard-tls
+    #    hosts:
+    #      - lynq-dashboard.local
+
+  # Dashboard resource limits
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+  # Liveness probe for dashboard
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 30
+
+  # Readiness probe for dashboard
+  readinessProbe:
+    httpGet:
+      path: /readyz
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+  # -- Node selector for dashboard pods
+  nodeSelector: {}
+
+  # -- Tolerations for dashboard pods
+  tolerations: []
+
+  # -- Affinity for dashboard pods
+  affinity: {}
