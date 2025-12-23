@@ -7,6 +7,14 @@
     <language>en</language>
     <atom:link href="https://lynq.sh/feed.xml" rel="self" type="application/rss+xml"/>
     <item>
+      <title>Introducing Lynq Dashboard</title>
+      <link>https://lynq.sh/blog/introducing-lynq-dashboard.html</link>
+      <guid>https://lynq.sh/blog/introducing-lynq-dashboard.html</guid>
+      <pubDate>Mon, 22 Dec 2025 00:00:00 GMT</pubDate>
+      <description>Lynq Dashboard is now available. A web UI to visualize Hub-Form-Node relationships and quickly identify problematic resources.</description>
+      <author>Tim Kang</author>
+    </item>
+    <item>
       <title>5 Kubernetes Lifecycle Mistakes and How Lynq Policies Prevent Them</title>
       <link>https://lynq.sh/blog/managing-resource-lifecycle.html</link>
       <guid>https://lynq.sh/blog/managing-resource-lifecycle.html</guid>
