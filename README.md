@@ -52,7 +52,7 @@
 
 Lynq Dashboard provides a visual interface for monitoring Hub, Form, and Node resources.
 
-<video src="https://lynq.sh/blog-assets/dashboard-example.mov" controls autoplay loop muted playsinline style="max-width: 100%;"></video>
+<video src="https://github.com/user-attachments/assets/437b8e2a-2f72-463b-8b51-de4bceb89ddc" controls autoplay loop muted playsinline style="max-width: 100%;"></video>
 
 - **Topology View** - Visualize Hub → Form → Node relationships as a tree
 - **Problem Mode** - Instantly highlight failed nodes
