@@ -29,7 +29,6 @@ import { formApi, type FormDetailsResponse } from '@/lib/api'
 import type { LynqForm, Condition, TResource } from '@/types/lynq'
 
 function ConditionBadge({ condition }: { condition: Condition }) {
-  const { t } = useTranslation()
   const isTrue = condition.status === 'True'
   const isFalse = condition.status === 'False'
 
