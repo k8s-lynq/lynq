@@ -43,6 +43,7 @@ export default withMermaid(
             { text: "About Lynq", link: "/about-lynq" },
             { text: "Installation", link: "/installation" },
             { text: "Quick Start", link: "/quickstart" },
+            { text: "Dashboard", link: "/dashboard" },
           ],
         },
         {

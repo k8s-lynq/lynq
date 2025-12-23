@@ -48,6 +48,18 @@
 - **[Complete Documentation](https://lynq.sh/)** - Full guides, tutorials, and API reference
 - **[Architecture Guide](https://lynq.sh/architecture)** - Deep dive into design and internals
 
+### 🖥️ Dashboard
+
+Lynq Dashboard provides a visual interface for monitoring Hub, Form, and Node resources.
+
+<video src="https://lynq.sh/blog-assets/dashboard-example.mov" controls autoplay loop muted playsinline style="max-width: 100%;"></video>
+
+- **Topology View** - Visualize Hub → Form → Node relationships as a tree
+- **Problem Mode** - Instantly highlight failed nodes
+- **Real-time Status** - Monitor resource health at a glance
+
+**[Dashboard Guide](https://lynq.sh/dashboard)** - Installation and usage
+
 ---
 
 ## 🚀 Quick Start

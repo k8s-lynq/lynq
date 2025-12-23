@@ -201,3 +201,14 @@ Validate webhook configuration
 {{- fail "webhook.enabled requires certManager.enabled to be true" }}
 {{- end }}
 {{- end }}
+
+{{/*
+Dashboard service account name
+*/}}
+{{- define "lynq-operator.dashboardServiceAccountName" -}}
+{{- if .Values.dashboard.serviceAccount.create }}
+{{- default (printf "%s-dashboard" (include "lynq-operator.fullname" .)) .Values.dashboard.serviceAccount.name }}
+{{- else }}
+{{- default "default" .Values.dashboard.serviceAccount.name }}
+{{- end }}
+{{- end }}

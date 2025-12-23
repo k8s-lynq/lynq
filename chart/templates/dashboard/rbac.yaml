@@ -1,0 +1,72 @@
+{{- if .Values.dashboard.enabled }}
+{{- if .Values.dashboard.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "lynq-operator.fullname" . }}-dashboard
+  labels:
+    {{- include "lynq-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dashboard
+rules:
+  # Lynq CRDs - read-only access
+  - apiGroups: ["lynq.sh"]
+    resources: ["lynqhubs", "lynqforms", "lynqnodes"]
+    verbs: ["get", "list", "watch"]
+  # Core resources managed by LynqNode - read-only access
+  - apiGroups: [""]
+    resources:
+      - services
+      - configmaps
+      - secrets
+      - persistentvolumeclaims
+      - serviceaccounts
+      - events
+      - namespaces
+    verbs: ["get", "list", "watch"]
+  # Apps resources - read-only access
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - statefulsets
+      - daemonsets
+    verbs: ["get", "list", "watch"]
+  # Batch resources - read-only access
+  - apiGroups: ["batch"]
+    resources:
+      - jobs
+      - cronjobs
+    verbs: ["get", "list", "watch"]
+  # Networking resources - read-only access
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - ingresses
+      - networkpolicies
+    verbs: ["get", "list", "watch"]
+  # Policy resources - read-only access
+  - apiGroups: ["policy"]
+    resources:
+      - poddisruptionbudgets
+    verbs: ["get", "list", "watch"]
+  # Autoscaling resources - read-only access
+  - apiGroups: ["autoscaling"]
+    resources:
+      - horizontalpodautoscalers
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "lynq-operator.fullname" . }}-dashboard
+  labels:
+    {{- include "lynq-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dashboard
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "lynq-operator.fullname" . }}-dashboard
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "lynq-operator.dashboardServiceAccountName" . }}
+    namespace: {{ include "lynq-operator.namespace" . }}
+{{- end }}
+{{- end }}
