@@ -185,4 +185,8 @@ Currently it only has "viewing" features. Planned additions:
 
 For feedback or feature suggestions, please leave them at [GitHub Issues](https://github.com/k8s-lynq/lynq/issues).
 
+## Try It Yourself
+
+Want to give it a spin? We've prepared a hands-on demo on Killercoda. Try the [Lynq Quickstart](https://killercoda.com/lynq-operator/course/killercoda/lynq-quickstart) to see how adding and removing database records automatically provisions Deployments, Services, and Ingresses.
+
 <BlogPostFooter />
