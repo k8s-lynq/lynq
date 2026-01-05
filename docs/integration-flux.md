@@ -716,6 +716,85 @@ flux events --for Kustomization/node-alpha-kustomization
 flux logs --follow --level=info
 ```
 
+## Verification Commands
+
+After deploying, verify the integration works correctly:
+
+```bash
+# 1. Check LynqNodes created Flux resources
+kubectl get gitrepositories,kustomizations -l lynq.sh/node-id
+
+# Example output:
+# NAME                                              URL                                      READY   STATUS
+# gitrepository.source.toolkit.fluxcd.io/acme-gitrepo   https://github.com/myorg/my-fleet   True    Fetched revision: main@sha1:abc123
+# gitrepository.source.toolkit.fluxcd.io/beta-gitrepo   https://github.com/myorg/my-fleet   True    Fetched revision: main@sha1:abc123
+
+# NAME                                                  READY   STATUS
+# kustomization.kustomize.toolkit.fluxcd.io/acme-kustomization   True    Applied revision: main@sha1:abc123
+# kustomization.kustomize.toolkit.fluxcd.io/beta-kustomization   True    Applied revision: main@sha1:abc123
+
+# 2. Verify GitRepository is fetching
+kubectl get gitrepository acme-gitrepo -o jsonpath='{.status.conditions[?(@.type=="Ready")].message}'
+# Expected: stored artifact for revision 'main@sha1:abc123def456...'
+
+# 3. Verify Kustomization is applied
+kubectl get kustomization acme-kustomization -o jsonpath='{.status.conditions[?(@.type=="Ready")].message}'
+# Expected: Applied revision: main@sha1:abc123def456...
+
+# 4. Check last applied revision
+flux get kustomizations acme-kustomization
+# Expected output:
+# NAME                  REVISION            SUSPENDED   READY   MESSAGE
+# acme-kustomization    main@sha1:abc123    False       True    Applied revision: main@sha1:abc123
+
+# 5. Force reconciliation
+flux reconcile kustomization acme-kustomization --with-source
+
+# 6. Check deployed resources by node
+kubectl get all -l node-id=acme
+
+# 7. View Flux events for a specific Kustomization
+flux events --for Kustomization/acme-kustomization
+
+# 8. View source-controller logs
+kubectl logs -n flux-system deploy/source-controller --tail=50
+```
+
+**Monitor Both Systems:**
+
+```bash
+# Combined health check
+echo "=== LynqNode Status ===" && \
+kubectl get lynqnode acme-node-with-gitops -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' && \
+echo "" && \
+echo "=== Flux GitRepository Status ===" && \
+kubectl get gitrepository acme-gitrepo -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' && \
+echo "" && \
+echo "=== Flux Kustomization Status ===" && \
+kubectl get kustomization acme-kustomization -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+
+# Expected: True / True / True (all Ready)
+```
+
+**Diagnose Sync Issues:**
+
+```bash
+# Compare revisions across all node GitRepositories
+kubectl get gitrepositories -o custom-columns='NAME:.metadata.name,REVISION:.status.artifact.revision,READY:.status.conditions[?(@.type=="Ready")].status'
+
+# Example output (healthy):
+# NAME              REVISION                        READY
+# acme-gitrepo      main@sha1:abc123def456...      True
+# beta-gitrepo      main@sha1:abc123def456...      True
+# gamma-gitrepo     main@sha1:abc123def456...      True
+
+# Example output (unhealthy - one node out of sync):
+# NAME              REVISION                        READY
+# acme-gitrepo      main@sha1:abc123def456...      True
+# beta-gitrepo      main@sha1:old789xyz...         False   # ← Sync failed
+# gamma-gitrepo     main@sha1:abc123def456...      True
+```
+
 ## Troubleshooting
 
 ### GitRepository Sync Fails

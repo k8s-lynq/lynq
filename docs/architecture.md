@@ -219,6 +219,58 @@ spec:
 
 **Multi-Form Support**: One hub can be referenced by multiple LynqForms, creating separate LynqNode CRs for each form-row combination.
 
+**Concrete Naming Example: Hub + 2 Forms + 3 Rows**
+
+Given:
+- **Hub**: `customer-hub` with 3 active database rows: `acme`, `beta`, `corp`
+- **Forms**: `web-app` and `worker` referencing the hub
+
+**Result**: 6 LynqNode CRs created (3 rows × 2 templates):
+
+| Database UID | Template | LynqNode Name |
+|--------------|----------|---------------|
+| `acme` | `web-app` | `acme-web-app` |
+| `acme` | `worker` | `acme-worker` |
+| `beta` | `web-app` | `beta-web-app` |
+| `beta` | `worker` | `beta-worker` |
+| `corp` | `web-app` | `corp-web-app` |
+| `corp` | `worker` | `corp-worker` |
+
+**Hub Status:**
+```yaml
+status:
+  referencingTemplates: 2    # web-app + worker
+  desired: 6                 # 3 rows × 2 templates = 6 nodes
+  ready: 6
+  failed: 0
+```
+
+**Naming Convention**: `{uid}-{template-name}`
+
+```bash
+# List all LynqNodes for this hub
+$ kubectl get lynqnodes -l lynq.sh/hub=customer-hub
+NAME              READY   DESIRED   FAILED   AGE
+acme-web-app      5/5     5         0        10m
+acme-worker       3/3     3         0        10m
+beta-web-app      5/5     5         0        10m
+beta-worker       3/3     3         0        10m
+corp-web-app      5/5     5         0        10m
+corp-worker       3/3     3         0        10m
+```
+
+**When a Template is Removed:**
+
+If `worker` form is deleted:
+- LynqNodes `acme-worker`, `beta-worker`, `corp-worker` are deleted
+- Hub status updates: `desired: 3, referencingTemplates: 1`
+
+**When a Database Row is Deactivated:**
+
+If `beta` row's `activate` becomes false:
+- LynqNodes `beta-web-app`, `beta-worker` are deleted
+- Hub status updates: `desired: 4` (2 rows × 2 templates)
+
 ### LynqForm
 
 Blueprint for resources to create per node:
@@ -363,6 +415,66 @@ When resources are removed from templates:
   - Label: `lynq.sh/orphaned: "true"`
   - Annotations: `orphaned-at`, `orphaned-reason`
 - Re-adoption: Orphan markers removed when resource re-added to template
+
+**Orphan Detection → Cleanup Sequence:**
+
+```mermaid
+sequenceDiagram
+    participant TNC as LynqNode Controller
+    participant API as K8s API Server
+    participant RES as Kubernetes Resource
+
+    Note over TNC,RES: Phase 1: Orphan Detection
+
+    TNC->>API: Get LynqNode status.appliedResources
+    API-->>TNC: ["Deployment/ns/app@deploy", "Service/ns/svc@service", "ConfigMap/ns/old@config"]
+
+    TNC->>TNC: Calculate current desired resources
+    Note right of TNC: ["Deployment/ns/app@deploy", "Service/ns/svc@service"]<br/>ConfigMap removed from template
+
+    TNC->>TNC: Detect orphans: appliedResources - desiredResources
+    Note right of TNC: Orphan: "ConfigMap/ns/old@config"
+
+    Note over TNC,RES: Phase 2: Orphan Cleanup
+
+    TNC->>API: Get ConfigMap (read lynq.sh/deletion-policy annotation)
+    API-->>TNC: ConfigMap with deletion-policy: "Retain"
+
+    alt DeletionPolicy = Delete
+        TNC->>API: Delete ConfigMap
+        API-->>TNC: Deleted
+    else DeletionPolicy = Retain
+        TNC->>API: Patch ConfigMap: add orphan labels/annotations
+        Note right of API: + lynq.sh/orphaned: "true"<br/>+ lynq.sh/orphaned-at: "2024-01-15T10:30:00Z"<br/>+ lynq.sh/orphaned-reason: "RemovedFromTemplate"
+        API-->>TNC: Updated
+    end
+
+    Note over TNC,RES: Phase 3: Re-adoption (if resource added back)
+
+    TNC->>TNC: ConfigMap re-added to template
+    TNC->>API: Apply ConfigMap with SSA
+    Note right of API: - lynq.sh/orphaned: removed<br/>- lynq.sh/orphaned-at: removed<br/>- lynq.sh/orphaned-reason: removed<br/>+ ownerReference: restored (if same namespace)
+    API-->>TNC: Applied
+
+    TNC->>API: Update LynqNode status.appliedResources
+    Note right of API: ["Deployment/ns/app@deploy", "Service/ns/svc@service", "ConfigMap/ns/old@config"]
+```
+
+**Query Orphaned Resources:**
+
+```bash
+# Find all orphaned resources
+kubectl get all -A -l lynq.sh/orphaned=true
+
+# Find orphans from a specific node
+kubectl get all -A -l lynq.sh/orphaned=true,lynq.sh/node=acme-web-app
+
+# Find orphans by reason
+kubectl get all -A -o json | jq '.items[] | select(.metadata.annotations["lynq.sh/orphaned-reason"] == "RemovedFromTemplate") | "\(.kind)/\(.metadata.namespace)/\(.metadata.name)"'
+
+# Count orphans per namespace
+kubectl get all -A -l lynq.sh/orphaned=true -o jsonpath='{range .items[*]}{.metadata.namespace}{"\n"}{end}' | sort | uniq -c
+```
 
 ## Performance Considerations
 

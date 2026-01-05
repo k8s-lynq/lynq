@@ -346,6 +346,173 @@ SET blue_version = 'v2.0.0'
 WHERE node_id = 'acme-corp';
 ```
 
+## Step-by-Step Verification
+
+Verify each step of the deployment process:
+
+### Verify Initial State
+
+```bash
+# 1. Check current active color in database
+mysql -e "SELECT node_id, active_color, blue_version, green_version FROM nodes WHERE node_id='acme-corp'"
+# Expected output:
+# +-----------+--------------+--------------+---------------+
+# | node_id   | active_color | blue_version | green_version |
+# +-----------+--------------+--------------+---------------+
+# | acme-corp | blue         | v1.0.0       | v1.0.0        |
+# +-----------+--------------+--------------+---------------+
+
+# 2. Check deployments in Kubernetes
+kubectl get deployment -l app=acme-corp
+
+# Expected output:
+# NAME              READY   UP-TO-DATE   AVAILABLE   REPLICAS   AGE
+# acme-corp-blue    3/3     3            3           3          5h
+# acme-corp-green   1/1     1            1           1          5h
+
+# 3. Verify service selector
+kubectl get svc acme-corp-app -o jsonpath='{.spec.selector}' | jq
+# Expected: {"app":"acme-corp","color":"blue"}
+
+# 4. Verify traffic is going to blue
+curl -s https://acme.example.com/version
+# Expected: v1.0.0 (blue version)
+```
+
+### Verify After Step 1 (Deploy to Inactive)
+
+```bash
+# After: UPDATE nodes SET green_version = 'v2.0.0' WHERE node_id = 'acme-corp';
+
+# 1. Check green deployment updated with new image
+kubectl get deployment acme-corp-green -o jsonpath='{.spec.template.spec.containers[0].image}'
+# Expected: registry.example.com/app:v2.0.0
+
+# 2. Verify green pods are running
+kubectl get pods -l app=acme-corp,color=green
+# Expected: Running with new version
+
+# 3. Verify blue still active (service selector unchanged)
+kubectl get svc acme-corp-app -o jsonpath='{.spec.selector.color}'
+# Expected: blue (unchanged)
+
+# 4. Production traffic still on v1.0.0
+curl -s https://acme.example.com/version
+# Expected: v1.0.0
+```
+
+### Verify After Step 2 (Test Inactive)
+
+```bash
+# Test green environment directly
+curl -s https://acme-corp-green.test.example.com/version
+# Expected: v2.0.0 (new version)
+
+curl -s https://acme-corp-green.test.example.com/healthz
+# Expected: {"status":"healthy"}
+
+# Run comprehensive test suite
+kubectl run test-runner --rm -it --image=curlimages/curl --restart=Never -- \
+  sh -c 'curl -f https://acme-corp-green.test.example.com/api/v1/healthz && echo "PASS" || echo "FAIL"'
+# Expected: PASS
+```
+
+### Verify After Step 3 (Traffic Switch)
+
+```bash
+# After: UPDATE nodes SET active_color = 'green' WHERE node_id = 'acme-corp';
+
+# 1. Verify service selector changed
+kubectl get svc acme-corp-app -o jsonpath='{.spec.selector.color}'
+# Expected: green (CHANGED!)
+
+# 2. Verify production traffic now on v2.0.0
+curl -s https://acme.example.com/version
+# Expected: v2.0.0 (new version)
+
+# 3. Check green deployment scaled up
+kubectl get deployment acme-corp-green -o jsonpath='{.spec.replicas}'
+# Expected: 3 (scaled up)
+
+# 4. Check blue deployment scaled down
+kubectl get deployment acme-corp-blue -o jsonpath='{.spec.replicas}'
+# Expected: 1 (scaled down)
+```
+
+## Complete Rollback Procedure
+
+If issues are detected after the switch, follow this rollback procedure:
+
+```mermaid
+flowchart TD
+    A[Issue Detected] --> B{Severity?}
+    B -->|Critical| C[Immediate Rollback]
+    B -->|Non-Critical| D[Investigate]
+    D --> E{Can Fix Forward?}
+    E -->|Yes| F[Deploy Hotfix to Green]
+    E -->|No| C
+    C --> G[Execute Rollback SQL]
+    G --> H[Verify Service Selector]
+    H --> I[Verify Traffic on Blue]
+    I --> J[Monitor & Confirm]
+    J --> K{Stable?}
+    K -->|Yes| L[Document Incident]
+    K -->|No| M[Escalate]
+```
+
+### Rollback Checklist
+
+```bash
+# ⚠️ ROLLBACK PROCEDURE
+
+# Step 1: Execute rollback SQL
+mysql -e "UPDATE nodes SET active_color = 'blue', deployment_status = 'rolled-back' WHERE node_id = 'acme-corp'"
+
+# Step 2: Wait for Lynq to sync (default: 1 minute)
+# Or force immediate reconciliation:
+kubectl annotate lynqnode acme-corp-blue-green-app force-sync=$(date +%s) --overwrite
+
+# Step 3: Verify rollback completed
+echo "=== Service Selector ===" && \
+kubectl get svc acme-corp-app -o jsonpath='{.spec.selector.color}' && \
+echo "" && \
+echo "=== Production Version ===" && \
+curl -s https://acme.example.com/version && \
+echo "" && \
+echo "=== Blue Replicas ===" && \
+kubectl get deployment acme-corp-blue -o jsonpath='{.spec.replicas}'
+
+# Expected output:
+# === Service Selector ===
+# blue
+# === Production Version ===
+# v1.0.0
+# === Blue Replicas ===
+# 3
+
+# Step 4: Verify blue pods are healthy
+kubectl get pods -l app=acme-corp,color=blue
+# All pods should be Running/Ready
+
+# Step 5: Monitor error rates
+# (Check your monitoring dashboard for 5 minutes)
+```
+
+### Deployment Timeline
+
+| Time | Action | Database State | Traffic |
+|------|--------|----------------|---------|
+| T+0 | Start deployment | `active_color=blue, green_version=v1.0.0` | Blue (v1.0.0) |
+| T+1m | Update green version | `active_color=blue, green_version=v2.0.0` | Blue (v1.0.0) |
+| T+5m | Green deployment ready | Same | Blue (v1.0.0) |
+| T+10m | Smoke tests pass | Same | Blue (v1.0.0) |
+| T+15m | Switch traffic | `active_color=green` | **Green (v2.0.0)** |
+| T+20m | Issue detected! | Same | Green (v2.0.0) |
+| T+21m | Rollback executed | `active_color=blue` | **Blue (v1.0.0)** |
+| T+22m | Traffic restored | Same | Blue (v1.0.0) |
+
+**Total rollback time: ~1-2 minutes** (database update + Lynq sync interval)
+
 ## Monitoring
 
 ```promql

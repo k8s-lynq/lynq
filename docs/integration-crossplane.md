@@ -916,6 +916,120 @@ spec:
 - Dedicated RDS per node
 - Dedicated CloudFront per node
 
+## Verification Commands
+
+After deploying, verify the integration works correctly:
+
+```bash
+# 1. Check Crossplane providers are healthy
+kubectl get providers
+
+# Example output:
+# NAME                       INSTALLED   HEALTHY   PACKAGE                                            AGE
+# provider-aws-s3            True        True      xpkg.upbound.io/upbound/provider-aws-s3:v1.1.0    5m
+# provider-aws-rds           True        True      xpkg.upbound.io/upbound/provider-aws-rds:v1.1.0   5m
+# provider-aws-cloudfront    True        True      xpkg.upbound.io/upbound/provider-aws-cloudfront   5m
+# provider-sql               True        True      xpkg.upbound.io/crossplane-contrib/provider-sql   5m
+
+# 2. Check all Crossplane managed resources for a node
+kubectl get managed -l crossplane.io/claim-namespace=default | grep node-alpha
+
+# 3. Check Lynq-created Crossplane resources
+kubectl get database,role,grant,bucket,distribution -l lynq.sh/node=node-alpha-production-app
+
+# Example output:
+# NAME                                           READY   SYNCED   AGE
+# database.postgresql.sql.crossplane.io/acme-db   True    True     5m
+#
+# NAME                                        READY   SYNCED   AGE
+# role.postgresql.sql.crossplane.io/acme-role  True    True     5m
+#
+# NAME                                          READY   SYNCED   AGE
+# grant.postgresql.sql.crossplane.io/acme-grant  True    True     5m
+#
+# NAME                                      READY   SYNCED   EXTERNAL-NAME              AGE
+# bucket.s3.aws.upbound.io/acme-s3          True    True     acme-assets-abc123         5m
+#
+# NAME                                                  READY   SYNCED   EXTERNAL-NAME      AGE
+# distribution.cloudfront.aws.upbound.io/acme-cdn      False   True     E1234ABCD5678      5m  (InProgress)
+
+# 4. Verify database is ready
+kubectl get database node-alpha-db -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+# Expected: True
+
+# 5. Check S3 bucket external name (AWS bucket name)
+kubectl get bucket node-alpha-s3 -o jsonpath='{.metadata.annotations.crossplane\.io/external-name}'
+# Expected: node-alpha-assets-<hash>
+
+# 6. Monitor CloudFront deployment status
+kubectl get distribution node-alpha-cdn -o jsonpath='{.status.atProvider.status}'
+# Expected: InProgress (initial) -> Deployed (after 15-30 min)
+
+# 7. Get database credentials from secret
+kubectl get secret node-alpha-db-creds -o jsonpath='{.data.password}' | base64 -d
+
+# 8. Get CDN domain (when ready)
+kubectl get secret node-alpha-cdn-outputs -o jsonpath='{.data.domain_name}' | base64 -d 2>/dev/null || echo "CDN not ready"
+# Expected: d1234abcd5678.cloudfront.net
+```
+
+**Monitor Both Systems:**
+
+```bash
+# Combined health check
+echo "=== LynqNode Status ===" && \
+kubectl get lynqnode node-alpha-production-app -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' && \
+echo "" && \
+echo "=== Database Status ===" && \
+kubectl get database node-alpha-db -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' && \
+echo "" && \
+echo "=== S3 Bucket Status ===" && \
+kubectl get bucket node-alpha-s3 -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' && \
+echo "" && \
+echo "=== CloudFront Status ===" && \
+kubectl get distribution node-alpha-cdn -o jsonpath='{.status.atProvider.status}'
+
+# Expected:
+# === LynqNode Status ===
+# True
+# === Database Status ===
+# True
+# === S3 Bucket Status ===
+# True
+# === CloudFront Status ===
+# InProgress (or Deployed when ready)
+```
+
+**Resource Provisioning Timeline:**
+
+```bash
+# Watch resource creation progress
+kubectl get managed -w | grep node-alpha
+
+# Example timeline output:
+# database.postgresql.sql.crossplane.io/node-alpha-db       False   True    30s    # Creating
+# database.postgresql.sql.crossplane.io/node-alpha-db       True    True    45s    # Ready
+# role.postgresql.sql.crossplane.io/node-alpha-role         True    True    60s    # Ready
+# grant.postgresql.sql.crossplane.io/node-alpha-grant       True    True    75s    # Ready
+# bucket.s3.aws.upbound.io/node-alpha-s3                    True    True    90s    # Ready
+# distribution.cloudfront.aws.upbound.io/node-alpha-cdn     False   True    120s   # InProgress (15-30min)
+```
+
+**Verify AWS Resources (using AWS CLI):**
+
+```bash
+# Database (PostgreSQL)
+psql -h $(kubectl get secret shared-postgres-connection -o jsonpath='{.data.endpoint}' | base64 -d) \
+     -U $(kubectl get secret node-alpha-db-creds -o jsonpath='{.data.username}' | base64 -d) \
+     -d node_alpha -c "SELECT 1"
+
+# S3 Bucket
+aws s3 ls s3://$(kubectl get bucket node-alpha-s3 -o jsonpath='{.metadata.annotations.crossplane\.io/external-name}')
+
+# CloudFront Distribution
+aws cloudfront get-distribution --id $(kubectl get distribution node-alpha-cdn -o jsonpath='{.status.atProvider.id}')
+```
+
 ## Troubleshooting
 
 ### CloudFront Distribution Taking Too Long

@@ -147,6 +147,57 @@ flowchart TD
     NodeA --> Stable --> Namespace
 ```
 
+## Verification Commands
+
+After deploying, verify the integration works correctly:
+
+```bash
+# 1. Check LynqNodes created Argo CD Applications
+kubectl get applications -n argocd -l node.lynq.sh/uid
+
+# Example output:
+# NAME              SYNC STATUS   HEALTH STATUS   AGE
+# acme-corp-app     Synced        Healthy         5m
+# beta-inc-app      Synced        Healthy         5m
+
+# 2. Verify Application points to correct Git path
+kubectl get application acme-corp-app -n argocd -o jsonpath='{.spec.source.path}'
+# Expected: nodes/acme-corp
+
+# 3. Check sync status
+kubectl get application acme-corp-app -n argocd -o jsonpath='{.status.sync.status}'
+# Expected: Synced
+
+# 4. Check health status
+kubectl get application acme-corp-app -n argocd -o jsonpath='{.status.health.status}'
+# Expected: Healthy
+
+# 5. View sync history
+argocd app history acme-corp-app
+
+# 6. Force sync (if needed)
+argocd app sync acme-corp-app
+
+# 7. Check downstream workloads
+kubectl get all -n acme-corp-workspace
+
+# 8. View Application events
+kubectl describe application acme-corp-app -n argocd | tail -20
+```
+
+**Monitor Both Systems:**
+
+```bash
+# Combined health check
+echo "=== LynqNode Status ===" && \
+kubectl get lynqnode acme-corp-web-app -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' && \
+echo "" && \
+echo "=== Argo CD Application Status ===" && \
+kubectl get application acme-corp-app -n argocd -o jsonpath='{.status.sync.status}/{.status.health.status}'
+
+# Expected: True (LynqNode Ready) + Synced/Healthy (Argo CD)
+```
+
 ## Operational Tips
 
 - Label Applications with node metadata for quick filtering (`node.lynq.sh/uid`).

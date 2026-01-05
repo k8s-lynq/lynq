@@ -367,6 +367,190 @@ Create a separate LynqHub and Template for custom domains to avoid creating Ingr
 8. **SSL Certificate**: cert-manager issues Let's Encrypt certificate via HTTP-01 or DNS-01 challenge
 9. **Certificate Storage**: cert-manager stores certificate in Secret `<node>-custom-tls`
 
+## Verification Commands
+
+Verify each step of the custom domain setup:
+
+### Verify Prerequisites
+
+```bash
+# 1. Check cert-manager is running
+kubectl get pods -n cert-manager
+# Expected: cert-manager, cert-manager-cainjector, cert-manager-webhook all Running
+
+# 2. Verify ClusterIssuer is ready
+kubectl get clusterissuer letsencrypt-prod -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+# Expected: True
+
+# 3. Check External DNS is running
+kubectl get pods -l app.kubernetes.io/name=external-dns
+# Expected: Running
+```
+
+### Verify Default Domain Setup
+
+```bash
+# 1. Check Ingress created for node
+kubectl get ingress -n node-acme-corp
+
+# Expected output:
+# NAME                 CLASS   HOSTS                        ADDRESS       PORTS     AGE
+# acme-corp-default    nginx   acme-corp.saas.example.com   10.0.0.50     80, 443   5m
+
+# 2. Verify TLS certificate created
+kubectl get certificate -n node-acme-corp
+
+# Expected output:
+# NAME                   READY   SECRET                   AGE
+# acme-corp-default-tls  True    acme-corp-default-tls    5m
+
+# 3. Check certificate details
+kubectl describe certificate acme-corp-default-tls -n node-acme-corp | grep -A 5 "Status:"
+# Expected: Ready: True, Message: Certificate is up to date and has not expired
+
+# 4. Verify DNS record created
+dig acme-corp.saas.example.com @8.8.8.8 +short
+# Expected: 10.0.0.50 (Ingress LoadBalancer IP)
+
+# 5. Test HTTPS access
+curl -I https://acme-corp.saas.example.com
+# Expected: HTTP/2 200 (or 301/302 redirect)
+```
+
+### Verify Custom Domain Setup
+
+```bash
+# After setting domain_verified = TRUE in database:
+
+# 1. Check custom domain Ingress created
+kubectl get ingress acme-corp-custom -n node-acme-corp
+
+# Expected output:
+# NAME               CLASS   HOSTS        ADDRESS       PORTS     AGE
+# acme-corp-custom   nginx   acme.com     10.0.0.50     80, 443   2m
+
+# 2. Verify custom domain certificate
+kubectl get certificate acme-corp-custom-tls -n node-acme-corp -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+# Expected: True
+
+# 3. Check certificate covers custom domain
+kubectl get secret acme-corp-custom-tls -n node-acme-corp -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -text | grep "DNS:"
+# Expected: DNS:acme.com
+
+# 4. Verify customer's CNAME is correct
+dig acme.com CNAME +short
+# Expected: acme-corp.saas.example.com.
+
+# 5. Test custom domain access
+curl -I https://acme.com
+# Expected: HTTP/2 200
+```
+
+### Complete Verification Script
+
+```bash
+#!/bin/bash
+# verify-custom-domain.sh <node-id> <custom-domain>
+
+NODE_ID=$1
+CUSTOM_DOMAIN=$2
+NAMESPACE="node-${NODE_ID}"
+DEFAULT_DOMAIN="${NODE_ID}.saas.example.com"
+
+echo "=== Verifying Custom Domain Setup for ${NODE_ID} ==="
+echo ""
+
+# Check LynqNode status
+echo "1. LynqNode Status:"
+kubectl get lynqnode ${NODE_ID}-custom-domain-nodes -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+echo ""
+
+# Check default Ingress
+echo "2. Default Ingress (${DEFAULT_DOMAIN}):"
+kubectl get ingress ${NODE_ID}-default -n ${NAMESPACE} -o wide 2>/dev/null || echo "   Not found"
+
+# Check custom Ingress
+echo "3. Custom Ingress (${CUSTOM_DOMAIN}):"
+kubectl get ingress ${NODE_ID}-custom -n ${NAMESPACE} -o wide 2>/dev/null || echo "   Not found (domain not verified?)"
+
+# Check certificates
+echo "4. TLS Certificates:"
+kubectl get certificates -n ${NAMESPACE}
+
+# Check DNS resolution
+echo "5. DNS Resolution:"
+echo "   Default: $(dig +short ${DEFAULT_DOMAIN} @8.8.8.8)"
+echo "   Custom:  $(dig +short ${CUSTOM_DOMAIN} @8.8.8.8)"
+echo "   CNAME:   $(dig +short ${CUSTOM_DOMAIN} CNAME)"
+
+# Check HTTPS connectivity
+echo "6. HTTPS Connectivity:"
+echo "   Default: $(curl -s -o /dev/null -w "%{http_code}" https://${DEFAULT_DOMAIN}/healthz 2>/dev/null || echo "Failed")"
+echo "   Custom:  $(curl -s -o /dev/null -w "%{http_code}" https://${CUSTOM_DOMAIN}/healthz 2>/dev/null || echo "Failed")"
+
+echo ""
+echo "=== Verification Complete ==="
+```
+
+Usage:
+```bash
+./verify-custom-domain.sh acme-corp acme.com
+
+# Example output:
+# === Verifying Custom Domain Setup for acme-corp ===
+#
+# 1. LynqNode Status:
+# True
+#
+# 2. Default Ingress (acme-corp.saas.example.com):
+# NAME               CLASS   HOSTS                        ADDRESS     PORTS     AGE
+# acme-corp-default  nginx   acme-corp.saas.example.com   10.0.0.50   80, 443   1h
+#
+# 3. Custom Ingress (acme.com):
+# NAME             CLASS   HOSTS      ADDRESS     PORTS     AGE
+# acme-corp-custom nginx   acme.com   10.0.0.50   80, 443   30m
+#
+# 4. TLS Certificates:
+# NAME                     READY   SECRET                    AGE
+# acme-corp-default-tls    True    acme-corp-default-tls     1h
+# acme-corp-custom-tls     True    acme-corp-custom-tls      30m
+#
+# 5. DNS Resolution:
+#    Default: 10.0.0.50
+#    Custom:  10.0.0.50
+#    CNAME:   acme-corp.saas.example.com.
+#
+# 6. HTTPS Connectivity:
+#    Default: 200
+#    Custom:  200
+#
+# === Verification Complete ===
+```
+
+### Troubleshooting Certificate Issues
+
+```bash
+# Check certificate request status
+kubectl get certificaterequest -n node-acme-corp
+
+# Check cert-manager logs for errors
+kubectl logs -n cert-manager -l app=cert-manager --tail=100 | grep acme-corp
+
+# Describe certificate for detailed status
+kubectl describe certificate acme-corp-custom-tls -n node-acme-corp
+
+# Check ACME challenge status (if pending)
+kubectl get challenges -n node-acme-corp
+
+# Example challenge status:
+# NAME                                     STATE     DOMAIN     AGE
+# acme-corp-custom-tls-xxxxx-yyyyy-zzzzz   pending   acme.com   2m
+
+# If challenge stuck, describe it:
+kubectl describe challenge -n node-acme-corp
+# Look for: "Waiting for HTTP-01 challenge propagation" or similar
+```
+
 ## Monitoring
 
 ```promql

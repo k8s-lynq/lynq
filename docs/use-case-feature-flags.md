@@ -359,6 +359,137 @@ UPDATE nodes SET feature_ai_assistant = FALSE WHERE node_id = 'acme-corp';
 - AI assistant Deployment + Service automatically garbage collected
 - GPU resources freed
 
+## Verification: Feature Flag Change Propagation
+
+Verify how feature flag changes propagate through the system:
+
+### Pattern 1: Application-Level Feature Change
+
+```sql
+-- Enable SSO for acme-corp
+UPDATE nodes SET feature_sso = TRUE WHERE node_id = 'acme-corp';
+```
+
+```bash
+# Step 1: Verify database change
+mysql -e "SELECT node_id, feature_sso FROM nodes WHERE node_id='acme-corp'"
+# Expected: feature_sso = 1
+
+# Step 2: Wait for Lynq sync (default: 1 minute)
+# Or check LynqNode reconciliation
+kubectl get lynqnode acme-corp-base-app -o jsonpath='{.metadata.annotations.lynq\.sh/last-sync-time}'
+
+# Step 3: Check Deployment was updated
+kubectl get deployment acme-corp-app -o jsonpath='{.spec.template.spec.containers[0].env}' | jq '.[] | select(.name=="FEATURE_SSO")'
+# Expected: {"name":"FEATURE_SSO","value":"true"}
+
+# Step 4: Verify new pods rolled out
+kubectl rollout status deployment/acme-corp-app
+# Expected: deployment "acme-corp-app" successfully rolled out
+
+# Step 5: Verify application received new flag
+kubectl exec deployment/acme-corp-app -- env | grep FEATURE_SSO
+# Expected: FEATURE_SSO=true
+```
+
+**Timeline:**
+
+| Time | Event |
+|------|-------|
+| T+0 | Database updated: `feature_sso = TRUE` |
+| T+1min | Lynq Hub syncs, detects change |
+| T+1min | LynqNode reconciled, Deployment updated |
+| T+2min | Kubernetes rolls out new pods |
+| T+3min | New pods running with `FEATURE_SSO=true` |
+
+### Pattern 2: Infrastructure-Level Feature Change
+
+```sql
+-- Enable AI assistant for acme-corp
+UPDATE nodes SET feature_ai_assistant = TRUE WHERE node_id = 'acme-corp';
+```
+
+```bash
+# Step 1: Verify database view includes node
+mysql -e "SELECT node_id FROM nodes_with_ai WHERE node_id='acme-corp'"
+# Expected: acme-corp
+
+# Step 2: Wait for Lynq sync
+# Hub "nodes-with-ai" detects new row
+
+# Step 3: Verify new LynqNode created
+kubectl get lynqnode | grep acme-corp-ai
+# Expected output:
+# NAME                    READY   DESIRED   FAILED   AGE
+# acme-corp-ai-assistant  2/2     2         0        2m
+
+# Step 4: Verify AI deployment created
+kubectl get deployment acme-corp-ai
+# Expected: 1/1 Ready
+
+# Step 5: Verify GPU allocated (if applicable)
+kubectl describe pod -l app=acme-corp-ai | grep -A 5 "Limits:"
+# Expected: nvidia.com/gpu: 1
+```
+
+### Feature Disable Verification
+
+```sql
+-- Disable AI assistant
+UPDATE nodes SET feature_ai_assistant = FALSE WHERE node_id = 'acme-corp';
+```
+
+```bash
+# Step 1: Node removed from view
+mysql -e "SELECT COUNT(*) FROM nodes_with_ai WHERE node_id='acme-corp'"
+# Expected: 0
+
+# Step 2: LynqNode marked for deletion
+kubectl get lynqnode acme-corp-ai-assistant -o jsonpath='{.metadata.deletionTimestamp}'
+# Expected: <timestamp> (deletion in progress)
+
+# Step 3: Resources cleaned up
+kubectl get deployment acme-corp-ai 2>/dev/null || echo "Deployment deleted (expected)"
+# Expected: Deployment deleted (expected)
+
+# Step 4: Verify GPU released
+kubectl describe nodes | grep "nvidia.com/gpu"
+# GPU should be available again
+```
+
+### Complete Feature Flag Verification Script
+
+```bash
+#!/bin/bash
+# verify-feature-flag.sh <node-id> <feature-name>
+
+NODE_ID=$1
+FEATURE=$2
+
+echo "=== Feature Flag Verification for ${NODE_ID} ==="
+echo "Feature: ${FEATURE}"
+echo ""
+
+# Check database
+echo "1. Database State:"
+mysql -N -e "SELECT feature_${FEATURE} FROM nodes WHERE node_id='${NODE_ID}'"
+
+# Check environment variable (Pattern 1)
+echo "2. Environment Variable (if app-level):"
+kubectl exec deployment/${NODE_ID}-app -- env 2>/dev/null | grep -i "FEATURE_${FEATURE^^}" || echo "N/A"
+
+# Check dedicated LynqNode (Pattern 2)
+echo "3. Dedicated LynqNode (if infra-level):"
+kubectl get lynqnode ${NODE_ID}-${FEATURE} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "N/A"
+
+# Check dedicated deployment
+echo "4. Dedicated Deployment (if infra-level):"
+kubectl get deployment ${NODE_ID}-${FEATURE} -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "N/A"
+
+echo ""
+echo "=== Verification Complete ==="
+```
+
 ## Benefits
 
 1. **Flexibility**: Enable/disable features without code deployment

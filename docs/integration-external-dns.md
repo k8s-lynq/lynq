@@ -313,6 +313,161 @@ gamma-co     https://custom.domain.net      1
 - `beta.example.io` → beta-inc node
 - `custom.domain.net` → gamma-co node
 
+## Verification Commands
+
+After deploying, verify the integration works correctly:
+
+```bash
+# 1. Check Ingress has annotation and IP assigned
+kubectl get ingress -l lynq.sh/node=acme-corp-web-app-with-dns
+
+# Example output:
+# NAME                    CLASS   HOSTS                    ADDRESS       PORTS   AGE
+# acme-corp-ingress       nginx   acme.example.com         10.0.0.50     80      5m
+
+# 2. Verify ExternalDNS annotation is present
+kubectl get ingress acme-corp-ingress -o jsonpath='{.metadata.annotations.external-dns\.alpha\.kubernetes\.io/hostname}'
+# Expected: acme.example.com
+
+# 3. Check ExternalDNS logs for record creation
+kubectl logs -n kube-system -l app.kubernetes.io/name=external-dns --tail=50 | grep acme.example.com
+
+# Expected log entries:
+# time="..." level=info msg="Desired change: CREATE acme.example.com A [Id: /hostedzone/Z...]"
+# time="..." level=info msg="Desired change: CREATE acme.example.com TXT [Id: /hostedzone/Z...]"
+# time="..." level=info msg="Record in target zone: acme.example.com. 300 IN A 10.0.0.50"
+
+# 4. Verify DNS record with dig (global DNS servers)
+dig acme.example.com @8.8.8.8 +short
+# Expected: 10.0.0.50 (the LoadBalancer IP)
+
+dig acme.example.com @1.1.1.1 +short
+# Expected: 10.0.0.50
+
+# 5. Check TXT ownership record
+dig TXT acme.example.com +short
+# Expected: "heritage=external-dns,external-dns/owner=my-cluster-id,..."
+```
+
+**Verify with Cloud Provider CLIs:**
+
+::: code-group
+```bash [AWS Route53]
+# List hosted zones
+aws route53 list-hosted-zones
+
+# Get all records in zone
+aws route53 list-resource-record-sets --hosted-zone-id Z1234567890 | jq '.ResourceRecordSets[] | select(.Name | contains("acme"))'
+
+# Example output:
+# {
+#   "Name": "acme.example.com.",
+#   "Type": "A",
+#   "TTL": 300,
+#   "ResourceRecords": [{"Value": "10.0.0.50"}]
+# }
+
+# Check specific record
+aws route53 test-dns-answer --hosted-zone-id Z1234567890 --record-name acme.example.com --record-type A
+# Expected: "ResponseCode": "NOERROR", "RecordData": ["10.0.0.50"]
+```
+
+```bash [Google Cloud DNS]
+# List managed zones
+gcloud dns managed-zones list
+
+# List records in zone
+gcloud dns record-sets list --zone=example-zone --filter="name=acme.example.com."
+
+# Example output:
+# NAME                  TYPE  TTL  DATA
+# acme.example.com.     A     300  10.0.0.50
+# acme.example.com.     TXT   300  "heritage=external-dns..."
+
+# Describe specific record
+gcloud dns record-sets describe acme.example.com. --zone=example-zone --type=A
+```
+
+```bash [Cloudflare]
+# Get zone ID
+curl -X GET "https://api.cloudflare.com/client/v4/zones?name=example.com" \
+  -H "Authorization: Bearer $CF_API_TOKEN" | jq '.result[0].id'
+
+# List DNS records
+curl -X GET "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records?name=acme.example.com" \
+  -H "Authorization: Bearer $CF_API_TOKEN" | jq '.result'
+
+# Example output:
+# [{
+#   "name": "acme.example.com",
+#   "type": "A",
+#   "content": "10.0.0.50",
+#   "ttl": 300,
+#   "proxied": false
+# }]
+```
+:::
+
+**Monitor Both Systems:**
+
+```bash
+# Combined health check
+echo "=== LynqNode Status ===" && \
+kubectl get lynqnode acme-corp-web-app-with-dns -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' && \
+echo "" && \
+echo "=== Ingress IP ===" && \
+kubectl get ingress acme-corp-ingress -o jsonpath='{.status.loadBalancer.ingress[0].ip}' && \
+echo "" && \
+echo "=== DNS Resolution ===" && \
+dig +short acme.example.com @8.8.8.8
+
+# Expected:
+# === LynqNode Status ===
+# True
+# === Ingress IP ===
+# 10.0.0.50
+# === DNS Resolution ===
+# 10.0.0.50
+```
+
+**Verify DNS for All Nodes:**
+
+```bash
+# Get all node hostnames and verify DNS
+kubectl get ingress -l lynq.sh/template=web-app-with-dns -o jsonpath='{range .items[*]}{.spec.rules[0].host}{"\n"}{end}' | while read host; do
+  ip=$(dig +short $host @8.8.8.8 | head -1)
+  if [ -n "$ip" ]; then
+    echo "✅ $host → $ip"
+  else
+    echo "❌ $host → NOT RESOLVED"
+  fi
+done
+
+# Example output:
+# ✅ acme.example.com → 10.0.0.50
+# ✅ beta.example.com → 10.0.0.50
+# ❌ gamma.example.com → NOT RESOLVED (propagating...)
+```
+
+**Check DNS Propagation Globally:**
+
+```bash
+# Online tools
+# - https://dnschecker.org/#A/acme.example.com
+# - https://www.whatsmydns.net/#A/acme.example.com
+
+# Multiple DNS servers check
+for ns in 8.8.8.8 1.1.1.1 208.67.222.222 9.9.9.9; do
+  echo "DNS Server $ns: $(dig +short acme.example.com @$ns)"
+done
+
+# Example output:
+# DNS Server 8.8.8.8: 10.0.0.50
+# DNS Server 1.1.1.1: 10.0.0.50
+# DNS Server 208.67.222.222: 10.0.0.50
+# DNS Server 9.9.9.9: 10.0.0.50
+```
+
 ## Troubleshooting
 
 ### DNS Records Not Created

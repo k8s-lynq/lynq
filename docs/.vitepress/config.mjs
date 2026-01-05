@@ -164,7 +164,7 @@ export default withMermaid(
       footer: {
         message:
           '<p style="margin-bottom: 12px">Released under the Apache 2.0 License.<br />Built with ❤️ using Kubebuilder, Controller-Runtime, and VitePress.</p>',
-        copyright: "Copyright © 2025 Lynq",
+        copyright: "Copyright © 2025-2026 Lynq",
       },
 
       editLink: {

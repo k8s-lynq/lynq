@@ -34,7 +34,7 @@ const heroScale = useTransform(scrollYProgress, [0, 0.15], [1, 0.95])
               :transition="{ delay: 0.2, duration: 0.5 }"
             >
               <span class="hero-badge-dot"></span>
-              Infrastructure as Data
+              Kubernetes Automation
             </motion.div>
             <motion.h1
               class="hero-title"
@@ -42,7 +42,7 @@ const heroScale = useTransform(scrollYProgress, [0, 0.15], [1, 0.95])
               :animate="{ opacity: 1, y: 0 }"
               :transition="{ delay: 0.3, duration: 0.7 }"
             >
-              Database records become Kubernetes resources
+              Automate Resource Provisioning from Your Database
             </motion.h1>
             <motion.p
               class="hero-subtitle"
@@ -50,8 +50,8 @@ const heroScale = useTransform(scrollYProgress, [0, 0.15], [1, 0.95])
               :animate="{ opacity: 1, y: 0 }"
               :transition="{ delay: 0.5, duration: 0.7 }"
             >
-              Insert a row, provision infrastructure. Update a field, reconfigure resources.
-              Delete a record, clean up everything. No YAML. No CI/CD delays.
+              Sync Kubernetes resources with your existing data.
+              Works alongside your current GitOps workflow—no migration required.
             </motion.p>
             <motion.div
               class="hero-actions"
@@ -68,6 +68,19 @@ const heroScale = useTransform(scrollYProgress, [0, 0.15], [1, 0.95])
               <a href="/dashboard" class="hero-btn hero-btn-secondary">
                 Dashboard
               </a>
+            </motion.div>
+            <motion.div
+              class="hero-integrations"
+              :initial="{ opacity: 0, y: 20 }"
+              :animate="{ opacity: 1, y: 0 }"
+              :transition="{ delay: 0.9, duration: 0.5 }"
+            >
+              <span class="hero-integrations-label">Works with</span>
+              <div class="hero-integrations-logos">
+                <span class="integration-logo" title="Argo CD">🔄 Argo CD</span>
+                <span class="integration-logo" title="Flux">⚡ Flux</span>
+                <span class="integration-logo" title="Crossplane">☁️ Crossplane</span>
+              </div>
             </motion.div>
           </motion.div>
           <motion.div
@@ -115,6 +128,118 @@ const heroScale = useTransform(scrollYProgress, [0, 0.15], [1, 0.95])
             <source src="/blog-assets/dashboard-example.mov" type="video/mp4">
           </video>
         </motion.div>
+      </div>
+    </div>
+
+    <!-- Use Cases Section -->
+    <div class="section use-cases-section">
+      <div class="section-inner">
+        <motion.div
+          class="section-header"
+          :initial="{ opacity: 0, y: 40 }"
+          :in-view="{ opacity: 1, y: 0 }"
+          :transition="{ duration: 0.6 }"
+          :in-view-options="{ once: true, amount: 0.3 }"
+        >
+          <div class="section-divider"></div>
+          <h2 class="section-title">When to Use Lynq</h2>
+          <p class="section-subtitle">
+            Perfect for dynamic, data-driven infrastructure needs
+          </p>
+        </motion.div>
+        <div class="use-cases-grid">
+          <motion.div
+            v-for="(useCase, index) in [
+              {
+                icon: '🏢',
+                title: 'SaaS Tenant Onboarding',
+                subtitle: 'Customer signs up → Tenant environment ready in seconds',
+                examples: ['Like Slack', 'Notion', 'Atlassian'],
+                flow: ['Signup', 'DB Record', 'Lynq', 'Namespace + Resources']
+              },
+              {
+                icon: '🔬',
+                title: 'PR Preview Environments',
+                subtitle: 'Every pull request gets its own isolated environment',
+                examples: ['Like Chromatic', 'Cypress', 'Vercel'],
+                flow: ['PR Created', 'DB Record', 'Lynq', 'Preview Env', 'Auto Cleanup']
+              },
+              {
+                icon: '☁️',
+                title: 'Multi-Cloud Resources',
+                subtitle: 'Provision AWS, GCP, Azure resources per tenant',
+                examples: ['+ Crossplane'],
+                flow: ['DB Record', 'Lynq', 'Crossplane CRs', 'RDS, S3, Route53']
+              },
+              {
+                icon: '🔄',
+                title: 'GitOps-Managed Tenants',
+                subtitle: 'Version control your templates, automate from data',
+                examples: ['+ Argo CD', 'Flux'],
+                flow: ['Git Commit', 'Argo Sync', 'Lynq', 'Data-Driven Nodes']
+              }
+            ]"
+            :key="useCase.title"
+            class="use-case-card"
+            :initial="{ opacity: 0, y: 40 }"
+            :in-view="{ opacity: 1, y: 0 }"
+            :transition="{ delay: (index % 2) * 0.15, duration: 0.5 }"
+            :in-view-options="{ once: true, amount: 0.2 }"
+            :while-hover="{ y: -8, transition: { duration: 0.2 } }"
+          >
+            <span class="use-case-icon">{{ useCase.icon }}</span>
+            <h4 class="use-case-title">{{ useCase.title }}</h4>
+            <p class="use-case-subtitle">{{ useCase.subtitle }}</p>
+            <div class="use-case-examples">
+              <span v-for="example in useCase.examples" :key="example" class="use-case-example">{{ example }}</span>
+            </div>
+            <div class="use-case-flow">
+              <template v-for="(step, stepIndex) in useCase.flow" :key="step">
+                <span class="flow-step">{{ step }}</span>
+                <span v-if="stepIndex < useCase.flow.length - 1" class="flow-arrow">→</span>
+              </template>
+            </div>
+          </motion.div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Built for Safety Section -->
+    <div class="section safety-section">
+      <div class="section-inner">
+        <motion.div
+          class="section-header"
+          :initial="{ opacity: 0, y: 40 }"
+          :in-view="{ opacity: 1, y: 0 }"
+          :transition="{ duration: 0.6 }"
+          :in-view-options="{ once: true, amount: 0.3 }"
+        >
+          <div class="section-divider"></div>
+          <h2 class="section-title">Built for Safety First</h2>
+          <p class="section-subtitle">
+            Enterprise-grade safeguards built into every layer
+          </p>
+        </motion.div>
+        <div class="safety-grid">
+          <motion.div
+            v-for="(item, index) in [
+              { icon: '🛡️', title: 'ConflictPolicy: Stuck', desc: 'Default behavior never overwrites existing resources. Your cluster stays safe.' },
+              { icon: '🔒', title: 'DeletionPolicy: Retain', desc: 'Keep resources even after cleanup. Perfect for data you cannot afford to lose.' },
+              { icon: '🎯', title: 'Dependency Graph', desc: 'If one resource fails, dependents are automatically skipped. Failures stay isolated.' },
+              { icon: '☸️', title: 'Server-Side Apply', desc: 'Kubernetes-native conflict resolution. Built-in drift detection and correction.' }
+            ]"
+            :key="item.title"
+            class="safety-card"
+            :initial="{ opacity: 0, y: 30 }"
+            :in-view="{ opacity: 1, y: 0 }"
+            :transition="{ delay: index * 0.1, duration: 0.5 }"
+            :in-view-options="{ once: true, amount: 0.3 }"
+          >
+            <span class="safety-icon">{{ item.icon }}</span>
+            <h4 class="safety-title">{{ item.title }}</h4>
+            <p class="safety-desc">{{ item.desc }}</p>
+          </motion.div>
+        </div>
       </div>
     </div>
 
@@ -235,11 +360,11 @@ const heroScale = useTransform(scrollYProgress, [0, 0.15], [1, 0.95])
         <div class="features-grid">
           <motion.div
             v-for="(feature, index) in [
-              { icon: '🗄️', title: 'Database as Source of Truth', desc: 'Read from MySQL, provision to Kubernetes. Your existing database becomes the control plane.', color: 'linear-gradient(90deg, #10b981, #34d399)' },
-              { icon: '📋', title: 'Template-Based Resources', desc: 'Go templates with 200+ Sprig functions. Define once, instantiate for every row.', color: 'linear-gradient(90deg, #3b82f6, #60a5fa)' },
-              { icon: '🔄', title: 'Server-Side Apply', desc: 'Declarative resource management with conflict detection and automatic drift correction.', color: 'linear-gradient(90deg, #8b5cf6, #a78bfa)' },
+              { icon: '🗄️', title: 'Database as Source of Truth', desc: 'Manage infrastructure with familiar SQL. Changes are tracked, rollback is easy.', color: 'linear-gradient(90deg, #10b981, #34d399)' },
+              { icon: '📋', title: 'Template-Based Resources', desc: 'Same patterns as Helm and Kustomize. 200+ Sprig functions built in.', color: 'linear-gradient(90deg, #3b82f6, #60a5fa)' },
+              { icon: '🔄', title: 'Server-Side Apply', desc: 'Built-in conflict detection. No surprise overwrites. Automatic drift correction.', color: 'linear-gradient(90deg, #8b5cf6, #a78bfa)' },
               { icon: '📊', title: 'Visual Dashboard', desc: 'Topology view, problem mode, and detailed status. See your infrastructure at a glance.', color: 'linear-gradient(90deg, #f59e0b, #fbbf24)' },
-              { icon: '🎯', title: 'Dependency Graph', desc: 'Define resource dependencies with automatic ordering and failure isolation.', color: 'linear-gradient(90deg, #ef4444, #f87171)' },
+              { icon: '🎯', title: 'Dependency Graph', desc: 'If one resource fails, dependents are automatically skipped. Failures stay isolated.', color: 'linear-gradient(90deg, #ef4444, #f87171)' },
               { icon: '🚀', title: 'Safe Rollouts', desc: 'Control blast radius with maxSkew. Bad changes affect only N nodes, not your entire fleet.', color: 'linear-gradient(90deg, #06b6d4, #22d3ee)' }
             ]"
             :key="feature.title"
@@ -256,6 +381,54 @@ const heroScale = useTransform(scrollYProgress, [0, 0.15], [1, 0.95])
             <p class="feature-desc">{{ feature.desc }}</p>
           </motion.div>
         </div>
+      </div>
+    </div>
+
+    <!-- Works With Your Stack Section -->
+    <div class="section integration-section">
+      <div class="section-inner">
+        <motion.div
+          class="section-header"
+          :initial="{ opacity: 0, y: 40 }"
+          :in-view="{ opacity: 1, y: 0 }"
+          :transition="{ duration: 0.6 }"
+          :in-view-options="{ once: true, amount: 0.3 }"
+        >
+          <div class="section-divider"></div>
+          <h2 class="section-title">Works With Your Existing Tools</h2>
+          <p class="section-subtitle">
+            Add Lynq to your workflow without replacing anything
+          </p>
+        </motion.div>
+        <div class="integration-grid">
+          <motion.div
+            v-for="(item, index) in [
+              { icon: '🔄', name: 'Argo CD / Flux', desc: 'Use GitOps for Lynq CRDs themselves' },
+              { icon: '☁️', name: 'Crossplane', desc: 'Provision cloud resources per tenant' },
+              { icon: '🌐', name: 'External DNS', desc: 'Automatic DNS for each node' },
+              { icon: '📈', name: 'Prometheus', desc: 'Built-in metrics and alerts' }
+            ]"
+            :key="item.name"
+            class="integration-item"
+            :initial="{ opacity: 0, y: 20 }"
+            :in-view="{ opacity: 1, y: 0 }"
+            :transition="{ delay: index * 0.1, duration: 0.4 }"
+            :in-view-options="{ once: true, amount: 0.5 }"
+          >
+            <span class="integration-icon">{{ item.icon }}</span>
+            <span class="integration-name">{{ item.name }}</span>
+            <span class="integration-desc">{{ item.desc }}</span>
+          </motion.div>
+        </div>
+        <motion.p
+          class="integration-note"
+          :initial="{ opacity: 0 }"
+          :in-view="{ opacity: 1 }"
+          :transition="{ delay: 0.5, duration: 0.5 }"
+          :in-view-options="{ once: true }"
+        >
+          Lynq doesn't replace your CI/CD—it adds a data-driven automation layer.
+        </motion.p>
       </div>
     </div>
 
@@ -305,7 +478,7 @@ const heroScale = useTransform(scrollYProgress, [0, 0.15], [1, 0.95])
               :transition="{ delay: 0.2, duration: 0.5 }"
               :in-view-options="{ once: true }"
             >
-              Ready to Get Started?
+              Start Small, Scale Confidently
             </motion.h2>
             <motion.p
               class="cta-subtitle"
@@ -314,7 +487,7 @@ const heroScale = useTransform(scrollYProgress, [0, 0.15], [1, 0.95])
               :transition="{ delay: 0.3, duration: 0.5 }"
               :in-view-options="{ once: true }"
             >
-              Try Lynq in our browser-based playground or deploy to your cluster in minutes
+              Begin with a single namespace. Expand when you're ready.
             </motion.p>
             <motion.div
               class="cta-actions"
@@ -324,22 +497,22 @@ const heroScale = useTransform(scrollYProgress, [0, 0.15], [1, 0.95])
               :in-view-options="{ once: true }"
             >
               <a href="https://killercoda.com/lynq-operator/course/killercoda/lynq-quickstart" class="hero-btn hero-btn-primary" target="_blank">
-                Interactive Demo
+                Try in Browser
+              </a>
+              <a href="/quickstart" class="hero-btn hero-btn-secondary">
+                Local Testing
               </a>
               <a href="/installation" class="hero-btn hero-btn-secondary">
-                Installation Guide
-              </a>
-              <a href="https://github.com/k8s-lynq/lynq" class="hero-btn hero-btn-secondary" target="_blank">
-                GitHub
+                Production Guide
               </a>
             </motion.div>
             <div class="stats-row">
               <motion.div
                 v-for="(stat, index) in [
                   { value: '3', label: 'CRDs' },
-                  { value: '200+', label: 'Template Functions' },
-                  { value: 'Any', label: 'K8s Resource' },
-                  { value: 'K8s 1.31+', label: 'Supported' }
+                  { value: 'Retain', label: 'DeletionPolicy' },
+                  { value: 'Stuck', label: 'Safe Default' },
+                  { value: '200+', label: 'Template Funcs' }
                 ]"
                 :key="stat.label"
                 class="stat-item"
@@ -843,6 +1016,276 @@ const heroScale = useTransform(scrollYProgress, [0, 0.15], [1, 0.95])
   margin: 0;
 }
 
+/* ===== Hero Integrations ===== */
+.hero-integrations {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 2rem;
+  flex-wrap: wrap;
+}
+
+.hero-integrations-label {
+  color: var(--vp-c-text-3);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.hero-integrations-logos {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.integration-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.8rem;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  font-size: 0.8rem;
+  color: var(--vp-c-text-2);
+  transition: all 0.2s ease;
+}
+
+.integration-logo:hover {
+  background: rgba(102, 126, 234, 0.15);
+  border-color: rgba(102, 126, 234, 0.3);
+}
+
+/* ===== Use Cases Section ===== */
+.use-cases-section {
+  position: relative;
+}
+
+.use-cases-section::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100vw;
+  height: 100%;
+  background: linear-gradient(180deg, transparent 0%, rgba(59, 130, 246, 0.03) 50%, transparent 100%);
+  z-index: -1;
+}
+
+.use-cases-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1.5rem;
+}
+
+.use-case-card {
+  position: relative;
+  padding: 1.75rem;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: default;
+}
+
+.use-case-card:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.15);
+  box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.3);
+}
+
+.use-case-icon {
+  font-size: 2rem;
+  margin-bottom: 0.75rem;
+  display: block;
+}
+
+.use-case-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+  padding-top: 0;
+  border-top: none;
+  color: var(--vp-c-text-1);
+}
+
+.use-case-subtitle {
+  font-size: 0.9rem;
+  color: var(--vp-c-text-2);
+  line-height: 1.5;
+  margin: 0 0 1rem;
+}
+
+.use-case-examples {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.use-case-example {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  background: rgba(102, 126, 234, 0.15);
+  border-radius: 100px;
+  font-size: 0.75rem;
+  color: #a5b4fc;
+  font-weight: 500;
+}
+
+.use-case-flow {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.flow-step {
+  font-size: 0.75rem;
+  color: var(--vp-c-text-3);
+  padding: 0.2rem 0.5rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 4px;
+}
+
+.flow-arrow {
+  font-size: 0.7rem;
+  color: var(--vp-c-text-3);
+  opacity: 0.5;
+}
+
+/* ===== Safety Section ===== */
+.safety-section {
+  position: relative;
+}
+
+.safety-section::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100vw;
+  height: 100%;
+  background: linear-gradient(180deg, transparent 0%, rgba(16, 185, 129, 0.03) 50%, transparent 100%);
+  z-index: -1;
+}
+
+.safety-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1.5rem;
+}
+
+.safety-card {
+  padding: 1.5rem;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  transition: all 0.3s ease;
+}
+
+.safety-card:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.safety-icon {
+  font-size: 1.5rem;
+  margin-bottom: 0.75rem;
+  display: block;
+}
+
+.safety-title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+  padding-top: 0;
+  border-top: none;
+  color: var(--vp-c-text-1);
+}
+
+.safety-desc {
+  font-size: 0.85rem;
+  color: var(--vp-c-text-2);
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* ===== Integration Section ===== */
+.integration-section {
+  position: relative;
+}
+
+.integration-section::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100vw;
+  height: 100%;
+  background: linear-gradient(180deg, transparent 0%, rgba(118, 75, 162, 0.03) 50%, transparent 100%);
+  z-index: -1;
+}
+
+.integration-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.integration-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 1.5rem 1rem;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  transition: all 0.3s ease;
+}
+
+.integration-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(102, 126, 234, 0.3);
+  transform: translateY(-4px);
+}
+
+.integration-icon {
+  font-size: 2rem;
+  margin-bottom: 0.75rem;
+}
+
+.integration-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--vp-c-text-1);
+  margin-bottom: 0.5rem;
+}
+
+.integration-desc {
+  font-size: 0.8rem;
+  color: var(--vp-c-text-3);
+  line-height: 1.4;
+}
+
+.integration-note {
+  text-align: center;
+  font-size: 0.95rem;
+  color: var(--vp-c-text-2);
+  font-style: italic;
+  margin: 0;
+  padding: 1.5rem;
+  background: rgba(102, 126, 234, 0.05);
+  border-radius: 12px;
+  border: 1px dashed rgba(102, 126, 234, 0.2);
+}
+
 /* ===== How It Works ===== */
 .how-section {
   position: relative;
@@ -1033,12 +1476,28 @@ const heroScale = useTransform(scrollYProgress, [0, 0.15], [1, 0.95])
     justify-content: center;
   }
 
+  .hero-integrations {
+    justify-content: center;
+  }
+
   .problem-grid {
     grid-template-columns: 1fr;
     gap: 2rem;
   }
 
   .features-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .use-cases-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .safety-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .integration-grid {
     grid-template-columns: repeat(2, 1fr);
   }
 
@@ -1079,6 +1538,27 @@ const heroScale = useTransform(scrollYProgress, [0, 0.15], [1, 0.95])
 
   .features-grid {
     grid-template-columns: 1fr;
+  }
+
+  .use-cases-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .safety-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .integration-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .hero-integrations {
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .hero-integrations-logos {
+    justify-content: center;
   }
 
   .stats-row {

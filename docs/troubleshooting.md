@@ -4,6 +4,37 @@ Common issues and solutions for Lynq.
 
 [[toc]]
 
+## Quick Diagnostic Decision Tree
+
+Use this flowchart to quickly identify your issue:
+
+```
+LynqNode Not Working?
+│
+├─ Resources not creating at all?
+│  ├─ Check: kubectl describe lynqnode <name>
+│  │  ├─ TemplateRenderError event? → [Section 2: Template Issues]
+│  │  ├─ ResourceConflict event? → [Section 2C: Resource Conflict]
+│  │  ├─ DependencySkipped event? → [Section 2D: Dependencies]
+│  │  └─ No events? → Check operator logs [Section 1]
+│  │
+│  └─ Check: kubectl get lynqhub <name>
+│     ├─ Status empty? → [Section 3: Database Connection]
+│     └─ desired=0? → [Section 9: Hub Not Syncing]
+│
+├─ Resources exist but not Ready?
+│  ├─ readyResources < desiredResources? → [Section 12: ResourcesNotReady]
+│  ├─ Pods in CrashLoopBackOff? → Check pod logs
+│  └─ Pods pending? → Check resource quotas/node capacity
+│
+├─ LynqNode stuck Terminating?
+│  └─ [Section 8: Finalizer Stuck]
+│
+└─ Performance issues?
+   ├─ Slow provisioning? → [Section 6: Slow Provisioning]
+   └─ OOMKilled? → [Section 7: Memory/CPU Issues]
+```
+
 ## General Debugging
 
 ### Check Operator Status
@@ -127,6 +158,35 @@ kubectl logs node-name>
 kubectl describe lynqnode <name> | grep -A5 "TemplateRenderError"
 ```
 
+**What Success vs Failure Looks Like:**
+
+::: code-group
+```bash [✅ Success - Operator Logs]
+2024-01-15T10:30:45.123Z INFO  controller.lynqnode  Starting reconciliation  {"name": "acme-web", "namespace": "production"}
+2024-01-15T10:30:45.125Z INFO  controller.lynqnode  Template variables resolved  {"uid": "acme", "host": "acme.example.com"}
+2024-01-15T10:30:45.130Z INFO  controller.lynqnode  Resource rendered successfully  {"kind": "Deployment", "name": "acme-api"}
+2024-01-15T10:30:45.135Z INFO  controller.lynqnode  Resource rendered successfully  {"kind": "Service", "name": "acme-api"}
+2024-01-15T10:30:45.200Z INFO  controller.lynqnode  SSA apply successful  {"kind": "Deployment", "name": "acme-api"}
+2024-01-15T10:30:45.250Z INFO  controller.lynqnode  Reconciliation completed  {"name": "acme-web", "duration": "127ms", "ready": 2, "desired": 2}
+```
+
+```bash [❌ Failure - Template Error]
+2024-01-15T10:30:45.123Z INFO  controller.lynqnode  Starting reconciliation  {"name": "acme-web", "namespace": "production"}
+2024-01-15T10:30:45.125Z ERROR controller.lynqnode  Failed to render resource  {"kind": "Deployment", "error": "template: deployment:15:12: executing \"deployment\" at <.planId>: map has no entry for key \"planId\""}
+2024-01-15T10:30:45.126Z INFO  controller.lynqnode  Reconciliation failed  {"name": "acme-web", "error": "template rendering error"}
+```
+
+```bash [❌ Failure - kubectl Events]
+$ kubectl describe lynqnode acme-web
+...
+Events:
+  Type     Reason               Age   From                    Message
+  ----     ------               ----  ----                    -------
+  Warning  TemplateRenderError  10s   lynqnode-controller     Failed to render Deployment: template: deployment:15:12: map has no entry for key "planId"
+  Warning  ReconciliationFailed 10s   lynqnode-controller     Template rendering failed, skipping all resources
+```
+:::
+
 Solution: Fix template syntax in LynqForm
 
 **B. Missing Variable**
@@ -178,6 +238,80 @@ See [Dependency Management Guide](dependencies.md#understanding-blocking-vs-fail
 ```
 Failed to query database: dial tcp: connect: connection refused
 ```
+
+**What Success vs Failure Looks Like:**
+
+::: code-group
+```bash [✅ Success - Hub Syncing]
+$ kubectl logs -n lynq-system deployment/lynq-controller-manager | grep -i "hub\|mysql\|database"
+
+2024-01-15T10:30:00.100Z INFO  controller.lynqhub  Starting sync  {"hub": "customer-hub", "namespace": "production"}
+2024-01-15T10:30:00.150Z INFO  controller.lynqhub  Database connected  {"host": "mysql.default.svc.cluster.local", "database": "tenants"}
+2024-01-15T10:30:00.200Z INFO  controller.lynqhub  Query executed  {"rows": 5, "query": "SELECT id AS uid..."}
+2024-01-15T10:30:00.250Z INFO  controller.lynqhub  Active nodes found  {"count": 5, "templates": 2}
+2024-01-15T10:30:00.300Z INFO  controller.lynqhub  LynqNodes reconciled  {"created": 0, "updated": 10, "deleted": 0}
+2024-01-15T10:30:00.350Z INFO  controller.lynqhub  Sync completed  {"hub": "customer-hub", "desired": 10, "ready": 10}
+```
+
+```bash [❌ Failure - Connection Refused]
+$ kubectl logs -n lynq-system deployment/lynq-controller-manager | grep -i "hub\|mysql\|error"
+
+2024-01-15T10:30:00.100Z INFO  controller.lynqhub  Starting sync  {"hub": "customer-hub", "namespace": "production"}
+2024-01-15T10:30:05.100Z ERROR controller.lynqhub  Failed to connect to database  {"host": "mysql.wrong-namespace.svc.cluster.local", "error": "dial tcp 10.96.0.1:3306: connect: connection refused"}
+2024-01-15T10:30:05.101Z ERROR controller.lynqhub  Sync failed  {"hub": "customer-hub", "error": "database connection failed"}
+```
+
+```bash [❌ Failure - Authentication Error]
+$ kubectl logs -n lynq-system deployment/lynq-controller-manager | grep -i "hub\|mysql\|error"
+
+2024-01-15T10:30:00.100Z INFO  controller.lynqhub  Starting sync  {"hub": "customer-hub"}
+2024-01-15T10:30:00.200Z ERROR controller.lynqhub  Database authentication failed  {"error": "Error 1045 (28000): Access denied for user 'lynq'@'10.244.0.15' (using password: YES)"}
+```
+
+```bash [❌ Failure - Query Error]
+$ kubectl logs -n lynq-system deployment/lynq-controller-manager | grep -i "hub\|query\|error"
+
+2024-01-15T10:30:00.100Z INFO  controller.lynqhub  Starting sync  {"hub": "customer-hub"}
+2024-01-15T10:30:00.150Z INFO  controller.lynqhub  Database connected
+2024-01-15T10:30:00.200Z ERROR controller.lynqhub  Query execution failed  {"error": "Error 1054 (42S22): Unknown column 'tenant_id' in 'field list'", "query": "SELECT tenant_id AS uid..."}
+```
+:::
+
+**Hub Status Comparison:**
+
+::: code-group
+```yaml [✅ Healthy Hub Status]
+$ kubectl get lynqhub customer-hub -o yaml
+status:
+  conditions:
+  - lastTransitionTime: "2024-01-15T10:30:00Z"
+    message: "Successfully synced 5 nodes from database"
+    reason: SyncSuccess
+    status: "True"
+    type: Ready
+  desired: 10          # 5 rows × 2 templates
+  ready: 10
+  failed: 0
+  referencingTemplates: 2
+  lastSyncTime: "2024-01-15T10:30:00Z"
+```
+
+```yaml [❌ Failed Hub Status]
+$ kubectl get lynqhub customer-hub -o yaml
+status:
+  conditions:
+  - lastTransitionTime: "2024-01-15T10:30:05Z"
+    message: "Failed to connect to database: connection refused"
+    reason: DatabaseConnectionFailed
+    status: "False"
+    type: Ready
+  desired: 0           # No data from DB
+  ready: 0
+  failed: 0
+  referencingTemplates: 2
+  lastSyncTime: "2024-01-15T10:25:00Z"  # Stale - last successful sync
+```
+:::
 
 **Diagnosis:**
 ```bash
@@ -711,6 +845,90 @@ args:
 ```bash
 kubectl logs -n lynq-system deployment/lynq-controller-manager -f | \
   grep "Reconciling"
+```
+
+### Reconciliation Log Analysis: Success vs Failure Patterns
+
+Understanding reconciliation logs helps quickly identify issues:
+
+**Complete Healthy Reconciliation Cycle:**
+
+```bash
+$ kubectl logs -n lynq-system deployment/lynq-controller-manager --tail=50
+
+# ✅ Phase 1: Start
+2024-01-15T10:30:00.000Z INFO  controller.lynqnode  Reconciliation started  {"node": "acme-web", "namespace": "production"}
+
+# ✅ Phase 2: Finalizer Check
+2024-01-15T10:30:00.010Z DEBUG controller.lynqnode  Finalizer present  {"node": "acme-web"}
+
+# ✅ Phase 3: Variable Resolution
+2024-01-15T10:30:00.020Z DEBUG controller.lynqnode  Variables resolved  {"uid": "acme", "host": "acme.example.com", "planId": "enterprise"}
+
+# ✅ Phase 4: Dependency Graph
+2024-01-15T10:30:00.030Z DEBUG controller.lynqnode  Dependency graph built  {"nodes": 4, "edges": 3, "cycles": false}
+2024-01-15T10:30:00.031Z DEBUG controller.lynqnode  Apply order determined  {"order": ["secret", "configmap", "deployment", "service"]}
+
+# ✅ Phase 5: Orphan Cleanup
+2024-01-15T10:30:00.040Z DEBUG controller.lynqnode  Checking for orphaned resources  {"previous": 4, "current": 4}
+2024-01-15T10:30:00.041Z DEBUG controller.lynqnode  No orphaned resources found
+
+# ✅ Phase 6: Resource Apply (each resource)
+2024-01-15T10:30:00.100Z INFO  controller.lynqnode  Applying resource  {"kind": "Secret", "name": "acme-creds", "id": "creds"}
+2024-01-15T10:30:00.150Z INFO  controller.lynqnode  Resource applied  {"kind": "Secret", "name": "acme-creds", "result": "configured"}
+
+2024-01-15T10:30:00.200Z INFO  controller.lynqnode  Applying resource  {"kind": "ConfigMap", "name": "acme-config", "id": "config"}
+2024-01-15T10:30:00.250Z INFO  controller.lynqnode  Resource applied  {"kind": "ConfigMap", "name": "acme-config", "result": "unchanged"}
+
+2024-01-15T10:30:00.300Z INFO  controller.lynqnode  Applying resource  {"kind": "Deployment", "name": "acme-api", "id": "app"}
+2024-01-15T10:30:00.400Z INFO  controller.lynqnode  Waiting for readiness  {"kind": "Deployment", "name": "acme-api", "timeout": "300s"}
+2024-01-15T10:30:15.000Z INFO  controller.lynqnode  Resource ready  {"kind": "Deployment", "name": "acme-api", "waited": "14.6s"}
+
+2024-01-15T10:30:15.100Z INFO  controller.lynqnode  Applying resource  {"kind": "Service", "name": "acme-api", "id": "svc"}
+2024-01-15T10:30:15.150Z INFO  controller.lynqnode  Resource applied  {"kind": "Service", "name": "acme-api", "result": "configured"}
+
+# ✅ Phase 7: Status Update
+2024-01-15T10:30:15.200Z INFO  controller.lynqnode  Status updated  {"ready": 4, "desired": 4, "failed": 0, "skipped": 0}
+
+# ✅ Phase 8: Complete
+2024-01-15T10:30:15.250Z INFO  controller.lynqnode  Reconciliation completed  {"node": "acme-web", "duration": "15.25s", "result": "success"}
+```
+
+**Common Failure Patterns:**
+
+| Log Pattern | Meaning | Solution |
+|-------------|---------|----------|
+| `map has no entry for key "X"` | Template uses undefined variable | Add `X` to `extraValueMappings` |
+| `dependency cycle detected: A -> B -> A` | Circular dependency | Refactor to break cycle |
+| `conflict: field manager lynq conflicts` | Another controller owns resource | Use `conflictPolicy: Force` or delete resource |
+| `timed out waiting for resource` | Resource didn't become ready | Check pod logs, increase `timeoutSeconds` |
+| `DependencySkipped` | Dependency failed, resource skipped | Fix the dependency first |
+| `resource already exists with different owner` | OwnerReference conflict | Delete existing resource or use `Force` |
+| `failed to parse template` | Go template syntax error | Check for unmatched `{{}}`, missing `end` |
+
+**Quick Log Grep Commands:**
+
+```bash
+# Find all errors in last 100 lines
+kubectl logs -n lynq-system deployment/lynq-controller-manager --tail=100 | grep -i error
+
+# Find specific node reconciliation
+kubectl logs -n lynq-system deployment/lynq-controller-manager | grep "acme-web"
+
+# Find all failed reconciliations
+kubectl logs -n lynq-system deployment/lynq-controller-manager | grep "Reconciliation failed"
+
+# Find template errors
+kubectl logs -n lynq-system deployment/lynq-controller-manager | grep -E "(map has no entry|template.*error|failed to render)"
+
+# Find dependency issues
+kubectl logs -n lynq-system deployment/lynq-controller-manager | grep -E "(DependencySkipped|cycle detected|blocked)"
+
+# Find SSA conflicts
+kubectl logs -n lynq-system deployment/lynq-controller-manager | grep -i conflict
+
+# Watch live with timestamps
+kubectl logs -n lynq-system deployment/lynq-controller-manager -f --timestamps
 ```
 
 ## Getting Help

@@ -514,6 +514,61 @@ Recommended policy combinations by resource type:
 | Namespace | WhenNeeded | Retain | Force | apply |
 | Ingress | WhenNeeded | Delete | Stuck | apply |
 
+### Why These Combinations?
+
+**Deployment, Service, ConfigMap, Ingress:**
+```
+WhenNeeded + Delete + Stuck + apply
+```
+- **WhenNeeded**: Spec changes should reflect in cluster immediately
+- **Delete**: Stateless resources—no value keeping after node deletion
+- **Stuck**: Don't overwrite if another controller manages it (safety first)
+- **apply**: SSA preserves fields managed by HPA, admission controllers, etc.
+
+**Secret:**
+```
+WhenNeeded + Delete + Force + apply
+```
+- **Force**: Secrets are often pre-created by external systems (vault-agent, external-secrets). Lynq should take ownership.
+- Other policies same as Deployment for same reasons.
+
+**PVC (PersistentVolumeClaim):**
+```
+Once + Retain + Stuck + apply
+```
+- **Once**: PVC spec is immutable after creation (can't resize via Lynq)
+- **Retain**: Data is valuable—never auto-delete storage
+- **Stuck**: If PVC already exists, investigate before proceeding
+- **Risk**: If you need to change storage size, delete PVC manually first
+
+**Init Job:**
+```
+Once + Delete + Force + replace
+```
+- **Once**: Run exactly once per node (initialization)
+- **Delete**: Job completed—safe to remove
+- **Force**: Take ownership even if job was created manually
+- **replace**: Jobs are immutable—must replace entirely
+
+**Namespace:**
+```
+WhenNeeded + Retain + Force + apply
+```
+- **WhenNeeded**: Labels/annotations may need updates
+- **Retain**: Deleting namespace cascades to ALL contents—dangerous!
+- **Force**: Take ownership even if pre-existing
+- **Warning**: Only use for tenant-specific namespaces, not shared namespaces
+
+### Policy Risk Assessment
+
+| Policy Combination | Risk Level | Scenario |
+|-------------------|------------|----------|
+| `WhenNeeded + Delete + Stuck` | 🟢 Low | Standard stateless resources |
+| `WhenNeeded + Retain + Stuck` | 🟡 Medium | Resources that might orphan |
+| `Once + Retain + Stuck` | 🟢 Low | Stateful resources (safe) |
+| `WhenNeeded + Delete + Force` | 🟠 High | May overwrite other controllers |
+| `Once + Delete + Force` | 🔴 Very High | One-shot with forced ownership |
+
 ::: tip See Detailed Examples
 For in-depth explanations with diagrams and scenarios, see [Policy Combinations Examples](policies-examples.md).
 :::
@@ -529,9 +584,69 @@ Policies trigger various events:
 kubectl describe lynqnode <lynqnode-name>
 ```
 
-**Conflict Events:**
+### ConflictPolicy Event Comparison: Stuck vs Force
+
+**Scenario:** Deployment `acme-app` already exists with field manager `helm`
+
+#### Stuck Policy Events
+
+```bash
+$ kubectl describe lynqnode acme-customer-web-app -n lynq-system
+
+Events:
+  Type     Reason            Age   From                  Message
+  ----     ------            ----  ----                  -------
+  Normal   Reconciling       10s   lynqnode-controller   Starting reconciliation
+  Warning  ResourceConflict  8s    lynqnode-controller   Resource conflict detected for default/acme-app (Kind: Deployment, Policy: Stuck, ExistingManager: helm)
+  Warning  Degraded          8s    lynqnode-controller   LynqNode degraded: 1 resource(s) in conflict
+
+Status:
+  Conditions:
+    - Type: Ready
+      Status: "False"
+      Reason: ResourceConflict
+    - Type: Degraded
+      Status: "True"
+      Reason: ConflictDetected
+      Message: "Deployment default/acme-app managed by 'helm', not 'lynq'"
+  Conflicted Resources: 1
+  Ready Resources: 2
+  Desired Resources: 3
 ```
-ResourceConflict: Resource conflict detected for default/acme-app (Kind: Deployment, Policy: Stuck)
+
+**Operator logs (Stuck):**
+```
+2025-01-15T10:30:00Z WARN  controller.lynqnode  Conflict detected, policy=Stuck  {"lynqnode": "acme-customer-web-app", "resource": "Deployment/default/acme-app", "existingManager": "helm"}
+2025-01-15T10:30:00Z INFO  controller.lynqnode  Marking node as Degraded  {"lynqnode": "acme-customer-web-app", "reason": "ConflictDetected"}
+```
+
+#### Force Policy Events
+
+```bash
+$ kubectl describe lynqnode acme-customer-web-app -n lynq-system
+
+Events:
+  Type     Reason            Age   From                  Message
+  ----     ------            ----  ----                  -------
+  Normal   Reconciling       10s   lynqnode-controller   Starting reconciliation
+  Warning  ForceApply        8s    lynqnode-controller   Forcing ownership of Deployment default/acme-app (previous manager: helm)
+  Normal   ResourceApplied   7s    lynqnode-controller   Applied Deployment default/acme-app (forced ownership transfer)
+  Normal   Ready             5s    lynqnode-controller   All resources are ready
+
+Status:
+  Conditions:
+    - Type: Ready
+      Status: "True"
+      Reason: AllResourcesReady
+  Conflicted Resources: 0  # ← Conflict resolved
+  Ready Resources: 3
+  Desired Resources: 3
+```
+
+**Operator logs (Force):**
+```
+2025-01-15T10:30:00Z WARN  controller.lynqnode  Conflict detected, forcing ownership  {"lynqnode": "acme-customer-web-app", "resource": "Deployment/default/acme-app", "previousManager": "helm", "newManager": "lynq"}
+2025-01-15T10:30:01Z INFO  controller.lynqnode  Force apply succeeded  {"lynqnode": "acme-customer-web-app", "resource": "Deployment/default/acme-app"}
 ```
 
 **Deletion Events:**
@@ -557,22 +672,63 @@ See [Monitoring Guide](monitoring.md) for complete metrics reference.
 
 ## Troubleshooting
 
-### Conflict Stuck
+### Conflict Stuck: Step-by-Step Recovery
 
 **Symptom:** LynqNode shows `Degraded` condition
 
-**Cause:** Resource exists with different owner
+::: v-pre
 
-**Solution:**
-1. Check who owns the resource:
-   ```bash
-   kubectl get <resource-type> <resource-name> -o yaml | grep -A5 managedFields
-   ```
+```bash
+$ kubectl get lynqnode acme-customer-web-app -n lynq-system
+NAME                        READY   DESIRED   FAILED   DEGRADED   AGE
+acme-customer-web-app       2/3     3         0        true       10m
+```
 
-2. Either:
-   - Delete the conflicting resource
-   - Change to `conflictPolicy: Force`
-   - Use unique `nameTemplate`
+**Step 1: Identify the conflicted resource**
+
+```bash
+# Check LynqNode status for conflict details
+$ kubectl get lynqnode acme-customer-web-app -n lynq-system \
+    -o jsonpath='{.status.conditions[?(@.type=="Degraded")].message}'
+Deployment default/acme-app managed by 'helm', not 'lynq'
+```
+
+**Step 2: Investigate who owns the resource**
+
+```bash
+# Check the field manager (owner)
+$ kubectl get deployment acme-app -o yaml | grep -A10 managedFields
+  managedFields:
+  - apiVersion: apps/v1
+    fieldsType: FieldsV1
+    manager: helm              # ← Owned by Helm!
+    operation: Apply
+    time: "2025-01-10T08:00:00Z"
+```
+
+**Step 3: Choose your resolution strategy**
+
+| Strategy | When to Use | Command |
+|----------|-------------|---------|
+| Delete conflicting resource | Resource should be managed by Lynq | `kubectl delete deployment acme-app` |
+| Change to Force policy | Lynq should take ownership | Edit LynqForm: `conflictPolicy: Force` |
+| Use unique name | Keep both resources | Change `nameTemplate: "{{ .uid }}-app-v2"` |
+| Remove from Lynq | Keep existing, don't manage | Remove resource from LynqForm |
+
+**Step 4: Verify resolution**
+
+```bash
+# After choosing a strategy, trigger reconciliation
+$ kubectl annotate lynqnode acme-customer-web-app -n lynq-system \
+    lynq.sh/force-reconcile=$(date +%s) --overwrite
+
+# Verify degraded status is cleared
+$ kubectl get lynqnode acme-customer-web-app -n lynq-system
+NAME                        READY   DESIRED   FAILED   DEGRADED   AGE
+acme-customer-web-app       3/3     3         0        false      12m
+```
+
+:::
 
 ### Resource Not Updating
 
@@ -580,10 +736,31 @@ See [Monitoring Guide](monitoring.md) for complete metrics reference.
 
 **Cause:** `creationPolicy: Once` is set
 
-**Solution:**
-- Change to `creationPolicy: WhenNeeded`, or
-- Delete the resource to force recreation, or
-- This is expected behavior for `Once` policy
+**Diagnosis:**
+```bash
+# Check if resource has the Once annotation
+$ kubectl get deployment acme-app -o jsonpath='{.metadata.annotations.lynq\.sh/created-once}'
+true  # ← This resource won't be updated
+```
+
+**Solution Options:**
+
+| Option | Action | Risk |
+|--------|--------|------|
+| Force update | Delete resource, let Lynq recreate | Brief downtime |
+| Change policy | Update LynqForm to `creationPolicy: WhenNeeded` | Future updates allowed |
+| Accept behavior | Keep as-is | None (expected) |
+
+```bash
+# Option 1: Force recreation
+$ kubectl delete deployment acme-app
+# Lynq will recreate on next reconciliation
+
+# Option 2: Change policy and remove annotation
+$ kubectl patch deployment acme-app --type=json \
+    -p='[{"op":"remove","path":"/metadata/annotations/lynq.sh~1created-once"}]'
+# Then update LynqForm with creationPolicy: WhenNeeded
+```
 
 ### Resource Not Deleted
 
@@ -591,9 +768,169 @@ See [Monitoring Guide](monitoring.md) for complete metrics reference.
 
 **Cause:** `deletionPolicy: Retain` is set
 
+**Diagnosis:**
+```bash
+# Check for orphan labels
+$ kubectl get deployment acme-app -o jsonpath='{.metadata.labels.lynq\.sh/orphaned}'
+true  # ← Orphaned by design
+```
+
 **Solution:**
-- Manually delete: `kubectl delete <resource-type> <resource-name>`
-- This is expected behavior for `Retain` policy
+```bash
+# Manual cleanup (if desired)
+$ kubectl delete deployment acme-app
+
+# Or find all orphaned resources
+$ kubectl get all -A -l lynq.sh/orphaned=true
+```
+
+**This is expected behavior for Retain policy.**
+
+## Policy Migration Guide
+
+### Changing Policies on Existing Resources
+
+::: warning Important
+Policy changes affect future behavior, not existing resource state. Follow these migration procedures for safe transitions.
+:::
+
+### Migration: Delete → Retain
+
+**Goal:** Preserve resources that were previously set to Delete
+
+**Before migration:**
+```yaml
+# Current LynqForm
+deployments:
+  - id: app
+    deletionPolicy: Delete  # ← Changing this
+```
+
+**Step 1:** Update the LynqForm
+```yaml
+deployments:
+  - id: app
+    deletionPolicy: Retain  # ← New policy
+```
+
+**Step 2:** Trigger reconciliation to update tracking
+```bash
+kubectl apply -f updated-lynqform.yaml
+
+# Force reconciliation
+kubectl annotate lynqnode <node-name> -n <namespace> \
+    lynq.sh/force-reconcile=$(date +%s) --overwrite
+```
+
+**Step 3:** Verify the resource no longer has ownerReference
+```bash
+$ kubectl get deployment acme-app -o jsonpath='{.metadata.ownerReferences}'
+# Should be empty or null for Retain policy
+```
+
+::: tip
+The operator will automatically switch from ownerReference-based tracking to label-based tracking during reconciliation.
+:::
+
+### Migration: Retain → Delete
+
+**Goal:** Enable automatic cleanup for resources that were Retain
+
+**Warning:** This will cause resources to be deleted when LynqNode is deleted!
+
+**Step 1:** Verify you want automatic deletion
+```bash
+# List all resources that will be affected
+$ kubectl get all -l lynq.sh/node=<lynqnode-name>
+```
+
+**Step 2:** Update the LynqForm
+```yaml
+deployments:
+  - id: app
+    deletionPolicy: Delete  # ← New policy
+```
+
+**Step 3:** Trigger reconciliation
+```bash
+kubectl apply -f updated-lynqform.yaml
+kubectl annotate lynqnode <node-name> -n <namespace> \
+    lynq.sh/force-reconcile=$(date +%s) --overwrite
+```
+
+**Step 4:** Verify ownerReference is now set
+```bash
+$ kubectl get deployment acme-app -o jsonpath='{.metadata.ownerReferences[0].name}'
+acme-customer-web-app  # ← ownerReference restored
+```
+
+### Migration: Stuck → Force
+
+**Goal:** Allow Lynq to take ownership of conflicted resources
+
+**Step 1:** Identify currently conflicted resources
+```bash
+$ kubectl get lynqnode <node-name> -o jsonpath='{.status.conditions[?(@.type=="Degraded")]}'
+```
+
+**Step 2:** Update the LynqForm
+```yaml
+deployments:
+  - id: app
+    conflictPolicy: Force  # ← New policy
+```
+
+**Step 3:** Apply and monitor
+```bash
+kubectl apply -f updated-lynqform.yaml
+
+# Watch for ForceApply events
+kubectl get events -n <namespace> --field-selector reason=ForceApply
+```
+
+**Step 4:** Verify ownership transferred
+```bash
+$ kubectl get deployment acme-app -o yaml | grep -A5 managedFields
+# Should show "manager: lynq"
+```
+
+### Migration: Once → WhenNeeded
+
+**Goal:** Allow updates to resources that were created with Once
+
+**Step 1:** Remove the Once annotation from existing resources
+```bash
+$ kubectl get deployment acme-app -o jsonpath='{.metadata.annotations}'
+# Find: "lynq.sh/created-once": "true"
+
+$ kubectl patch deployment acme-app --type=json \
+    -p='[{"op":"remove","path":"/metadata/annotations/lynq.sh~1created-once"}]'
+```
+
+**Step 2:** Update the LynqForm
+```yaml
+deployments:
+  - id: app
+    creationPolicy: WhenNeeded  # ← New policy
+```
+
+**Step 3:** Apply and verify updates work
+```bash
+kubectl apply -f updated-lynqform.yaml
+
+# Make a template change and verify it's applied
+# e.g., change image tag, then check deployment
+```
+
+### Migration Checklist
+
+Before any policy migration:
+
+- [ ] Backup current resource state: `kubectl get <resource> -o yaml > backup.yaml`
+- [ ] Identify all affected LynqNodes: `kubectl get lynqnodes -l lynq.sh/template=<template-name>`
+- [ ] Plan for downtime if needed (especially Delete policy changes)
+- [ ] Test in non-production environment first
+- [ ] Monitor events and operator logs during migration
 
 ## See Also
 

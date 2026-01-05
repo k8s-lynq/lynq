@@ -285,6 +285,126 @@ kubectl get secret acme-corp-db-conn -n node-acme-corp -o yaml
 kubectl logs -n node-acme-corp deployment/acme-corp-app
 ```
 
+## Complete Verification Flow
+
+Verify the complete database provisioning workflow:
+
+### Step 1: Database Record Created
+
+```sql
+-- Insert new node with database requirements
+INSERT INTO nodes (node_id, domain, is_active, db_instance_class, db_storage_gb, plan_type)
+VALUES ('acme-corp', 'acme.example.com', TRUE, 'db.t3.small', 50, 'pro');
+```
+
+### Step 2: Verify LynqNode Created
+
+```bash
+# Wait for Lynq to sync (default: 1 minute)
+kubectl get lynqnode -n lynq-system | grep acme-corp
+
+# Expected output:
+# NAME                          READY   DESIRED   FAILED   AGE
+# acme-corp-database-provisioning   0/4     4         0        30s
+
+# Check LynqNode status
+kubectl describe lynqnode acme-corp-database-provisioning -n lynq-system | tail -20
+# Look for: "Waiting for rds-instance to become ready"
+```
+
+### Step 3: Monitor Crossplane RDS Provisioning
+
+```bash
+# Watch RDS instance status (takes 15-30 minutes)
+kubectl get rdsinstance -l node-id=acme-corp -w
+
+# Example output over time:
+# NAME               READY   SYNCED   STATE        AGE
+# acme-corp-postgres False   True     creating     1m
+# acme-corp-postgres False   True     creating     5m
+# acme-corp-postgres False   True     backing-up   10m
+# acme-corp-postgres True    True     available    15m
+
+# Check detailed status
+kubectl describe rdsinstance acme-corp-postgres | grep -A 10 "Status:"
+```
+
+### Step 4: Verify Connection Secret Created
+
+```bash
+# Check Crossplane created the connection secret
+kubectl get secret acme-corp-db-conn -n node-acme-corp
+
+# Expected output:
+# NAME                  TYPE                              DATA   AGE
+# acme-corp-db-conn     connection.crossplane.io/v1alpha1 4      15m
+
+# Verify secret keys
+kubectl get secret acme-corp-db-conn -n node-acme-corp -o jsonpath='{.data}' | jq 'keys'
+# Expected: ["endpoint", "password", "port", "username"]
+```
+
+### Step 5: Verify Application Can Connect
+
+```bash
+# Check deployment is running
+kubectl get deployment acme-corp-app -n node-acme-corp
+
+# Expected:
+# NAME              READY   UP-TO-DATE   AVAILABLE   AGE
+# acme-corp-app     2/2     2            2           10m
+
+# Check application logs for database connection
+kubectl logs -n node-acme-corp deployment/acme-corp-app --tail=20 | grep -i database
+# Expected: "Connected to database successfully" or similar
+
+# Test database connectivity from pod
+kubectl exec -n node-acme-corp deployment/acme-corp-app -- \
+  env | grep DATABASE
+# Expected: DATABASE_HOST=acme-corp-postgres-xxxxx.rds.amazonaws.com
+```
+
+### Complete Health Check Script
+
+```bash
+#!/bin/bash
+# verify-database-per-node.sh <node-id>
+
+NODE_ID=$1
+NAMESPACE="node-${NODE_ID}"
+
+echo "=== Database-per-Node Verification for ${NODE_ID} ==="
+echo ""
+
+# 1. LynqNode status
+echo "1. LynqNode Status:"
+kubectl get lynqnode ${NODE_ID}-database-provisioning -n lynq-system -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+echo ""
+
+# 2. RDS Instance status
+echo "2. RDS Instance Status:"
+kubectl get rdsinstance ${NODE_ID}-postgres -o jsonpath='{.status.atProvider.dbInstanceStatus}' 2>/dev/null || echo "Not found"
+echo ""
+
+# 3. Connection secret
+echo "3. Connection Secret:"
+kubectl get secret ${NODE_ID}-db-conn -n ${NAMESPACE} -o jsonpath='{.data.endpoint}' | base64 -d 2>/dev/null || echo "Not found"
+echo ""
+
+# 4. Application deployment
+echo "4. Application Status:"
+kubectl get deployment ${NODE_ID}-app -n ${NAMESPACE} -o jsonpath='{.status.readyReplicas}/{.spec.replicas}' 2>/dev/null || echo "Not found"
+echo ""
+
+# 5. Database connectivity test
+echo "5. Database Connectivity:"
+kubectl exec -n ${NAMESPACE} deployment/${NODE_ID}-app -- \
+  sh -c 'pg_isready -h $DATABASE_HOST -p 5432' 2>/dev/null || echo "Cannot test"
+
+echo ""
+echo "=== Verification Complete ==="
+```
+
 ## Cost Optimization
 
 Define tiered database offerings:

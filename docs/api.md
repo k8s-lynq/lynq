@@ -411,7 +411,68 @@ kubectl get all -A -l lynq.sh/orphaned=true
 kubectl get all -A -l lynq.sh/orphaned=true -o jsonpath='{range .items[?(@.metadata.annotations.k8s-lynq\.org/orphaned-reason=="RemovedFromTemplate")]}{.kind}/{.metadata.name}{"\n"}{end}'
 
 # Find orphaned resources from a specific node (label still available)
-kubectl get all -A -l lynq.sh/orphaned=true,lynq.sh/lynqnode=my-node
+kubectl get all -A -l lynq.sh/orphaned=true,lynq.sh/node=my-node
+```
+
+**Re-adoption YAML Comparison:**
+
+When a previously orphaned resource is re-added to the template, Lynq automatically removes orphan markers:
+
+::: code-group
+```yaml [Before: Orphaned Resource]
+# Resource after being removed from template (orphaned)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: acme-api
+  namespace: production
+  labels:
+    lynq.sh/node: acme-web
+    lynq.sh/node-namespace: production
+    lynq.sh/orphaned: "true"           # ← Orphan label
+  annotations:
+    lynq.sh/orphaned-at: "2024-01-15T10:30:00Z"        # ← Orphan timestamp
+    lynq.sh/orphaned-reason: "RemovedFromTemplate"    # ← Orphan reason
+    lynq.sh/deletion-policy: "Retain"
+spec:
+  # ...
+```
+
+```yaml [After: Re-adopted Resource]
+# Same resource after being re-added to template (re-adopted)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: acme-api
+  namespace: production
+  labels:
+    lynq.sh/node: acme-web
+    lynq.sh/node-namespace: production
+    # ✅ lynq.sh/orphaned label REMOVED
+  annotations:
+    lynq.sh/deletion-policy: "Retain"
+    # ✅ lynq.sh/orphaned-at REMOVED
+    # ✅ lynq.sh/orphaned-reason REMOVED
+  ownerReferences:
+    - apiVersion: operator.lynq.sh/v1
+      kind: LynqNode
+      name: acme-web
+      uid: xxx-xxx-xxx
+spec:
+  # ...
+```
+:::
+
+**Verify re-adoption:**
+
+```bash
+# Check if resource is no longer orphaned
+kubectl get deployment acme-api -n production -o jsonpath='{.metadata.labels.lynq\.sh/orphaned}'
+# Output: (empty - label removed)
+
+# Check ownerReference is set (for same-namespace resources with Delete policy)
+kubectl get deployment acme-api -n production -o jsonpath='{.metadata.ownerReferences[0].name}'
+# Output: acme-web
 ```
 
 ### Resource Annotations
@@ -468,6 +529,97 @@ See [Templates Guide](templates.md) and [Quick Start Guide](quickstart.md) for c
 
 - Typically validated by operator, not manually created
 - All referenced resources must exist
+
+## Quick Reference: kubectl Commands
+
+Common kubectl commands for working with Lynq resources:
+
+### Listing Resources
+
+```bash
+# List all LynqHubs
+kubectl get lynqhubs -A
+
+# List all LynqForms
+kubectl get lynqforms -A
+
+# List all LynqNodes with status columns
+kubectl get lynqnodes -A
+
+# Get detailed status
+kubectl get lynqnodes -A -o wide
+```
+
+### Viewing Status
+
+```bash
+# Check Hub sync status
+kubectl get lynqhub my-hub -o jsonpath='{.status}'
+
+# Check node readiness
+kubectl get lynqnode acme-web -o jsonpath='{.status.readyResources}/{.status.desiredResources}'
+
+# List failed nodes
+kubectl get lynqnodes -A --field-selector 'status.failedResources!=0'
+
+# Get all node conditions
+kubectl get lynqnode acme-web -o jsonpath='{range .status.conditions[*]}{.type}: {.status} ({.reason}){"\n"}{end}'
+```
+
+### Querying by Labels
+
+```bash
+# Find all resources managed by a node
+kubectl get all -l lynq.sh/node=acme-web
+
+# Find orphaned resources
+kubectl get all -A -l lynq.sh/orphaned=true
+
+# Find resources from a specific hub
+kubectl get lynqnodes -l lynq.sh/hub=customer-hub
+```
+
+### Debugging
+
+```bash
+# Describe a node (shows events)
+kubectl describe lynqnode acme-web
+
+# Check applied resources list
+kubectl get lynqnode acme-web -o jsonpath='{.status.appliedResources}'
+
+# Check skipped resources (due to dependency failures)
+kubectl get lynqnode acme-web -o jsonpath='{.status.skippedResourceIds}'
+
+# Force reconciliation
+kubectl annotate lynqnode acme-web force-sync="$(date +%s)" --overwrite
+```
+
+### Rollout Status (v1.1.16+)
+
+```bash
+# Check rollout phase
+kubectl get lynqform my-template -o jsonpath='{.status.rollout.phase}'
+
+# Watch rollout progress
+watch kubectl get lynqform my-template -o jsonpath='{.status.rollout.updatedNodes}/{.status.rollout.totalNodes}'
+
+# Get detailed rollout status
+kubectl get lynqform my-template -o jsonpath='{.status.rollout}'
+```
+
+### Output Formats
+
+```bash
+# YAML output for debugging
+kubectl get lynqnode acme-web -o yaml
+
+# JSON output for scripting
+kubectl get lynqnodes -o json | jq '.items[] | {name: .metadata.name, ready: .status.readyResources}'
+
+# Custom columns
+kubectl get lynqnodes -o custom-columns='NAME:.metadata.name,READY:.status.readyResources,DESIRED:.status.desiredResources,FAILED:.status.failedResources'
+```
 
 ## See Also
 

@@ -120,6 +120,169 @@ Lynq implements Infrastructure as Data through a straightforward three-step proc
   </div>
 </div>
 
+## Concrete Example: End-to-End Walkthrough
+
+Let's trace how a single database row becomes Kubernetes infrastructure.
+
+### Step 1: Your Database Table
+
+```sql
+-- Your existing customers table
+CREATE TABLE customers (
+  id VARCHAR(36) PRIMARY KEY,
+  name VARCHAR(255),
+  domain VARCHAR(255),
+  plan VARCHAR(50),
+  active BOOLEAN DEFAULT true,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Sample data
+INSERT INTO customers VALUES
+  ('acme-corp', 'Acme Corporation', 'acme.example.com', 'enterprise', true, NOW()),
+  ('startup-io', 'Startup IO', 'startup.example.com', 'starter', true, NOW()),
+  ('inactive-co', 'Inactive Co', 'inactive.example.com', 'basic', false, NOW());
+```
+
+### Step 2: LynqHub Configuration
+
+```yaml
+apiVersion: lynq.sh/v1
+kind: LynqHub
+metadata:
+  name: customer-hub
+  namespace: lynq-system
+spec:
+  source:
+    mysql:
+      host: mysql.database.svc.cluster.local
+      port: 3306
+      database: saas_platform
+      username: lynq_reader
+      passwordRef:
+        name: mysql-credentials
+        key: password
+      query: |
+        SELECT
+          id AS uid,           -- Required: unique identifier
+          domain AS hostOrUrl, -- Maps to .hostOrUrl and .host
+          active AS activate   -- Required: activation flag
+        FROM customers
+        WHERE active = true
+    syncInterval: 30s
+  valueMappings:
+    uid: uid
+    hostOrUrl: hostOrUrl
+    activate: activate
+  extraValueMappings:
+    - column: plan
+      variable: planType
+    - column: name
+      variable: customerName
+```
+
+### Step 3: LynqForm Template
+
+```yaml
+apiVersion: lynq.sh/v1
+kind: LynqForm
+metadata:
+  name: customer-web-app
+  namespace: lynq-system
+spec:
+  hubId: customer-hub
+  deployments:
+    - id: web-deployment
+      nameTemplate: "{{ .uid }}-web"
+      spec:
+        replicas: {{ if eq .planType "enterprise" }}3{{ else }}1{{ end }}
+        selector:
+          matchLabels:
+            app: "{{ .uid }}-web"
+            customer: "{{ .uid }}"
+        template:
+          metadata:
+            labels:
+              app: "{{ .uid }}-web"
+              customer: "{{ .uid }}"
+          spec:
+            containers:
+              - name: web
+                image: nginx:stable
+                env:
+                  - name: CUSTOMER_ID
+                    value: "{{ .uid }}"
+                  - name: CUSTOMER_DOMAIN
+                    value: "{{ .host }}"
+  services:
+    - id: web-service
+      nameTemplate: "{{ .uid }}-web-svc"
+      dependIds: [web-deployment]
+      spec:
+        selector:
+          app: "{{ .uid }}-web"
+        ports:
+          - port: 80
+            targetPort: 80
+```
+
+### Step 4: What Gets Created
+
+When Lynq syncs, it creates **LynqNode CRs** for each active row:
+
+```bash
+$ kubectl get lynqnodes -n lynq-system
+NAME                       READY   DESIRED   FAILED   SKIPPED   AGE
+acme-corp-customer-web-app   2/2     2         0        0         5m
+startup-io-customer-web-app  2/2     2         0        0         5m
+
+# Note: inactive-co is not listed because active=false
+```
+
+### Step 5: Verify the Resources
+
+```bash
+# Check the generated Deployment
+$ kubectl get deployments -n lynq-system -l customer=acme-corp
+NAME            READY   UP-TO-DATE   AVAILABLE   AGE
+acme-corp-web   3/3     3            3           5m   # 3 replicas for enterprise plan
+
+# Check the generated Service
+$ kubectl get services -n lynq-system -l customer=acme-corp
+NAME               TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE
+acme-corp-web-svc  ClusterIP   10.96.45.123    <none>        80/TCP    5m
+
+# Inspect the LynqNode status
+$ kubectl describe lynqnode acme-corp-customer-web-app -n lynq-system
+...
+Status:
+  Conditions:
+    - Type: Ready
+      Status: "True"
+      Reason: AllResourcesReady
+  Desired Resources:  2
+  Ready Resources:    2
+  Failed Resources:   0
+  Applied Resources:
+    - Deployment/lynq-system/acme-corp-web@web-deployment
+    - Service/lynq-system/acme-corp-web-svc@web-service
+```
+
+### What Happens When Data Changes
+
+| Database Change | Lynq Action |
+|-----------------|-------------|
+| New row inserted with `active=true` | Creates new LynqNode + all resources |
+| Row's `active` changed to `false` | Deletes LynqNode (respects DeletionPolicy) |
+| Row deleted | Deletes LynqNode + all resources |
+| Column value changed (e.g., `plan`) | Updates LynqNode, triggers re-render + SSA apply |
+
+::: tip Real-Time Infrastructure
+This entire process happens within the `syncInterval` (default: 30s). Your database transaction becomes an infrastructure change with no CI/CD pipeline in between.
+:::
+
+---
+
 ## Core Components
 
 ### LynqHub: Data Source Connection

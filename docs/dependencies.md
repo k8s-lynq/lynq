@@ -21,6 +21,71 @@ The Lynq includes an interactive dependency graph visualizer tool that helps you
 Visit the **[🔍 Dependency Visualizer](./dependency-visualizer.md)** page to analyze your LynqForm dependencies interactively. Load preset examples or paste your own YAML to visualize the dependency graph in real-time.
 :::
 
+### How to Use the Visualizer
+
+**Step 1: Navigate to the Visualizer**
+
+Open the [Dependency Visualizer](/dependency-visualizer) page in the documentation.
+
+**Step 2: Load or Paste Your LynqForm**
+
+```yaml
+# Option A: Use preset examples from the dropdown
+# Option B: Paste your own LynqForm YAML
+
+apiVersion: lynq.sh/v1
+kind: LynqForm
+metadata:
+  name: my-app
+spec:
+  hubId: customer-hub
+  secrets:
+    - id: db-creds
+  deployments:
+    - id: db
+      dependIds: ["db-creds"]
+    - id: app
+      dependIds: ["db"]
+  services:
+    - id: app-svc
+      dependIds: ["app"]
+```
+
+**Step 3: Analyze the Graph**
+
+The visualizer will show:
+
+```
++-------------+
+| db-creds    |  ← Order: 1 (no dependencies)
++-------------+
+      |
+      v
++-------------+
+| db          |  ← Order: 2 (after db-creds)
++-------------+
+      |
+      v
++-------------+
+| app         |  ← Order: 3 (after db)
++-------------+
+      |
+      v
++-------------+
+| app-svc     |  ← Order: 4 (after app)
++-------------+
+```
+
+**Step 4: Identify Issues**
+
+- **Red nodes/edges**: Cycle detected - must be fixed before deployment
+- **Yellow warning**: Missing dependency reference
+- **Numbers on nodes**: Execution order
+
+**Step 5: Export or Copy**
+
+Copy the corrected YAML back to your LynqForm manifest.
+
 ## Defining Dependencies
 
 Use the `dependIds` field to specify dependencies:
@@ -71,6 +136,87 @@ Dependency resolution uses a DAG. Any cycle blocks reconciliation and surfaces a
 ```
 
 Error: `DependencyError: Dependency cycle detected: a -> b -> a`
+
+#### Refactoring Circular Dependencies
+
+**Real-world example:** App and DB have circular config dependency
+
+::: v-pre
+
+```yaml
+# ❌ BEFORE: Circular dependency
+deployments:
+  - id: db
+    dependIds: ["app-config"]  # DB needs app config for connection pooling
+    spec:
+      containers:
+        - name: postgres
+          env:
+            - name: MAX_CONNECTIONS
+              valueFrom:
+                configMapKeyRef:
+                  name: "{{ .uid }}-app-config"
+                  key: max_connections
+
+configMaps:
+  - id: app-config
+    dependIds: ["db"]  # Config needs DB host info (circular!)
+    spec:
+      data:
+        database_host: "{{ .uid }}-db-svc"
+        max_connections: "100"
+```
+
+**Error message:**
+```bash
+$ kubectl describe lynqnode acme-customer-web-app
+Events:
+  Type     Reason           Age   Message
+  ----     ------           ----  -------
+  Warning  DependencyError  5s    Dependency cycle detected: db -> app-config -> db
+```
+
+**Solution:** Break the cycle by removing unnecessary dependency
+
+```yaml
+# ✅ AFTER: Acyclic graph
+configMaps:
+  - id: app-config
+    # Removed: dependIds: ["db"]  ← Config doesn't actually need DB to exist first!
+    spec:
+      data:
+        database_host: "{{ .uid }}-db-svc"  # This is just a name, not requiring DB to exist
+        max_connections: "100"
+
+deployments:
+  - id: db
+    dependIds: ["app-config"]  # DB still waits for config
+    spec:
+      containers:
+        - name: postgres
+          env:
+            - name: MAX_CONNECTIONS
+              valueFrom:
+                configMapKeyRef:
+                  name: "{{ .uid }}-app-config"
+                  key: max_connections
+```
+
+**Why this works:** The ConfigMap contains the DB service name as a string (`{{ .uid }}-db-svc`), which doesn't require the DB to actually exist. The name is predictable from the template.
+
+:::
+
+**Visualization after fix:**
+```
++-------------+
+| app-config  |  ← Order: 1
++-------------+
+      |
+      v
++-------------+
+| db          |  ← Order: 2
++-------------+
+```
 
 ## Common Patterns
 
@@ -189,6 +335,96 @@ T=20s: Deployment fails (ImagePullBackOff, timeout exceeded)
        DependencySkipped event emitted for ConfigMap
        skippedResources: 1
 ```
+
+### Concrete kubectl Output: Blocked vs Failed
+
+**Scenario: DB Deployment → App Deployment → Service chain**
+
+#### State 1: Blocked (Waiting for dependency to become ready)
+
+```bash
+$ kubectl describe lynqnode acme-customer-web-app -n lynq-system
+
+Status:
+  Conditions:
+    - Type: Ready
+      Status: "False"
+      Reason: WaitingForDependencies
+      Message: "Waiting for 1 resource(s) to become ready"
+  Desired Resources: 3
+  Ready Resources:   1    # Only db-creds is ready
+  Failed Resources:  0    # Nothing failed!
+  Skipped Resources: 0    # Nothing skipped!
+
+Events:
+  Type    Reason           Age   Message
+  ----    ------           ----  -------
+  Normal  Reconciling      30s   Starting reconciliation
+  Normal  ResourceApplied  28s   Applied Secret/acme-db-creds
+  Normal  ResourceApplied  25s   Applied Deployment/acme-db
+  # Note: NO events for app or svc - they're silently blocked
+
+# Check the blocking dependency
+$ kubectl get deployment acme-db -o jsonpath='{.status.conditions[*].type}'
+Progressing Available
+
+$ kubectl get deployment acme-db -o jsonpath='{.status.availableReplicas}'
+0  # ← Still starting up, not yet available
+```
+
+**Key indicator:** No `DependencySkipped` events, `skippedResources: 0`
+
+#### State 2: Failed (Dependency encountered an error)
+
+```bash
+$ kubectl describe lynqnode acme-customer-web-app -n lynq-system
+
+Status:
+  Conditions:
+    - Type: Ready
+      Status: "False"
+      Reason: DependencyFailed
+    - Type: Degraded
+      Status: "True"
+      Reason: ResourceFailed
+      Message: "Deployment acme-db failed: ImagePullBackOff"
+  Desired Resources: 3
+  Ready Resources:   1
+  Failed Resources:  1     # DB failed!
+  Skipped Resources: 2     # App and Svc were skipped
+  Skipped Resource Ids:
+    - "app"
+    - "svc"
+
+Events:
+  Type     Reason             Age   Message
+  ----     ------             ----  -------
+  Normal   Reconciling        2m    Starting reconciliation
+  Normal   ResourceApplied    2m    Applied Secret/acme-db-creds
+  Warning  ResourceFailed     90s   Deployment acme-db failed: ImagePullBackOff
+  Warning  ReadinessTimeout   60s   Resource db not ready within 60s, marking as failed
+  Warning  DependencySkipped  60s   Resource 'app' skipped because dependency 'db' failed
+  Warning  DependencySkipped  60s   Resource 'svc' skipped because dependency 'app' skipped
+
+# Check the failed dependency
+$ kubectl get deployment acme-db
+NAME      READY   UP-TO-DATE   AVAILABLE   AGE
+acme-db   0/1     1            0           2m
+
+$ kubectl get pods -l app=acme-db
+NAME                      READY   STATUS             RESTARTS   AGE
+acme-db-5f8b7c9d4-xyz12   0/1     ImagePullBackOff   0          2m
+```
+
+**Key indicator:** `DependencySkipped` events present, `skippedResources > 0`
+
+#### Quick Diagnosis Table
+
+| What You See | State | What to Do |
+|--------------|-------|------------|
+| `skippedResources: 0`, no events for dependent | **Blocked** | Wait - dependency is still starting |
+| `DependencySkipped` event, `skippedResources > 0` | **Failed** | Fix the failed dependency first |
+| `Ready: True` for all resources | **Success** | Everything is working |
 
 ### When to Skip (Default Behavior)
 

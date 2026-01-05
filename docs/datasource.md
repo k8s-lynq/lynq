@@ -436,6 +436,198 @@ GROUP BY node_id
 HAVING count > 1;
 ```
 
+### 5. Complete VIEW Verification Checklist
+
+Before connecting Lynq to your VIEW, verify it meets all requirements:
+
+**Step 1: Verify Required Columns Exist**
+
+```sql
+-- Check VIEW structure
+DESCRIBE node_configs;
+
+-- Expected output:
+-- +-------------------+--------------+------+-----+---------+-------+
+-- | Field             | Type         | Null | Key | Default | Extra |
+-- +-------------------+--------------+------+-----+---------+-------+
+-- | node_id           | varchar(255) | YES  |     | NULL    |       |  ✅ Required (uid)
+-- | is_active         | varchar(1)   | YES  |     | NULL    |       |  ✅ Required (activate)
+-- | node_url          | varchar(500) | YES  |     | NULL    |       |  Optional
+-- | subscription_plan | varchar(50)  | YES  |     | NULL    |       |  Extra mapping
+-- +-------------------+--------------+------+-----+---------+-------+
+```
+
+**Step 2: Verify Data Types**
+
+```sql
+-- Check actual data returned
+SELECT
+    node_id,
+    TYPEOF(node_id) AS uid_type,
+    is_active,
+    TYPEOF(is_active) AS activate_type
+FROM node_configs
+LIMIT 5;
+
+-- All values should be strings
+-- is_active should be '0' or '1' (not 0 or 1 as integers)
+```
+
+**Step 3: Verify Activation Values**
+
+```sql
+-- Count by activation value (should see only valid values)
+SELECT
+    is_active,
+    COUNT(*) as count,
+    CASE
+        WHEN is_active IN ('1', 'true', 'TRUE', 'yes', 'YES') THEN '✅ Active'
+        WHEN is_active IN ('0', 'false', 'FALSE', 'no', 'NO', '') THEN '⏸️ Inactive'
+        ELSE '❌ Invalid'
+    END AS status
+FROM node_configs
+GROUP BY is_active;
+
+-- Example good output:
+-- +----------+-------+-----------+
+-- | is_active| count | status    |
+-- +----------+-------+-----------+
+-- | 1        |    5  | ✅ Active  |
+-- | 0        |    3  | ⏸️ Inactive |
+-- +----------+-------+-----------+
+```
+
+**Step 4: Verify No Duplicate UIDs**
+
+```sql
+-- Should return empty result set
+SELECT node_id, COUNT(*) as count
+FROM node_configs
+GROUP BY node_id
+HAVING count > 1;
+
+-- If duplicates found, fix your VIEW:
+-- Option A: Add DISTINCT
+-- Option B: Add GROUP BY
+-- Option C: Fix source data
+```
+
+**Step 5: Verify No NULL UIDs**
+
+```sql
+-- Should return empty result set
+SELECT * FROM node_configs WHERE node_id IS NULL OR node_id = '';
+```
+
+**Step 6: Preview What Lynq Will See**
+
+```sql
+-- This query mimics what the operator runs
+SELECT * FROM node_configs;
+
+-- Check the result:
+-- 1. All expected rows appear
+-- 2. UIDs are unique and non-empty
+-- 3. activate values are valid
+-- 4. Extra columns contain expected data
+```
+
+**Step 7: Test with Read-Only User**
+
+```bash
+# Connect as the user Lynq will use
+mysql -h mysql-server -u node_reader -p
+
+# Run the same query
+mysql> SELECT * FROM mydb.node_configs;
+
+# Verify results match Step 6
+```
+
+**Step 8: Verify from Kubernetes**
+
+```bash
+# Test connectivity from cluster
+kubectl run mysql-test --rm -it --image=mysql:8 -- \
+  mysql -h mysql.default.svc.cluster.local \
+        -u node_reader \
+        -p'your-password' \
+        -e "SELECT * FROM mydb.node_configs"
+
+# Expected: Same output as Step 6
+```
+
+**Complete Verification Script:**
+
+```sql
+-- Run this script to validate your VIEW before deployment
+-- Save as verify_view.sql and run: mysql -u root < verify_view.sql
+
+USE mydb;
+
+-- 1. Structure check
+SELECT '=== STEP 1: VIEW Structure ===' AS step;
+DESCRIBE node_configs;
+
+-- 2. Required columns check
+SELECT '=== STEP 2: Required Columns ===' AS step;
+SELECT
+    MAX(CASE WHEN COLUMN_NAME = 'node_id' THEN 'FOUND' ELSE 'MISSING' END) AS uid_column,
+    MAX(CASE WHEN COLUMN_NAME = 'is_active' THEN 'FOUND' ELSE 'MISSING' END) AS activate_column
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = 'mydb' AND TABLE_NAME = 'node_configs';
+
+-- 3. Data validation
+SELECT '=== STEP 3: Activation Value Distribution ===' AS step;
+SELECT is_active, COUNT(*) as count FROM node_configs GROUP BY is_active;
+
+-- 4. Duplicate check
+SELECT '=== STEP 4: Duplicate UIDs (should be empty) ===' AS step;
+SELECT node_id, COUNT(*) FROM node_configs GROUP BY node_id HAVING COUNT(*) > 1;
+
+-- 5. NULL check
+SELECT '=== STEP 5: NULL UIDs (should be empty) ===' AS step;
+SELECT * FROM node_configs WHERE node_id IS NULL OR node_id = '';
+
+-- 6. Sample data
+SELECT '=== STEP 6: Sample Data Preview ===' AS step;
+SELECT * FROM node_configs LIMIT 10;
+
+-- 7. Active node count
+SELECT '=== STEP 7: Expected LynqNodes ===' AS step;
+SELECT COUNT(*) AS expected_lynqnodes FROM node_configs WHERE is_active IN ('1', 'true', 'TRUE', 'yes', 'YES');
+```
+
+**Expected Lynq Behavior After Verification:**
+
+```bash
+# After deploying LynqHub, verify operator synced correctly
+$ kubectl get lynqhub production-nodes -o jsonpath='{.status}'
+
+# Expected:
+# {
+#   "desired": 5,                    # Matches Step 7 count
+#   "ready": 5,
+#   "failed": 0,
+#   "referencingTemplates": 1,
+#   "conditions": [{
+#     "type": "Ready",
+#     "status": "True",
+#     "reason": "SyncSucceeded",
+#     "message": "Successfully synced 5 nodes from database"
+#   }]
+# }
+
+# List created LynqNodes
+$ kubectl get lynqnodes
+NAME          READY   DESIRED   AGE
+node-1        5/5     5         1m
+node-2        5/5     5         1m
+node-3        5/5     5         1m
+node-4        5/5     5         1m
+node-5        5/5     5         1m
+```
+
 ### 5. Use Appropriate Sync Intervals
 
 ```yaml

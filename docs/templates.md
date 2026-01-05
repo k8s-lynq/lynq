@@ -756,26 +756,158 @@ Rendered resource is applied to Kubernetes using Server-Side Apply.
 
 ## Debugging Templates
 
+### Preview Template Rendering (Before Applying)
+
+Test your templates locally before deploying to the cluster:
+
+**Method 1: Using `kubectl --dry-run` with test LynqNode**
+
+```bash
+# Create a test LynqNode manifest with sample data
+cat <<EOF > test-lynqnode.yaml
+apiVersion: lynq.sh/v1
+kind: LynqNode
+metadata:
+  name: test-node
+  namespace: lynq-system
+  annotations:
+    lynq.sh/uid: "acme-corp"
+    lynq.sh/planType: "enterprise"
+    lynq.sh/region: "us-east-1"
+spec:
+  hubId: customer-hub
+  templateRef: customer-web-app
+EOF
+
+# Dry-run apply to see validation errors
+kubectl apply -f test-lynqnode.yaml --dry-run=server -o yaml
+```
+
+**Method 2: Check rendered resources in existing LynqNode**
+
+```bash
+# View the fully rendered deployment spec
+$ kubectl get lynqnode acme-corp-customer-web-app -n lynq-system \
+    -o jsonpath='{.spec.deployments[0]}' | jq .
+
+# Expected output (template already evaluated):
+{
+  "id": "web-deployment",
+  "nameTemplate": "acme-corp-web",  # ← Rendered from "{{ .uid }}-web"
+  "spec": {
+    "replicas": 3,                   # ← Rendered from conditional (enterprise plan)
+    "selector": {
+      "matchLabels": {
+        "app": "acme-corp-web",      # ← Rendered from "{{ .uid }}-web"
+        "customer": "acme-corp"
+      }
+    }
+    # ... rest of rendered spec
+  }
+}
+```
+
+**Method 3: Simulate template rendering with Go**
+
+For advanced debugging, create a test script:
+
+```go
+// test_template.go
+package main
+
+import (
+    "os"
+    "text/template"
+    "github.com/Masterminds/sprig/v3"
+)
+
+func main() {
+    tmpl := `{{ .uid }}-{{ .planType | default "basic" }}`
+
+    t := template.Must(template.New("test").Funcs(sprig.TxtFuncMap()).Parse(tmpl))
+    t.Execute(os.Stdout, map[string]string{
+        "uid":      "acme-corp",
+        "planType": "enterprise",
+    })
+    // Output: acme-corp-enterprise
+}
+```
+
 ### Check Rendered Values
 
 View rendered LynqNode CR to see evaluated templates:
 
 ```bash
-# Get LynqNode CR
-kubectl get lynqnode <lynqnode-name> -o yaml
+# Get full LynqNode CR
+$ kubectl get lynqnode acme-corp-customer-web-app -n lynq-system -o yaml
 
-# Check spec (contains rendered resources)
-kubectl get lynqnode <lynqnode-name> -o jsonpath='{.spec.deployments[0].nameTemplate}'
+# Output includes rendered values:
+apiVersion: lynq.sh/v1
+kind: LynqNode
+metadata:
+  name: acme-corp-customer-web-app
+  annotations:
+    lynq.sh/uid: "acme-corp"
+    lynq.sh/planType: "enterprise"
+spec:
+  deployments:
+    - id: web-deployment
+      nameTemplate: "acme-corp-web"  # ← Already rendered
+      spec:
+        replicas: 3                   # ← Type correctly converted
+# ...
+
+# Check specific rendered field
+$ kubectl get lynqnode acme-corp-customer-web-app -n lynq-system \
+    -o jsonpath='{.spec.deployments[0].spec.replicas}'
+3  # ← Correctly rendered as integer (not "3")
 ```
 
 ### Watch for Rendering Errors
 
 ```bash
-# Check operator logs
-kubectl logs -n lynq-system deployment/lynq-controller-manager -f | grep "render"
+# Check operator logs for render errors
+$ kubectl logs -n lynq-system deployment/lynq-controller-manager -f | grep -E "(render|template|error)"
 
-# Check Node events
-kubectl describe lynqnode <lynqnode-name>
+# Example: Successful rendering
+2025-01-15T10:30:00Z INFO  controller.lynqnode  Rendered template successfully  {"lynqnode": "acme-corp-customer-web-app", "resources": 3}
+
+# Example: Template error
+2025-01-15T10:30:00Z ERROR controller.lynqnode  Template rendering failed  {"lynqnode": "test-node", "error": "template: tmpl:1: function \"unknownFunc\" not defined"}
+
+# Check LynqNode events for errors
+$ kubectl describe lynqnode acme-corp-customer-web-app -n lynq-system
+Events:
+  Type     Reason                Age   Message
+  ----     ------                ----  -------
+  Normal   TemplateRendered      5m    Successfully rendered 3 resources
+  Normal   ResourceApplied       5m    Applied Deployment/acme-corp-web
+  Normal   ResourceApplied       5m    Applied Service/acme-corp-web-svc
+  Normal   Ready                 5m    All resources are ready
+```
+
+### Debugging Decision Tree
+
+```
+Template not working?
+│
+├─ YAML parse error?
+│  └─ Check: Are template expressions quoted? "{{ .value }}"
+│
+├─ Function not defined?
+│  └─ Check: Sprig docs or custom functions (toHost, sha1sum, etc.)
+│
+├─ Variable not found?
+│  └─ Check: Is it in valueMappings or extraValueMappings?
+│
+├─ Type error (string vs int)?
+│  └─ Check: Are you using toInt/toFloat/toBool for K8s fields?
+│
+├─ Resource not created?
+│  └─ Check: LynqNode events and operator logs
+│
+└─ Resource in wrong state?
+   └─ Check: Dependencies satisfied? Policies correct?
 ```
 
 ### Common Errors
@@ -829,6 +961,87 @@ kubectl describe lynqnode <lynqnode-name>
 
 nameTemplate: "{{ $appName }}"
 ```
+
+#### Complex Nested Template Scenario
+
+When building multi-tier applications, nested templates help avoid repetition:
+
+```yaml
+apiVersion: lynq.sh/v1
+kind: LynqForm
+metadata:
+  name: multi-tier-app
+spec:
+  hubId: customer-hub
+  deployments:
+    - id: web
+      nameTemplate: |
+        {{- $base := printf "%s-%s" .uid (.region | default "default") -}}
+        {{ $base | trunc63 }}-web
+      spec:
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          labels:
+            {{- $tier := "frontend" }}
+            {{- $version := .appVersion | default "v1.0.0" }}
+            app.kubernetes.io/name: "{{ .uid }}"
+            app.kubernetes.io/component: "{{ $tier }}"
+            app.kubernetes.io/version: "{{ $version }}"
+        spec:
+          replicas: "{{ .webReplicas | default \"2\" | toInt }}"
+          template:
+            spec:
+              containers:
+                - name: web
+                  image: "{{ .webImage | default \"nginx:stable\" }}"
+                  env:
+                    {{- $apiHost := printf "%s-api-svc.%s.svc.cluster.local" .uid .namespace }}
+                    - name: API_ENDPOINT
+                      value: "http://{{ $apiHost }}"
+                    - name: CUSTOMER_ID
+                      value: "{{ .uid }}"
+    - id: api
+      nameTemplate: |
+        {{- $base := printf "%s-%s" .uid (.region | default "default") -}}
+        {{ $base | trunc63 }}-api
+      dependIds: [web]
+      spec:
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          labels:
+            {{- $tier := "backend" }}
+            app.kubernetes.io/name: "{{ .uid }}"
+            app.kubernetes.io/component: "{{ $tier }}"
+        spec:
+          replicas: "{{ .apiReplicas | default \"3\" | toInt }}"
+          template:
+            spec:
+              containers:
+                - name: api
+                  image: "{{ .apiImage | default \"api:latest\" }}"
+                  env:
+                    {{- $dbHost := printf "%s-db.%s.svc.cluster.local" .uid .namespace }}
+                    - name: DATABASE_URL
+                      value: "postgres://{{ $dbHost }}:5432/{{ .uid }}"
+```
+
+**Key patterns demonstrated:**
+- `$base` variable reused across multiple templates
+- `$tier` scoped within each deployment block
+- `$apiHost` and `$dbHost` computed from other variables
+- Service discovery URLs constructed dynamically
+
+#### When to Use Nested Templates
+
+| Scenario | Use Nested Templates? | Example |
+|----------|----------------------|---------|
+| Same prefix for multiple resources | ✅ Yes | `$base := printf "%s-%s" .uid .region` |
+| Computed service discovery URLs | ✅ Yes | `$apiHost := printf "%s-api.%s.svc" .uid .namespace` |
+| Simple variable substitution | ❌ No | Just use `{{ .uid }}` directly |
+| Complex conditional logic | ✅ Yes | `$tier := ternary "prod" "dev" .isProduction` |
+| One-time value transformation | ❌ No | Use inline: `{{ .uid | upper }}` |
 
 ### Range Over Lists
 
@@ -954,6 +1167,69 @@ deployments:
 deployments:
   - id: web
   - id: worker  # Re-added! Orphan markers auto-removed
+```
+
+**Concrete Example: Before and After Re-adoption**
+
+```bash
+# Step 1: Check the orphaned resource
+$ kubectl get deployment acme-worker -o yaml
+```
+
+```yaml
+# BEFORE: Orphaned state (worker was removed from template)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: acme-worker
+  namespace: lynq-system
+  labels:
+    lynq.sh/orphaned: "true"              # ← Orphan marker (label)
+    app: acme-worker
+  annotations:
+    lynq.sh/orphaned-at: "2025-01-15T10:30:00Z"           # ← Timestamp
+    lynq.sh/orphaned-reason: "RemovedFromTemplate"        # ← Reason
+    lynq.sh/deletion-policy: "Retain"                      # ← Original policy
+  # Note: NO ownerReferences (removed during orphaning)
+spec:
+  replicas: 2
+  # ... rest of spec
+```
+
+```yaml
+# AFTER: Re-adopted (worker added back to template)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: acme-worker
+  namespace: lynq-system
+  labels:
+    lynq.sh/node: "acme-customer-web-app"         # ← Tracking restored
+    lynq.sh/node-namespace: "lynq-system"
+    app: acme-worker
+    # lynq.sh/orphaned label REMOVED
+  annotations:
+    lynq.sh/deletion-policy: "Retain"
+    # orphaned-at and orphaned-reason annotations REMOVED
+  ownerReferences:                                 # ← OwnerRef restored
+    - apiVersion: lynq.sh/v1
+      kind: LynqNode
+      name: acme-customer-web-app
+      uid: abc123-456
+spec:
+  replicas: 2
+  # ... rest of spec (may be updated by template)
+```
+
+**Verify re-adoption:**
+```bash
+# Confirm orphan markers are removed
+$ kubectl get deployment acme-worker -o jsonpath='{.metadata.labels.lynq\.sh/orphaned}'
+# (empty output = successfully re-adopted)
+
+# Confirm tracking labels are restored
+$ kubectl get deployment acme-worker -o jsonpath='{.metadata.labels.lynq\.sh/node}'
+acme-customer-web-app
 ```
 
 You can easily find these orphaned resources later:
