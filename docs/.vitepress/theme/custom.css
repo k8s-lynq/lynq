@@ -4,19 +4,140 @@
 
 /* Apply dark background only in dark mode */
 .dark {
-  --vp-c-bg: #101010;
-  --vp-c-bg-alt: #0a0a0a;
-  --vp-c-bg-soft: #1a1a1a;
-  --vp-c-bg-elv: #1f1f1f;
+  --vp-c-bg: #0a0a0f;
+  --vp-c-bg-alt: #0a0a0f;
+  --vp-c-bg-soft: #111118;
+  --vp-c-bg-elv: #1a1a2e;
 }
 
 /* Ensure body background matches in dark mode */
 html.dark {
-  background-color: #101010;
+  background-color: #0a0a0f;
 }
 
 html.dark body {
-  background-color: #101010;
+  background-color: #0a0a0f;
+}
+
+/* Landing page full-width fix */
+.VPContent.is-home {
+  padding: 0 !important;
+  background-color: #0a0a0f !important;
+}
+
+.VPContent.is-home .VPHome {
+  padding: 0 !important;
+  margin: 0 !important;
+  max-width: none !important;
+  width: 100% !important;
+}
+
+.VPContent.is-home .vp-doc {
+  padding: 0 !important;
+  max-width: none !important;
+}
+
+html.dark .VPContent.is-home {
+  background-color: #0a0a0f !important;
+}
+
+html.dark .VPContent.is-home .VPHome {
+  background-color: #0a0a0f !important;
+}
+
+/* Remove VitePress home page default container */
+.VPHome .VPHomeHero,
+.VPHome .VPHomeFeatures {
+  display: none !important;
+}
+
+.VPHome > div:first-child {
+  max-width: none !important;
+  padding: 0 !important;
+}
+
+/* Ensure main content area stretches */
+.VPDoc.has-aside .content-container,
+.VPDoc .content-container {
+  max-width: none !important;
+}
+
+/* Home page specific - remove all wrappers */
+.Layout.is-home .VPContent,
+.is-home .VPContent {
+  padding: 0 !important;
+}
+
+.is-home main {
+  padding: 0 !important;
+  max-width: none !important;
+}
+
+/* Hide VitePress default footer on home page */
+.VPContent.is-home ~ .VPFooter {
+  display: none !important;
+}
+
+/* ========================================
+   Landing page: Reset ALL VitePress .vp-doc defaults
+   ======================================== */
+.VPHome .landing-page h1,
+.VPHome .landing-page h2,
+.VPHome .landing-page h3,
+.VPHome .landing-page h4,
+.VPHome .landing-page h5,
+.VPHome .landing-page h6 {
+  border: none !important;
+  padding: 0 !important;
+  letter-spacing: normal !important;
+}
+
+.VPHome .landing-page p {
+  line-height: 1.6 !important;
+}
+
+.VPHome .landing-page ul,
+.VPHome .landing-page ol {
+  margin: 0 !important;
+  padding: 0 !important;
+  list-style: none !important;
+}
+
+.VPHome .landing-page li {
+  margin: 0 !important;
+}
+
+.VPHome .landing-page a {
+  color: inherit !important;
+  text-decoration: none !important;
+  font-weight: inherit !important;
+}
+
+.VPHome .landing-page a:hover {
+  color: inherit !important;
+  text-decoration: none !important;
+}
+
+.VPHome .landing-page pre {
+  margin: 0 !important;
+  background: none !important;
+  border-radius: 0 !important;
+}
+
+.VPHome .landing-page code {
+  background: none !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  font-size: inherit !important;
+  color: inherit !important;
+}
+
+.VPHome .landing-page hr {
+  display: none !important;
+}
+
+.VPHome .landing-page .header-anchor {
+  display: none !important;
 }
 
 /* Glass-like blur effect for navbar (Vite style) */

@@ -3,7 +3,7 @@ layout: home
 ---
 
 <script setup>
-import LandingPage from './.vitepress/components/LandingPage.vue'
+import LandingPageNew from './.vitepress/components/LandingPageNew.vue'
 </script>
 
-<LandingPage />
+<LandingPageNew />

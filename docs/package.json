@@ -16,8 +16,10 @@
   "packageManager": "npm@10.0.0",
   "dependencies": {
     "@types/d3": "^7.4.3",
+    "@vueuse/core": "^10.7.0",
     "d3": "^7.9.0",
     "js-yaml": "^4.1.0",
-    "motion-v": "^1.7.4"
+    "motion-v": "^1.7.4",
+    "three": "^0.160.0"
   }
 }

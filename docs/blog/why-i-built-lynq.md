@@ -5,10 +5,9 @@ author: Tim Kang
 github: selenehyun
 description: The journey of building Lynq - from solving internal provisioning challenges to discovering a new paradigm called Infrastructure as Data.
 tags:
-  - Lynq
-  - Open Source
   - Infrastructure as Data
   - RecordOps
+  - Open Source
 sidebar: false
 editLink: false
 prev: false

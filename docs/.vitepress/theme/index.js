@@ -19,6 +19,7 @@ import BlastRadiusAnimation from '../components/BlastRadiusAnimation.vue';
 import LynqFlowDiagram from '../components/LynqFlowDiagram.vue';
 import BlogPostMeta from '../components/BlogPostMeta.vue';
 import BlogPostFooter from '../components/BlogPostFooter.vue';
+import LandingPageNew from '../components/LandingPageNew.vue';
 import './custom.css';
 
 export default {
@@ -45,5 +46,6 @@ export default {
     app.component('LynqFlowDiagram', LynqFlowDiagram);
     app.component('BlogPostMeta', BlogPostMeta);
     app.component('BlogPostFooter', BlogPostFooter);
+    app.component('LandingPageNew', LandingPageNew);
   }
 };

@@ -5,10 +5,9 @@ author: Tim Kang
 github: selenehyun
 description: Real-world problems that occur when managing Kubernetes resources at scale, and how Lynq's policy system prevents them.
 tags:
-  - Lynq
-  - Kubernetes
-  - Resource Lifecycle
   - Policies
+  - Resource Lifecycle
+  - Kubernetes
 sidebar: false
 editLink: false
 prev: false

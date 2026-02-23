@@ -5,9 +5,8 @@ author: Tim Kang
 github: selenehyun
 description: The era of AI Agents autonomously managing infrastructure is coming. But do we have an answer to the question, 'When AI decides, who executes?'
 tags:
-  - Lynq
-  - AI Infrastructure
   - Agentic AI
+  - AI Infrastructure
   - Infrastructure as Data
 sidebar: false
 editLink: false

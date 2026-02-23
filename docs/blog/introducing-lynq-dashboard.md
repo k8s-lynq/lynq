@@ -5,7 +5,6 @@ author: Tim Kang
 github: selenehyun
 description: Lynq Dashboard is now available. A web UI to visualize Hub-Form-Node relationships and quickly identify problematic resources.
 tags:
-  - Lynq
   - Dashboard
   - Kubernetes
   - DevEx
