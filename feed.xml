@@ -7,6 +7,14 @@
     <language>en</language>
     <atom:link href="https://lynq.sh/feed.xml" rel="self" type="application/rss+xml"/>
     <item>
+      <title>In the Age of AI Agents, How Should Infrastructure Change?</title>
+      <link>https://lynq.sh/blog/ai-agent-era-infrastructure.html</link>
+      <guid>https://lynq.sh/blog/ai-agent-era-infrastructure.html</guid>
+      <pubDate>Mon, 23 Feb 2026 00:00:00 GMT</pubDate>
+      <description>The era of AI Agents autonomously managing infrastructure is coming. But do we have an answer to the question, &apos;When AI decides, who executes?&apos;</description>
+      <author>Tim Kang</author>
+    </item>
+    <item>
       <title>Introducing Lynq Dashboard</title>
       <link>https://lynq.sh/blog/introducing-lynq-dashboard.html</link>
       <guid>https://lynq.sh/blog/introducing-lynq-dashboard.html</guid>
