@@ -1,5 +1,6 @@
 ---
 layout: home
+title: Infrastructure as Data for Kubernetes
 ---
 
 <script setup>

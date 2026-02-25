@@ -298,6 +298,56 @@ export default withMermaid(
         return head;
       }
 
+      // Home page: Organization + WebSite + SoftwareApplication JSON-LD
+      const isHomePage = page === "index.md";
+      if (isHomePage) {
+        head.push([
+          "script",
+          { type: "application/ld+json" },
+          JSON.stringify({
+            "@context": "https://schema.org",
+            "@graph": [
+              {
+                "@type": "Organization",
+                "@id": `${hostname}/#organization`,
+                name: "Lynq",
+                url: hostname,
+                logo: {
+                  "@type": "ImageObject",
+                  url: `${hostname}/logo.png`,
+                },
+                sameAs: ["https://github.com/k8s-lynq/lynq"],
+              },
+              {
+                "@type": "WebSite",
+                "@id": `${hostname}/#website`,
+                url: hostname,
+                name: "Lynq",
+                publisher: { "@id": `${hostname}/#organization` },
+              },
+              {
+                "@type": "SoftwareApplication",
+                name: "Lynq",
+                applicationCategory: "DeveloperApplication",
+                operatingSystem: "Kubernetes",
+                description:
+                  "A RecordOps platform that implements Infrastructure as Data for Kubernetes. Turn database records into infrastructure automatically.",
+                url: hostname,
+                image: `${hostname}/og-image.png`,
+                author: { "@id": `${hostname}/#organization` },
+                offers: {
+                  "@type": "Offer",
+                  price: "0",
+                  priceCurrency: "USD",
+                },
+                license: "https://opensource.org/licenses/Apache-2.0",
+              },
+            ],
+          }),
+        ]);
+        return head;
+      }
+
       // Documentation pages: per-page OG/Twitter/JSON-LD
       const title = pageData.title;
       const description = pageData.frontmatter?.description;
@@ -451,7 +501,7 @@ export default withMermaid(
             "A RecordOps platform that implements Infrastructure as Data for Kubernetes. Turn database records into infrastructure. No YAML files, no CI/CD delays—just data.",
         },
       ],
-      ["meta", { property: "og:url", content: "https://lynq.sh" }],
+      ["meta", { property: "og:url", content: "https://lynq.sh/" }],
       [
         "meta",
         { property: "og:image", content: "https://lynq.sh/og-image.png" },
