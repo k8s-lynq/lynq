@@ -7,6 +7,14 @@
     <language>en</language>
     <atom:link href="https://lynq.sh/feed.xml" rel="self" type="application/rss+xml"/>
     <item>
+      <title>Is It Okay to Delegate Business Logic to Infrastructure?</title>
+      <link>https://lynq.sh/blog/business-logic-in-infrastructure.html</link>
+      <guid>https://lynq.sh/blog/business-logic-in-infrastructure.html</guid>
+      <pubDate>Wed, 25 Feb 2026 00:00:00 GMT</pubDate>
+      <description>Thoughts on delegating business logic to the infrastructure layer, through the lens of Uber embedding Rate Limiting into their service mesh</description>
+      <author>Tim Kang</author>
+    </item>
+    <item>
       <title>In the Age of AI Agents, How Should Infrastructure Change?</title>
       <link>https://lynq.sh/blog/ai-agent-era-infrastructure.html</link>
       <guid>https://lynq.sh/blog/ai-agent-era-infrastructure.html</guid>
