@@ -62,7 +62,55 @@
 </template>
 
 <script setup>
-import HeroParticles from './landing/HeroParticles.vue'
+import { defineAsyncComponent, h } from 'vue'
+
+const HeroParticlesSkeleton = {
+  render() {
+    return h('div', {
+      style: {
+        position: 'relative',
+        width: '100%',
+        height: '100vh',
+        minHeight: '700px',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        overflow: 'hidden',
+        background: 'radial-gradient(ellipse at center, rgba(102,126,234,0.1) 0%, transparent 60%), linear-gradient(180deg, #0a0a0f 0%, #111118 100%)',
+      },
+    }, [
+      h('div', {
+        style: {
+          visibility: 'hidden',
+          textAlign: 'center',
+          padding: '0 2rem',
+          maxWidth: '900px',
+        },
+      }, [
+        h('div', { style: { padding: '0.5rem 1rem', fontSize: '0.875rem', marginBottom: '1.5rem' } }, 'Infrastructure as Data'),
+        h('h1', { style: { fontSize: 'clamp(2.5rem, 6vw, 4.5rem)', fontWeight: '700', lineHeight: '1.1', margin: '0 0 1.5rem' } }, [
+          'Your Database.',
+          h('br'),
+          'Your Infrastructure.',
+        ]),
+        h('p', { style: { fontSize: 'clamp(1rem, 2vw, 1.375rem)', margin: '0 0 2.5rem', lineHeight: '1.6' } },
+          'Lynq turns database records into Kubernetes resources. Automatically.'
+        ),
+        h('div', { style: { display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' } }, [
+          h('span', { style: { padding: '1rem 2rem', fontSize: '1rem', borderRadius: '12px' } }, 'Get Started →'),
+          h('span', { style: { padding: '1rem 2rem', fontSize: '1rem', borderRadius: '12px' } }, '► Watch Demo'),
+        ]),
+      ]),
+    ])
+  }
+}
+
+const HeroParticles = defineAsyncComponent({
+  loader: () => import('./landing/HeroParticles.vue'),
+  loadingComponent: HeroParticlesSkeleton,
+  delay: 0,
+})
 import ProblemSolution from './landing/ProblemSolution.vue'
 import InteractivePipeline from './landing/InteractivePipeline.vue'
 import SafetyControls from './landing/SafetyControls.vue'
@@ -341,4 +389,5 @@ import LatestBlog from './landing/LatestBlog.vue'
     display: none;
   }
 }
+
 </style>

@@ -197,9 +197,17 @@ export default withMermaid(
     },
 
     vite: {
-      optimizeDeps: {
-        exclude: [],
-      },
+      build: {
+        rollupOptions: {
+          output: {
+            manualChunks(id) {
+              if (id.includes('node_modules/three')) {
+                return 'three'
+              }
+            }
+          }
+        }
+      }
     },
 
     head: [
