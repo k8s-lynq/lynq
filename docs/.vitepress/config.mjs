@@ -161,12 +161,6 @@ export default withMermaid(
         provider: "local",
       },
 
-      footer: {
-        message:
-          '<p style="margin-bottom: 12px">Released under the Apache 2.0 License.<br />Built with ❤️ using Kubebuilder, Controller-Runtime, and VitePress.</p>',
-        copyright: "Copyright © 2025-2026 Lynq",
-      },
-
       editLink: {
         pattern: "https://github.com/k8s-lynq/lynq/edit/main/docs/:path",
         text: "Edit this page on GitHub",
