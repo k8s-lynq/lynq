@@ -1,3 +1,7 @@
+---
+description: "Learn about Lynq, a RecordOps platform that links your data sources to Kubernetes resources. Discover its origin, core features, and what you can build with it."
+---
+
 # About Lynq
 
 Hey there! 👋 Let me tell you the story behind Lynq.

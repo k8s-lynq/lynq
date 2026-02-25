@@ -1,3 +1,7 @@
+---
+description: "Define resource ordering with dependency graphs in Lynq. Learn about DAG-based topological sorting, cycle detection, and the interactive dependency visualizer."
+---
+
 # Dependency Management Guide
 
 Resource ordering and dependency graphs in Lynq.

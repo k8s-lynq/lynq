@@ -1,3 +1,7 @@
+---
+description: "Get Lynq running on Minikube in under 5 minutes. Set up a complete local environment with MySQL, sample data, and live node provisioning."
+---
+
 # Quick Start with Minikube
 
 Get Lynq running on Minikube in under 5 minutes using automated scripts.

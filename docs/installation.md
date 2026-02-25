@@ -1,3 +1,7 @@
+---
+description: "Install Lynq on Kubernetes using Helm, Kustomize, or from source. Covers prerequisites, cert-manager setup, and multi-platform support."
+---
+
 # Installation Guide
 
 This guide covers various installation methods for Lynq.

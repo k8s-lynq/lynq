@@ -1,3 +1,7 @@
+---
+description: "Master Lynq's template system powered by Go text/template and 200+ Sprig functions. Learn template syntax, custom functions, variables, and best practices."
+---
+
 # Template Guide
 
 Templates are the core of Lynq's resource generation system. This guide covers template syntax, available functions, and best practices.

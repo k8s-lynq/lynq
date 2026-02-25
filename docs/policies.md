@@ -1,3 +1,7 @@
+---
+description: "Control resource lifecycle with Lynq's four policy types: CreationPolicy, DeletionPolicy, ConflictPolicy, and PatchStrategy. Includes decision flowcharts and examples."
+---
+
 # Policies Guide
 
 Lynq provides fine-grained control over resource lifecycle through four policy types. This guide explains each policy and when to use them.

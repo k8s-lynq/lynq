@@ -1,3 +1,7 @@
+---
+description: "Configure MySQL and other datasources for Lynq. Covers connection setup, column mappings, SQL VIEWs, extraValueMappings, and data transformation."
+---
+
 # DataSource Configuration Guide
 
 Complete guide for configuring datasources with Lynq.

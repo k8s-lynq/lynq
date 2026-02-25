@@ -222,79 +222,130 @@ export default withMermaid(
       const cleanUrl = page.replace(/\.md$/, "").replace(/index$/, "");
       head.push(["link", { rel: "canonical", href: `${hostname}/${cleanUrl}` }]);
 
-      // Blog posts only: OG/Twitter/article/JSON-LD override
+      // Blog posts: OG/Twitter/article/JSON-LD override
       const isBlogPost = page.startsWith("blog/") && page !== "blog/index.md";
-      if (!isBlogPost) return head;
+      if (isBlogPost) {
+        const { title, description, date, author, tags, image, github } =
+          pageData.frontmatter;
+        const postUrl = `${hostname}/${cleanUrl}`;
+        const ogImage = image
+          ? `${hostname}${image}`
+          : `${hostname}/og-image.png`;
+        const isoDate = new Date(date).toISOString();
 
-      const { title, description, date, author, tags, image, github } =
-        pageData.frontmatter;
-      const postUrl = `${hostname}/${cleanUrl}`;
-      const ogImage = image
-        ? `${hostname}${image}`
-        : `${hostname}/og-image.png`;
-      const isoDate = new Date(date).toISOString();
+        // Override global OG tags (matched by property key)
+        head.push(
+          ["meta", { property: "og:type", content: "article" }],
+          ["meta", { property: "og:title", content: title }],
+          ["meta", { property: "og:description", content: description }],
+          ["meta", { property: "og:url", content: postUrl }],
+          ["meta", { property: "og:image", content: ogImage }]
+        );
 
-      // Override global OG tags (matched by property key)
-      head.push(
-        ["meta", { property: "og:type", content: "article" }],
-        ["meta", { property: "og:title", content: title }],
-        ["meta", { property: "og:description", content: description }],
-        ["meta", { property: "og:url", content: postUrl }],
-        ["meta", { property: "og:image", content: ogImage }]
-      );
-
-      // Article-specific meta
-      head.push(
-        ["meta", { property: "article:published_time", content: isoDate }],
-        [
-          "meta",
-          { property: "article:author", content: author || "Tim Kang" },
-        ]
-      );
-      if (tags?.length) {
-        for (const tag of tags) {
-          head.push(["meta", { property: "article:tag", content: tag }]);
+        // Article-specific meta
+        head.push(
+          ["meta", { property: "article:published_time", content: isoDate }],
+          [
+            "meta",
+            { property: "article:author", content: author || "Tim Kang" },
+          ]
+        );
+        if (tags?.length) {
+          for (const tag of tags) {
+            head.push(["meta", { property: "article:tag", content: tag }]);
+          }
         }
+
+        // Twitter tag overrides (matched by name key)
+        head.push(
+          ["meta", { name: "twitter:title", content: title }],
+          ["meta", { name: "twitter:description", content: description }],
+          ["meta", { name: "twitter:image", content: ogImage }]
+        );
+
+        // General description override
+        head.push(["meta", { name: "description", content: description }]);
+
+        // JSON-LD (BlogPosting schema)
+        head.push([
+          "script",
+          { type: "application/ld+json" },
+          JSON.stringify({
+            "@context": "https://schema.org",
+            "@type": "BlogPosting",
+            headline: title,
+            description,
+            image: ogImage,
+            datePublished: isoDate,
+            author: {
+              "@type": "Person",
+              name: author || "Tim Kang",
+              ...(github ? { url: `https://github.com/${github}` } : {}),
+            },
+            publisher: {
+              "@type": "Organization",
+              name: "Lynq",
+              logo: {
+                "@type": "ImageObject",
+                url: `${hostname}/logo.png`,
+              },
+            },
+            url: postUrl,
+            mainEntityOfPage: { "@type": "WebPage", "@id": postUrl },
+          }),
+        ]);
+
+        return head;
       }
 
-      // Twitter tag overrides (matched by name key)
+      // Documentation pages: per-page OG/Twitter/JSON-LD
+      const title = pageData.title;
+      const description = pageData.frontmatter?.description;
+      if (!title) return head;
+
+      const pageUrl = `${hostname}/${cleanUrl}`;
+
+      // OG tag overrides
       head.push(
-        ["meta", { name: "twitter:title", content: title }],
-        ["meta", { name: "twitter:description", content: description }],
-        ["meta", { name: "twitter:image", content: ogImage }]
+        ["meta", { property: "og:title", content: `${title} | Lynq` }],
+        ["meta", { property: "og:url", content: pageUrl }],
       );
 
-      // General description override
-      head.push(["meta", { name: "description", content: description }]);
+      // Twitter tag overrides
+      head.push(
+        ["meta", { name: "twitter:title", content: `${title} | Lynq` }],
+      );
 
-      // JSON-LD (BlogPosting schema)
-      head.push([
-        "script",
-        { type: "application/ld+json" },
-        JSON.stringify({
+      // description overrides (only when frontmatter provides one)
+      if (description) {
+        head.push(
+          ["meta", { property: "og:description", content: description }],
+          ["meta", { name: "twitter:description", content: description }],
+          ["meta", { name: "description", content: description }],
+        );
+      }
+
+      // JSON-LD (TechArticle schema)
+      if (description) {
+        head.push(["script", { type: "application/ld+json" }, JSON.stringify({
           "@context": "https://schema.org",
-          "@type": "BlogPosting",
+          "@type": "TechArticle",
           headline: title,
           description,
-          image: ogImage,
-          datePublished: isoDate,
+          image: `${hostname}/og-image.png`,
           author: {
-            "@type": "Person",
-            name: author || "Tim Kang",
-            ...(github ? { url: `https://github.com/${github}` } : {}),
+            "@type": "Organization",
+            name: "Lynq",
           },
           publisher: {
             "@type": "Organization",
             name: "Lynq",
-            logo: {
-              "@type": "ImageObject",
-              url: `${hostname}/logo.png`,
-            },
+            logo: { "@type": "ImageObject", url: `${hostname}/logo.png` },
           },
-          url: postUrl,
-          mainEntityOfPage: { "@type": "WebPage", "@id": postUrl },
-        }),
-      ]);
+          url: pageUrl,
+          mainEntityOfPage: { "@type": "WebPage", "@id": pageUrl },
+        })]);
+      }
 
       return head;
     },

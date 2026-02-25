@@ -1,3 +1,7 @@
+---
+description: "Understand RecordOps and Infrastructure as Data — the paradigm where database records become infrastructure specifications. Compare IaD vs IaC and learn when each approach works best."
+---
+
 # RecordOps: Infrastructure as Data
 
 If you've ever built a multi-tenant SaaS platform, you've probably felt this pain: your customer data lives in your database, but their infrastructure is managed somewhere else (YAML files in Git, Terraform state, manual kubectl commands). Every time you onboard a new customer, you're coordinating between multiple systems that don't naturally talk to each other.

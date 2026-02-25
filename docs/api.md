@@ -1,3 +1,7 @@
+---
+description: "Complete API reference for Lynq CRDs — LynqHub, LynqForm, and LynqNode. Includes spec fields, status fields, and configuration examples."
+---
+
 # API Reference
 
 Complete API reference for Lynq CRDs.

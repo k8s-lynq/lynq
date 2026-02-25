@@ -1,5 +1,6 @@
 ---
 aside: false
+description: "See how Lynq bridges your database and Kubernetes cluster with a three-component architecture. Includes interactive diagrams and an end-to-end walkthrough."
 ---
 
 # How Lynq Works

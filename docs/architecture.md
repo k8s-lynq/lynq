@@ -1,3 +1,7 @@
+---
+description: "Deep dive into Lynq's three-controller architecture, CRD design, reconciliation flow, SSA engine, and key design patterns for Infrastructure as Data."
+---
+
 # Architecture
 
 This document provides a detailed overview of Lynq's architecture as a RecordOps platform, including system components, reconciliation flow, and key design decisions that enable Infrastructure as Data.

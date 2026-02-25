@@ -1,3 +1,7 @@
+---
+description: "Configure Lynq controller flags, concurrency settings, metrics, health probes, and environment-specific options for consistent operation."
+---
+
 # Configuration Guide
 
 Configure Lynq consistently across environments.
