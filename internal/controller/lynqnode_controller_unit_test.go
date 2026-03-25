@@ -1081,18 +1081,27 @@ func TestBuildAppliedResourceKeys(t *testing.T) {
 						{
 							ID:           "cm1",
 							NameTemplate: "node1-config",
+							Spec: unstructured.Unstructured{Object: map[string]interface{}{
+								"apiVersion": "v1", "kind": "ConfigMap",
+							}},
 						},
 					},
 					Deployments: []lynqv1.TResource{
 						{
 							ID:           "deploy1",
 							NameTemplate: "node1-deploy",
+							Spec: unstructured.Unstructured{Object: map[string]interface{}{
+								"apiVersion": "apps/v1", "kind": "Deployment",
+							}},
 						},
 					},
 					Services: []lynqv1.TResource{
 						{
 							ID:           "svc1",
 							NameTemplate: "node1-svc",
+							Spec: unstructured.Unstructured{Object: map[string]interface{}{
+								"apiVersion": "v1", "kind": "Service",
+							}},
 						},
 					},
 				},
@@ -1130,9 +1139,8 @@ func TestBuildAppliedResourceKeys(t *testing.T) {
 				StatusManager: status.NewManager(fakeClient, status.WithSyncMode()),
 			}
 
-			ctx := context.Background()
-			keys, err := r.buildAppliedResourceKeys(ctx, tt.node)
-			require.NoError(t, err)
+			_ = context.Background()
+			keys := r.buildAppliedResourceKeys(tt.node)
 			assert.Equal(t, tt.wantCount, len(keys))
 
 			// Verify key format

@@ -107,12 +107,18 @@ func TestShouldUpdateLynqNode_CorrectTemplateComparison(t *testing.T) {
 		Extra:     map[string]string{},
 	}
 
+	// Build template map (same as production code does)
+	templateMap := map[string]*lynqv1.LynqForm{
+		templateA.Name: templateA,
+		templateB.Name: templateB,
+	}
+
 	// Should NOT need update because:
 	// - Data is the same
 	// - Template generation matches (5 == 5)
 	// Before the fix, this would incorrectly return true if template-b (generation 10)
 	// was checked instead of template-a (generation 5)
-	needsUpdate := r.shouldUpdateLynqNode(ctx, hub, nodeForTemplateA, row)
+	needsUpdate := r.shouldUpdateLynqNode(ctx, hub, nodeForTemplateA, row, templateMap)
 
 	assert.False(t, needsUpdate,
 		"Node should NOT need update when data and template generation match. "+
@@ -246,7 +252,8 @@ func TestShouldUpdateLynqNode_DetectsDataChanges(t *testing.T) {
 			}
 
 			ctx := context.Background()
-			needsUpdate := r.shouldUpdateLynqNode(ctx, hub, node, tt.rowData)
+			templateMap := map[string]*lynqv1.LynqForm{template.Name: template}
+			needsUpdate := r.shouldUpdateLynqNode(ctx, hub, node, tt.rowData, templateMap)
 
 			assert.Equal(t, tt.expectUpdate, needsUpdate, tt.description)
 		})
@@ -315,7 +322,8 @@ func TestShouldUpdateLynqNode_DetectsTemplateGenerationChange(t *testing.T) {
 		Extra:     map[string]string{},
 	}
 
-	needsUpdate := r.shouldUpdateLynqNode(ctx, hub, node, row)
+	templateMap := map[string]*lynqv1.LynqForm{template.Name: template}
+	needsUpdate := r.shouldUpdateLynqNode(ctx, hub, node, row, templateMap)
 
 	assert.True(t, needsUpdate,
 		"Template generation change (3 -> 5) should trigger update")
@@ -412,8 +420,13 @@ func TestShouldUpdateLynqNode_MultiTemplateScenario(t *testing.T) {
 		Extra:     map[string]string{},
 	}
 
+	templateMap := map[string]*lynqv1.LynqForm{
+		webTemplate.Name:    webTemplate,
+		workerTemplate.Name: workerTemplate,
+	}
+
 	t.Run("web node should not need update when web template unchanged", func(t *testing.T) {
-		needsUpdate := r.shouldUpdateLynqNode(ctx, hub, webNode, row)
+		needsUpdate := r.shouldUpdateLynqNode(ctx, hub, webNode, row, templateMap)
 		assert.False(t, needsUpdate,
 			"Web node should NOT need update. "+
 				"Before fix: would incorrectly compare against worker-template (gen 15) "+
@@ -421,21 +434,27 @@ func TestShouldUpdateLynqNode_MultiTemplateScenario(t *testing.T) {
 	})
 
 	t.Run("worker node should not need update when worker template unchanged", func(t *testing.T) {
-		needsUpdate := r.shouldUpdateLynqNode(ctx, hub, workerNode, row)
+		needsUpdate := r.shouldUpdateLynqNode(ctx, hub, workerNode, row, templateMap)
 		assert.False(t, needsUpdate,
 			"Worker node should NOT need update when its template generation matches")
 	})
 
 	t.Run("web node should need update when web template changes", func(t *testing.T) {
 		// Simulate template update
-		webTemplate.Generation = 4
+		updatedWebTemplate := webTemplate.DeepCopy()
+		updatedWebTemplate.Generation = 4
+		updatedTemplateMap := map[string]*lynqv1.LynqForm{
+			updatedWebTemplate.Name: updatedWebTemplate,
+			workerTemplate.Name:     workerTemplate,
+		}
+
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithRuntimeObjects(hub, webTemplate, workerTemplate, webNode, workerNode).
+			WithRuntimeObjects(hub, updatedWebTemplate, workerTemplate, webNode, workerNode).
 			Build()
 		r := &LynqHubReconciler{Client: fakeClient, Scheme: scheme}
 
-		needsUpdate := r.shouldUpdateLynqNode(ctx, hub, webNode, row)
+		needsUpdate := r.shouldUpdateLynqNode(ctx, hub, webNode, row, updatedTemplateMap)
 		assert.True(t, needsUpdate,
 			"Web node SHOULD need update when web-template generation changes (3 -> 4)")
 	})

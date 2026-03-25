@@ -1402,33 +1402,41 @@ func parseResourceKey(key string) (string, string, string, string, error) {
 	return kind, namespace, name, resourceID, nil
 }
 
-// buildAppliedResourceKeys builds a set of resource keys from current LynqNode.Spec
-func (r *LynqNodeReconciler) buildAppliedResourceKeys(ctx context.Context, node *lynqv1.LynqNode) (map[string]bool, error) {
+// buildAppliedResourceKeys builds a set of resource keys from current LynqNode.Spec.
+// This uses a lightweight metadata extraction instead of full template rendering,
+// since the key only needs kind/namespace/name/id — all available without rendering the spec body.
+func (r *LynqNodeReconciler) buildAppliedResourceKeys(node *lynqv1.LynqNode) map[string]bool {
 	keys := make(map[string]bool)
-	templateEngine := template.NewEngine()
 
-	// Build template variables
-	vars, err := r.buildTemplateVariablesFromAnnotations(node)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build template variables: %w", err)
-	}
-
-	// Collect all resources
 	allResources := r.collectResourcesFromLynqNode(node)
 
-	// Render each resource and build key
 	for _, res := range allResources {
-		rendered, err := r.renderResource(ctx, templateEngine, res, vars, node)
-		if err != nil {
-			// Skip resources that fail to render (they won't be applied)
-			continue
+		key := r.buildResourceKeyLightweight(res, node)
+		if key != "" {
+			keys[key] = true
 		}
-
-		key := buildResourceKey(rendered, res.ID)
-		keys[key] = true
 	}
 
-	return keys, nil
+	return keys
+}
+
+// buildResourceKeyLightweight extracts a resource key without full spec rendering.
+// NameTemplate, TargetNamespace, and Kind are already resolved by the Hub controller
+// and stored directly in the TResource fields / Spec metadata.
+func (r *LynqNodeReconciler) buildResourceKeyLightweight(res lynqv1.TResource, node *lynqv1.LynqNode) string {
+	kind := res.Spec.GetKind()
+	if kind == "" {
+		return ""
+	}
+
+	name := res.NameTemplate // Already rendered by Hub controller
+
+	namespace := node.Namespace
+	if res.TargetNamespace != "" {
+		namespace = res.TargetNamespace
+	}
+
+	return fmt.Sprintf("%s/%s/%s@%s", kind, namespace, name, res.ID)
 }
 
 // findOrphanedResources finds resources that were previously applied but are no longer in the spec
@@ -1711,11 +1719,7 @@ func (r *LynqNodeReconciler) reconcileSpec(ctx context.Context, node *lynqv1.Lyn
 	}
 
 	// Detect and cleanup orphaned resources
-	currentKeys, err := r.buildAppliedResourceKeys(ctx, node)
-	if err != nil {
-		logger.Error(err, "Failed to build applied resource keys")
-		currentKeys = make(map[string]bool)
-	}
+	currentKeys := r.buildAppliedResourceKeys(node)
 
 	previousKeys := node.Status.AppliedResources
 	orphanedKeys := r.findOrphanedResources(previousKeys, currentKeys)
@@ -1889,43 +1893,49 @@ func (r *LynqNodeReconciler) checkResourcesReadiness(
 	ctx context.Context,
 	node *lynqv1.LynqNode,
 	resources []lynqv1.TResource,
-	vars template.Variables,
+	_ template.Variables,
 ) (readyCount, failedCount, conflictedCount int32) {
 	logger := log.FromContext(ctx)
 	checker := readiness.NewChecker(r.Client)
-	templateEngine := template.NewEngine()
 
 	for _, resource := range resources {
-		// Render resource (just to get name/namespace)
-		obj, err := r.renderResource(ctx, templateEngine, resource, vars, node)
-		if err != nil {
-			logger.V(1).Info("Failed to render resource for status check", "id", resource.ID, "error", err)
+		// Extract name/namespace without full spec rendering (metadata is already resolved by Hub)
+		name := resource.NameTemplate
+		namespace := node.Namespace
+		if resource.TargetNamespace != "" {
+			namespace = resource.TargetNamespace
+		}
+		gvk := resource.Spec.GroupVersionKind()
+
+		if name == "" || gvk.Kind == "" {
+			logger.V(1).Info("Resource missing name or kind for status check", "id", resource.ID)
 			failedCount++
 			continue
 		}
 
-		// Get current resource from cluster
-		current := obj.DeepCopy()
-		err = r.Get(ctx, client.ObjectKey{
-			Name:      obj.GetName(),
-			Namespace: obj.GetNamespace(),
+		// Get current resource from cluster using a fresh empty object (no DeepCopy needed)
+		current := &unstructured.Unstructured{}
+		current.SetGroupVersionKind(gvk)
+		err := r.Get(ctx, client.ObjectKey{
+			Name:      name,
+			Namespace: namespace,
 		}, current)
 
 		if err != nil {
 			if errors.IsNotFound(err) {
 				// Resource doesn't exist - count as failed
-				logger.V(1).Info("Resource not found in cluster", "id", resource.ID, "name", obj.GetName())
+				logger.V(1).Info("Resource not found in cluster", "id", resource.ID, "name", name)
 				failedCount++
 				continue
 			}
-			logger.Error(err, "Failed to get resource for status check", "id", resource.ID, "name", obj.GetName())
+			logger.Error(err, "Failed to get resource for status check", "id", resource.ID, "name", name)
 			failedCount++
 			continue
 		}
 
 		// Check ownership conflict
 		if r.hasOwnershipConflict(current, node) {
-			logger.V(1).Info("Resource has ownership conflict", "id", resource.ID, "name", obj.GetName())
+			logger.V(1).Info("Resource has ownership conflict", "id", resource.ID, "name", name)
 			conflictedCount++
 			failedCount++
 			continue
@@ -1934,7 +1944,7 @@ func (r *LynqNodeReconciler) checkResourcesReadiness(
 		// Check readiness
 		if resource.WaitForReady != nil && *resource.WaitForReady {
 			if !checker.IsReady(current) {
-				logger.V(1).Info("Resource not ready", "id", resource.ID, "name", obj.GetName())
+				logger.V(1).Info("Resource not ready", "id", resource.ID, "name", name)
 				failedCount++
 				continue
 			}

@@ -22,7 +22,9 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -293,6 +295,9 @@ func (r *LynqFormReconciler) updateStatusWithRollout(ctx context.Context, tmpl *
 			return err
 		}
 
+		// Snapshot status before modifications to detect no-op writes
+		statusBefore := latest.Status.DeepCopy()
+
 		// Update status fields
 		latest.Status.ObservedGeneration = latest.Generation
 		latest.Status.TotalNodes = stats.totalNodes
@@ -301,15 +306,13 @@ func (r *LynqFormReconciler) updateStatusWithRollout(ctx context.Context, tmpl *
 		// Update rollout status if maxSkew is configured
 		r.updateRolloutStatus(latest, stats)
 
-		// Prepare Valid condition
+		// Prepare Valid condition — use meta.SetStatusCondition to preserve LastTransitionTime
 		validCondition := metav1.Condition{
-			Type:               ConditionTypeValid,
-			Status:             metav1.ConditionTrue,
-			Reason:             "ValidationPassed",
-			Message:            "Template validation passed",
-			LastTransitionTime: metav1.Now(),
+			Type:    ConditionTypeValid,
+			Status:  metav1.ConditionTrue,
+			Reason:  "ValidationPassed",
+			Message: "Template validation passed",
 		}
-
 		if len(validationErrors) > 0 {
 			validCondition.Status = metav1.ConditionFalse
 			validCondition.Reason = "ValidationFailed"
@@ -318,13 +321,11 @@ func (r *LynqFormReconciler) updateStatusWithRollout(ctx context.Context, tmpl *
 
 		// Prepare Applied condition
 		appliedCondition := metav1.Condition{
-			Type:               "Applied",
-			Status:             metav1.ConditionFalse,
-			Reason:             "NotAllNodesReady",
-			Message:            fmt.Sprintf("%d/%d nodes ready", stats.readyNodes, stats.totalNodes),
-			LastTransitionTime: metav1.Now(),
+			Type:    ConditionTypeApplied,
+			Status:  metav1.ConditionFalse,
+			Reason:  "NotAllNodesReady",
+			Message: fmt.Sprintf("%d/%d nodes ready", stats.readyNodes, stats.totalNodes),
 		}
-
 		if stats.totalNodes > 0 && stats.readyNodes == stats.totalNodes {
 			appliedCondition.Status = metav1.ConditionTrue
 			appliedCondition.Reason = "AllNodesReady"
@@ -334,30 +335,13 @@ func (r *LynqFormReconciler) updateStatusWithRollout(ctx context.Context, tmpl *
 			appliedCondition.Message = "No nodes using this template"
 		}
 
-		// Update or append Valid condition
-		foundValid := false
-		for i := range latest.Status.Conditions {
-			if latest.Status.Conditions[i].Type == ConditionTypeValid {
-				latest.Status.Conditions[i] = validCondition
-				foundValid = true
-				break
-			}
-		}
-		if !foundValid {
-			latest.Status.Conditions = append(latest.Status.Conditions, validCondition)
-		}
+		// Use meta.SetStatusCondition which correctly preserves LastTransitionTime
+		meta.SetStatusCondition(&latest.Status.Conditions, validCondition)
+		meta.SetStatusCondition(&latest.Status.Conditions, appliedCondition)
 
-		// Update or append Applied condition
-		foundApplied := false
-		for i := range latest.Status.Conditions {
-			if latest.Status.Conditions[i].Type == ConditionTypeApplied {
-				latest.Status.Conditions[i] = appliedCondition
-				foundApplied = true
-				break
-			}
-		}
-		if !foundApplied {
-			latest.Status.Conditions = append(latest.Status.Conditions, appliedCondition)
+		// Skip write if status is unchanged (compare full status including rollout fields)
+		if apiequality.Semantic.DeepEqual(statusBefore, &latest.Status) {
+			return nil
 		}
 
 		// Update status subresource

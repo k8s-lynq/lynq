@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"text/template"
 
 	"github.com/Masterminds/sprig/v3"
@@ -44,6 +45,11 @@ const (
 
 // Variables contains all template variables available for rendering
 type Variables map[string]interface{}
+
+// globalTemplateCache is a process-wide cache of parsed templates shared across all Engine instances.
+// This is safe because all Engine instances use identical funcMaps, and template.Execute is
+// safe for concurrent use after parsing.
+var globalTemplateCache sync.Map // map[string]*template.Template
 
 // Engine handles template rendering with Go templates + Sprig functions
 type Engine struct {
@@ -71,27 +77,31 @@ func NewEngine() *Engine {
 	return engine
 }
 
-// Render renders a template string with the given variables
+// Render renders a template string with the given variables.
+// Parsed templates are cached by their source string for reuse across calls.
+// Go's template.Template.Execute is safe for concurrent use after parsing.
 func (e *Engine) Render(templateStr string, vars Variables) (string, error) {
 	if templateStr == "" {
 		return "", nil
 	}
 
-	// Create template with missingkey=error to detect missing variable references
-	// This ensures typos in variable names are caught as errors rather than silently
-	// producing empty values. Users should use the `default` function for optional
-	// variables that may have empty values, not for truly undefined variables.
-	tmpl, err := template.New("template").
-		Option("missingkey=error").
-		Funcs(e.funcMap).
-		Parse(templateStr)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse template: %w", err)
+	// Look up cached parsed template (process-wide cache shared across all Engine instances)
+	cached, ok := globalTemplateCache.Load(templateStr)
+	if !ok {
+		// Parse and cache the template
+		parsed, err := template.New("template").
+			Option("missingkey=error").
+			Funcs(e.funcMap).
+			Parse(templateStr)
+		if err != nil {
+			return "", fmt.Errorf("failed to parse template: %w", err)
+		}
+		cached, _ = globalTemplateCache.LoadOrStore(templateStr, parsed)
 	}
 
 	// Execute template
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, vars); err != nil {
+	if err := cached.(*template.Template).Execute(&buf, vars); err != nil {
 		return "", fmt.Errorf("failed to execute template: %w", err)
 	}
 
