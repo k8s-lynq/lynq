@@ -167,6 +167,12 @@ func (a *Applier) ApplyResource(
 			logger.V(1).Info("Failed to remove orphan markers, continuing anyway", "error", err)
 		}
 		_ = removed // Will be used for event logging in controller
+
+		// If orphan markers were removed, the cluster resource's RV changed.
+		// Force apply (disable skip) so the re-adoption is properly recorded.
+		if removed {
+			beforeResourceVersion = ""
+		}
 	}
 
 	// Apply ignoreFields filtering if resource already exists
