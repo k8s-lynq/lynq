@@ -25,7 +25,9 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -169,6 +171,12 @@ func (r *LynqHubReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 	}
 
+	// Build template lookup map for shouldUpdateLynqNode (avoids per-node API calls)
+	templateMap := make(map[string]*lynqv1.LynqForm, len(templates))
+	for _, tmpl := range templates {
+		templateMap[tmpl.Name] = tmpl
+	}
+
 	// Build existing node map: key = {template-name}-{uid}
 	existing := make(map[NodeKey]*lynqv1.LynqNode)
 	for i := range existingNodes.Items {
@@ -217,7 +225,7 @@ func (r *LynqHubReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			}
 		} else {
 			// Update existing LynqNode if data or template changed
-			if r.shouldUpdateLynqNode(ctx, registry, existingLynqNode, desired.Row) {
+			if r.shouldUpdateLynqNode(ctx, registry, existingLynqNode, desired.Row, templateMap) {
 				// Check maxSkew before updating
 				if r.canUpdateNodeWithCount(ctx, tmpl, templateNodes, updatedInThisIteration[tmpl.Name]) {
 					if err := r.updateLynqNode(ctx, registry, tmpl, existingLynqNode, desired.Row); err != nil {
@@ -621,8 +629,9 @@ func (r *LynqHubReconciler) createLynqNode(ctx context.Context, registry *lynqv1
 	return r.Create(ctx, node)
 }
 
-// shouldUpdateLynqNode checks if a node needs to be updated based on data changes or template changes
-func (r *LynqHubReconciler) shouldUpdateLynqNode(ctx context.Context, registry *lynqv1.LynqHub, node *lynqv1.LynqNode, row datasource.NodeRow) bool {
+// shouldUpdateLynqNode checks if a node needs to be updated based on data changes or template changes.
+// templateMap is a pre-built cache of templates keyed by name, avoiding per-node API calls.
+func (r *LynqHubReconciler) shouldUpdateLynqNode(_ context.Context, _ *lynqv1.LynqHub, node *lynqv1.LynqNode, row datasource.NodeRow, templateMap map[string]*lynqv1.LynqForm) bool {
 	// Check if stored data differs from current row data
 	storedHostOrURL := node.Annotations["lynq.sh/hostOrUrl"]
 	storedActivate := node.Annotations["lynq.sh/activate"]
@@ -643,14 +652,10 @@ func (r *LynqHubReconciler) shouldUpdateLynqNode(ctx context.Context, registry *
 		return true
 	}
 
-	// Check if template has been updated
-	// Use node.Spec.TemplateRef to find the correct template for this node
-	tmpl := &lynqv1.LynqForm{}
-	if err := r.Get(ctx, types.NamespacedName{
-		Name:      node.Spec.TemplateRef,
-		Namespace: registry.Namespace,
-	}, tmpl); err != nil {
-		// If we can't get the template, assume update is needed
+	// Check if template has been updated using pre-cached template map
+	tmpl, ok := templateMap[node.Spec.TemplateRef]
+	if !ok {
+		// Template not found in cache, assume update is needed
 		return true
 	}
 
@@ -943,6 +948,9 @@ func (r *LynqHubReconciler) updateStatus(ctx context.Context, registry *lynqv1.L
 			return err
 		}
 
+		// Snapshot status before modifications to detect no-op writes
+		statusBefore := latest.Status.DeepCopy()
+
 		// Update status fields
 		latest.Status.ReferencingTemplates = referencingTemplates
 		latest.Status.Desired = desired
@@ -950,31 +958,29 @@ func (r *LynqHubReconciler) updateStatus(ctx context.Context, registry *lynqv1.L
 		latest.Status.Failed = failed
 		latest.Status.ObservedGeneration = latest.Generation
 
-		// Prepare condition
+		// Prepare condition — use meta.SetStatusCondition to preserve LastTransitionTime
+		conditionStatus := metav1.ConditionTrue
+		if !synced {
+			conditionStatus = metav1.ConditionFalse
+		}
 		condition := metav1.Condition{
-			Type:               "Ready",
-			Status:             metav1.ConditionTrue,
-			Reason:             "DatabaseConnected",
-			Message:            "Successfully connected to database and queried node data",
-			LastTransitionTime: metav1.Now(),
+			Type:    "Ready",
+			Status:  conditionStatus,
+			Reason:  "DatabaseConnected",
+			Message: "Successfully connected to database and queried node data",
 		}
 		if !synced {
-			condition.Status = metav1.ConditionFalse
 			condition.Reason = "DatabaseConnectionFailed"
 			condition.Message = "Failed to connect to database or query node data"
 		}
 
-		// Update or append condition
-		found := false
-		for i := range latest.Status.Conditions {
-			if latest.Status.Conditions[i].Type == condition.Type {
-				latest.Status.Conditions[i] = condition
-				found = true
-				break
-			}
-		}
-		if !found {
-			latest.Status.Conditions = append(latest.Status.Conditions, condition)
+		// Use meta.SetStatusCondition which correctly preserves LastTransitionTime
+		// when the condition status hasn't changed (per K8s API conventions)
+		meta.SetStatusCondition(&latest.Status.Conditions, condition)
+
+		// Skip write if status is unchanged (compare full status struct)
+		if apiequality.Semantic.DeepEqual(statusBefore, &latest.Status) {
+			return nil
 		}
 
 		// Update status subresource

@@ -133,7 +133,8 @@ func (a *Applier) ApplyResource(
 		Name:      obj.GetName(),
 		Namespace: obj.GetNamespace(),
 	}
-	existing := obj.DeepCopy()
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(obj.GroupVersionKind())
 	existsBeforeApply := true
 	beforeResourceVersion := ""
 
@@ -234,20 +235,14 @@ func (a *Applier) ApplyResource(
 		return false, fmt.Errorf("unsupported patch strategy: %s", patchStrategy)
 	}
 
-	// Check if resource was actually changed by comparing resourceVersion
+	// Check if resource was actually changed by comparing resourceVersion.
+	// Patch/Update/Create responses update obj in-place with the server response,
+	// so obj.GetResourceVersion() reflects the post-apply state without an extra GET.
 	if !existsBeforeApply {
-		// Resource was newly created
 		return true, nil
 	}
 
-	// Get the resource after apply to check resourceVersion
-	after := obj.DeepCopy()
-	if err := a.client.Get(ctx, key, after); err != nil {
-		// If we can't get the resource, assume it was changed
-		return true, nil
-	}
-
-	afterResourceVersion := after.GetResourceVersion()
+	afterResourceVersion := obj.GetResourceVersion()
 	changed := beforeResourceVersion != afterResourceVersion
 
 	return changed, nil
