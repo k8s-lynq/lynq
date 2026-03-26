@@ -77,11 +77,14 @@ type renderCacheEntry struct {
 }
 
 // computeRenderCacheKey builds a cache key from all inputs that affect renderResource output.
-// This includes node identity, generation, template variable annotations, and resource ID.
+// This includes node UID (changes on delete/recreate), generation, template variable annotations,
+// and resource ID. The UID ensures cache invalidation when a LynqNode is deleted and recreated
+// with the same name but different content.
 func computeRenderCacheKey(node *lynqv1.LynqNode, resourceID string) string {
-	return fmt.Sprintf("%s/%s/%d/%s/%s/%s/%s/%s/%s",
+	return fmt.Sprintf("%s/%s/%s/%d/%s/%s/%s/%s/%s/%s",
 		node.Name,
 		node.Namespace,
+		string(node.UID),
 		node.Generation,
 		node.Annotations["lynq.sh/hostOrUrl"],
 		node.Annotations["lynq.sh/activate"],
