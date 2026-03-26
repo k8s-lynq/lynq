@@ -51,6 +51,11 @@ type Variables map[string]interface{}
 // safe for concurrent use after parsing.
 var globalTemplateCache sync.Map // map[string]*template.Template
 
+// bufPool is a pool of bytes.Buffer to reduce GC pressure from template.Execute calls.
+var bufPool = sync.Pool{
+	New: func() interface{} { return new(bytes.Buffer) },
+}
+
 // Engine handles template rendering with Go templates + Sprig functions
 type Engine struct {
 	funcMap template.FuncMap
@@ -85,6 +90,13 @@ func (e *Engine) Render(templateStr string, vars Variables) (string, error) {
 		return "", nil
 	}
 
+	// Fast path: strings without template markers are returned as-is.
+	// This avoids cache lookup, Execute, and Buffer allocation for static strings
+	// like "apps/v1", "TCP", "/ready" which make up ~60% of resource spec values.
+	if !strings.Contains(templateStr, "{{") {
+		return templateStr, nil
+	}
+
 	// Look up cached parsed template (process-wide cache shared across all Engine instances)
 	cached, ok := globalTemplateCache.Load(templateStr)
 	if !ok {
@@ -99,9 +111,12 @@ func (e *Engine) Render(templateStr string, vars Variables) (string, error) {
 		cached, _ = globalTemplateCache.LoadOrStore(templateStr, parsed)
 	}
 
-	// Execute template
-	var buf bytes.Buffer
-	if err := cached.(*template.Template).Execute(&buf, vars); err != nil {
+	// Execute template using pooled buffer to reduce GC pressure
+	buf := bufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer bufPool.Put(buf)
+
+	if err := cached.(*template.Template).Execute(buf, vars); err != nil {
 		return "", fmt.Errorf("failed to execute template: %w", err)
 	}
 

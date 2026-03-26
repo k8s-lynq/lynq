@@ -34,10 +34,12 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	lynqv1 "github.com/k8s-lynq/lynq/api/v1"
@@ -295,8 +297,8 @@ func (r *LynqHubReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		logger.Info("Garbage collection completed", "deletedNodes", deletedCount)
 	}
 
-	// Update status
-	readyCount, failedCount := r.countLynqNodeStatus(ctx, registry)
+	// Update status (reuse already-fetched node list instead of a separate LIST call)
+	readyCount, failedCount := countNodeStatusFromList(existingNodes)
 	totalDesired := int32(len(templates)) * int32(len(nodeRows))
 	r.updateStatus(ctx, registry, int32(len(templates)), totalDesired, readyCount, failedCount, true)
 
@@ -906,13 +908,17 @@ func (r *LynqHubReconciler) getExistingLynqNodes(ctx context.Context, registry *
 	return nodeList, nil
 }
 
-// countLynqNodeStatus counts ready and failed nodes
+// countLynqNodeStatus counts ready and failed nodes (performs a LIST call)
 func (r *LynqHubReconciler) countLynqNodeStatus(ctx context.Context, registry *lynqv1.LynqHub) (int32, int32) {
 	nodes, err := r.getExistingLynqNodes(ctx, registry)
 	if err != nil {
 		return 0, 0
 	}
+	return countNodeStatusFromList(nodes)
+}
 
+// countNodeStatusFromList counts ready/failed from an already-fetched node list (no API call)
+func countNodeStatusFromList(nodes *lynqv1.LynqNodeList) (int32, int32) {
 	var ready, failed int32
 	for _, node := range nodes.Items {
 		for _, cond := range node.Status.Conditions {
@@ -926,7 +932,6 @@ func (r *LynqHubReconciler) countLynqNodeStatus(ctx context.Context, registry *l
 			}
 		}
 	}
-
 	return ready, failed
 }
 
@@ -1431,7 +1436,7 @@ func (r *LynqHubReconciler) canUpdateNodeWithCount(ctx context.Context, tmpl *ly
 func (r *LynqHubReconciler) SetupWithManager(mgr ctrl.Manager, concurrency int) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&lynqv1.LynqHub{}).
-		Owns(&lynqv1.LynqNode{}).
+		Owns(&lynqv1.LynqNode{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		// Watch LynqForms to re-sync nodes when template changes
 		Watches(&lynqv1.LynqForm{}, handler.EnqueueRequestsFromMapFunc(r.findRegistryForTemplate)).
 		Named("lynqhub").

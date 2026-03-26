@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -59,9 +60,58 @@ import (
 // LynqNodeReconciler reconciles a LynqNode object
 type LynqNodeReconciler struct {
 	client.Client
-	Scheme        *runtime.Scheme
-	Recorder      record.EventRecorder
-	StatusManager *status.Manager
+	Scheme           *runtime.Scheme
+	Recorder         record.EventRecorder
+	StatusManager    *status.Manager
+	TemplateEngine   *template.Engine
+	Applier          *apply.Applier
+	ReadinessChecker *readiness.Checker
+	renderCache      sync.Map // key: "nodeName/resourceID" → *renderCacheEntry
+}
+
+// renderCacheEntry holds a cached rendered resource to skip expensive re-rendering
+// when inputs (node spec + template variables) haven't changed.
+type renderCacheEntry struct {
+	inputKey string                     // cache key incorporating all render inputs
+	rendered *unstructured.Unstructured // the fully rendered resource
+}
+
+// computeRenderCacheKey builds a cache key from all inputs that affect renderResource output.
+// This includes node identity, generation, template variable annotations, and resource ID.
+func computeRenderCacheKey(node *lynqv1.LynqNode, resourceID string) string {
+	return fmt.Sprintf("%s/%s/%d/%s/%s/%s/%s/%s/%s",
+		node.Name,
+		node.Namespace,
+		node.Generation,
+		node.Annotations["lynq.sh/hostOrUrl"],
+		node.Annotations["lynq.sh/activate"],
+		node.Annotations["lynq.sh/extra"],
+		node.Annotations["lynq.sh/hubId"],
+		node.Annotations["lynq.sh/template-generation"],
+		resourceID,
+	)
+}
+
+// Getters with nil-safe fallback (for tests that don't set these fields)
+func (r *LynqNodeReconciler) getTemplateEngine() *template.Engine {
+	if r.TemplateEngine != nil {
+		return r.TemplateEngine
+	}
+	return template.NewEngine()
+}
+
+func (r *LynqNodeReconciler) getApplier() *apply.Applier {
+	if r.Applier != nil {
+		return r.Applier
+	}
+	return apply.NewApplier(r.Client, r.Scheme)
+}
+
+func (r *LynqNodeReconciler) getReadinessChecker() *readiness.Checker {
+	if r.ReadinessChecker != nil {
+		return r.ReadinessChecker
+	}
+	return readiness.NewChecker(r.Client)
 }
 
 const (
@@ -179,9 +229,9 @@ func (r *LynqNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 // skippedIds contains the IDs of resources that were skipped due to dependency failures
 func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.LynqNode, sortedNodes []*graph.Node, vars template.Variables) (readyCount, failedCount, changedCount, conflictedCount, skippedCount int32, skippedIds []string) {
 	logger := log.FromContext(ctx)
-	applier := apply.NewApplier(r.Client, r.Scheme)
-	checker := readiness.NewChecker(r.Client)
-	templateEngine := template.NewEngine()
+	applier := r.getApplier()
+	checker := r.getReadinessChecker()
+	templateEngine := r.getTemplateEngine()
 
 	totalResources := int32(len(sortedNodes))
 	progressingSet := false
@@ -279,8 +329,8 @@ func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.Ly
 			return readyCount, failedCount, changedCount, conflictedCount, skippedCount, skippedIds
 		}
 
-		// Render templates
-		obj, err := r.renderResource(ctx, templateEngine, resource, vars, node)
+		// Render templates (with cache: skip expensive rendering when inputs unchanged)
+		obj, err := r.renderResourceCached(ctx, templateEngine, resource, vars, node)
 		if err != nil {
 			logger.Error(err, "Failed to render resource", "id", resource.ID)
 			r.Recorder.Eventf(node, corev1.EventTypeWarning, "TemplateRenderError",
@@ -723,6 +773,36 @@ func (r *LynqNodeReconciler) collectResourcesFromLynqNode(node *lynqv1.LynqNode)
 	return resources
 }
 
+// renderResourceCached returns a rendered resource, using an in-memory cache to skip
+// expensive DeepCopy + renderUnstructured when inputs haven't changed since last render.
+// The caller MUST NOT hold onto the returned object across reconciles — ApplyResource mutates it.
+func (r *LynqNodeReconciler) renderResourceCached(ctx context.Context, engine *template.Engine, resource lynqv1.TResource, vars template.Variables, node *lynqv1.LynqNode) (*unstructured.Unstructured, error) {
+	cacheKey := computeRenderCacheKey(node, resource.ID)
+	storageKey := node.Namespace + "/" + node.Name + "/" + resource.ID
+
+	// Check cache
+	if cached, ok := r.renderCache.Load(storageKey); ok {
+		entry := cached.(*renderCacheEntry)
+		if entry.inputKey == cacheKey {
+			// Cache hit: return a deep copy (ApplyResource mutates the object)
+			return entry.rendered.DeepCopy(), nil
+		}
+	}
+
+	// Cache miss: render from scratch
+	rendered, err := r.renderResource(ctx, engine, resource, vars, node)
+	if err != nil {
+		return nil, err
+	}
+
+	// Store in cache (store the original, return a copy for apply)
+	r.renderCache.Store(storageKey, &renderCacheEntry{
+		inputKey: cacheKey,
+		rendered: rendered,
+	})
+	return rendered.DeepCopy(), nil
+}
+
 // renderResource renders a resource template
 // Note: NameTemplate, LabelsTemplate, AnnotationsTemplate, TargetNamespace are already rendered by Hub controller
 // We only need to render the spec (unstructured.Unstructured) contents which may contain template variables
@@ -805,7 +885,7 @@ func (r *LynqNodeReconciler) renderUnstructured(
 	resourceKind string,
 	fieldPath []string,
 ) (map[string]interface{}, error) {
-	result := make(map[string]interface{})
+	result := make(map[string]interface{}, len(data))
 
 	for k, v := range data {
 		currentPath := append(fieldPath, k)
@@ -1049,8 +1129,8 @@ func (r *LynqNodeReconciler) cleanupLynqNodeResources(ctx context.Context, node 
 	logger := log.FromContext(ctx)
 	logger.Info("Starting node resource cleanup", "node", node.Name)
 
-	applier := apply.NewApplier(r.Client, r.Scheme)
-	templateEngine := template.NewEngine()
+	applier := r.getApplier()
+	templateEngine := r.getTemplateEngine()
 
 	// Build template variables from annotations
 	vars, err := r.buildTemplateVariablesFromAnnotations(node)
@@ -1496,7 +1576,7 @@ func (r *LynqNodeReconciler) deleteOrphanedResource(ctx context.Context, node *l
 	}
 
 	// Delete or retain the resource based on DeletionPolicy
-	applier := apply.NewApplier(r.Client, r.Scheme)
+	applier := r.getApplier()
 	orphanReason := "RemovedFromTemplate"
 
 	if err := applier.DeleteResource(ctx, obj, deletionPolicy, orphanReason); err != nil {
@@ -1896,7 +1976,7 @@ func (r *LynqNodeReconciler) checkResourcesReadiness(
 	_ template.Variables,
 ) (readyCount, failedCount, conflictedCount int32) {
 	logger := log.FromContext(ctx)
-	checker := readiness.NewChecker(r.Client)
+	checker := r.getReadinessChecker()
 
 	for _, resource := range resources {
 		// Extract name/namespace without full spec rendering (metadata is already resolved by Hub)
