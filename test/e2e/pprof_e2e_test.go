@@ -50,20 +50,12 @@ var _ = Describe("Pprof Endpoint", Ordered, func() {
 	})
 
 	AfterAll(func() {
-		// Cleanup curl pod
+		// Cleanup curl pod only. Do NOT restore the deployment (remove --enable-pprof)
+		// because the rolling restart would cause webhook unavailability and break
+		// subsequent tests. Leaving pprof enabled is harmless — it only adds an HTTP
+		// server on :6060 that doesn't affect webhook, metrics, or reconciliation.
 		cmd := exec.Command("kubectl", "delete", "pod", pprofPodName,
 			"-n", namespace, "--ignore-not-found=true")
-		_, _ = utils.Run(cmd)
-
-		// Restore deployment without pprof (remove --enable-pprof)
-		patchJSON := `{"spec":{"template":{"spec":{"containers":[{"name":"manager","args":["--leader-elect","--health-probe-bind-address=:8081","--metrics-bind-address=:8443"],"ports":[{"containerPort":8443,"name":"https","protocol":"TCP"}]}]}}}}`
-		cmd = exec.Command("kubectl", "patch", "deployment", deploymentName,
-			"-n", namespace, "--type=strategic", "-p", patchJSON)
-		_, _ = utils.Run(cmd)
-
-		// Wait for rollout after restore
-		cmd = exec.Command("kubectl", "rollout", "status", "deployment/"+deploymentName,
-			"-n", namespace, "--timeout=120s")
 		_, _ = utils.Run(cmd)
 	})
 
