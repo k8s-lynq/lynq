@@ -274,40 +274,40 @@ func (m *Manager) applyUpdate(ctx context.Context, update *StatusUpdate) error {
 			return err
 		}
 
-		// Apply changes to status
+		// Apply changes to status (only mark changed if value actually differs)
 		statusChanged := false
 
-		if update.ObservedGeneration != nil {
+		if update.ObservedGeneration != nil && node.Status.ObservedGeneration != *update.ObservedGeneration {
 			node.Status.ObservedGeneration = *update.ObservedGeneration
 			statusChanged = true
 		}
 
-		if update.ReadyResources != nil {
+		if update.ReadyResources != nil && node.Status.ReadyResources != *update.ReadyResources {
 			node.Status.ReadyResources = *update.ReadyResources
 			statusChanged = true
 		}
 
-		if update.FailedResources != nil {
+		if update.FailedResources != nil && node.Status.FailedResources != *update.FailedResources {
 			node.Status.FailedResources = *update.FailedResources
 			statusChanged = true
 		}
 
-		if update.DesiredResources != nil {
+		if update.DesiredResources != nil && node.Status.DesiredResources != *update.DesiredResources {
 			node.Status.DesiredResources = *update.DesiredResources
 			statusChanged = true
 		}
 
-		if update.AppliedResources != nil {
+		if update.AppliedResources != nil && !stringSlicesEqual(node.Status.AppliedResources, update.AppliedResources) {
 			node.Status.AppliedResources = update.AppliedResources
 			statusChanged = true
 		}
 
-		if update.SkippedResources != nil {
+		if update.SkippedResources != nil && node.Status.SkippedResources != *update.SkippedResources {
 			node.Status.SkippedResources = *update.SkippedResources
 			statusChanged = true
 		}
 
-		if update.SkippedResourceIds != nil {
+		if update.SkippedResourceIds != nil && !stringSlicesEqual(node.Status.SkippedResourceIds, update.SkippedResourceIds) {
 			node.Status.SkippedResourceIds = update.SkippedResourceIds
 			statusChanged = true
 		}
@@ -363,6 +363,19 @@ func (m *Manager) updateCondition(status *lynqv1.LynqNodeStatus, newCond metav1.
 
 	// Condition not found, append
 	status.Conditions = append(status.Conditions, newCond)
+	return true
+}
+
+// stringSlicesEqual compares two string slices for equality
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
 	return true
 }
 
