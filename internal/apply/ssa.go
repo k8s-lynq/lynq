@@ -19,6 +19,7 @@ package apply
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -199,25 +200,23 @@ func (a *Applier) ApplyResource(
 		// Server-Side Apply (default)
 		force := conflictPolicy == lynqv1.ConflictPolicyForce
 
-		// Use dry-run to check if the apply would change the resource (Flux pattern).
+		// Use server-side dry-run to detect no-op applies (Flux pattern).
 		// K8s SSA can update managedFields.time even on semantic no-op applies, which
 		// bumps resourceVersion and triggers watch events from external controllers
 		// (e.g., Kyverno), creating infinite reconciliation loops.
-		// A server-side dry-run returns the would-be result including server defaulting
-		// and normalization. If the dry-run resourceVersion matches the existing one,
-		// the apply is a true no-op — skip the actual PATCH entirely.
-		if existsBeforeApply {
+		// A dry-run returns the would-be result with server defaulting/normalization
+		// applied. Comparing this result with the existing object (excluding volatile
+		// metadata) detects true no-ops without relying on resourceVersion.
+		if existsBeforeApply && beforeResourceVersion != "" {
 			dryRunObj := obj.DeepCopy()
 			dryRunErr := a.client.Patch(ctx, dryRunObj, client.Apply, &client.PatchOptions{
 				FieldManager: FieldManager,
 				Force:        &force,
 				DryRun:       []string{metav1.DryRunAll},
 			})
-			if dryRunErr == nil && dryRunObj.GetResourceVersion() == beforeResourceVersion {
-				// Server confirmed no changes would be made — skip the real apply
+			if dryRunErr == nil && isObjectUnchanged(dryRunObj, existing) {
 				return false, nil
 			}
-			// If dry-run failed or showed changes, proceed with the real apply
 		}
 
 		if err := a.client.Patch(ctx, obj, client.Apply, &client.PatchOptions{
@@ -279,6 +278,48 @@ func (a *Applier) ApplyResource(
 	changed := beforeResourceVersion != afterResourceVersion
 
 	return changed, nil
+}
+
+// isObjectUnchanged compares a dry-run result with the existing object to detect no-op applies.
+// It compares all fields except volatile metadata (resourceVersion, managedFields, etc.)
+// that change on every write regardless of semantic changes.
+func isObjectUnchanged(dryRun, existing *unstructured.Unstructured) bool {
+	// Compare all non-metadata top-level fields (spec, data, type, etc.)
+	for k := range dryRun.Object {
+		if k == "metadata" {
+			continue
+		}
+		if !reflect.DeepEqual(dryRun.Object[k], existing.Object[k]) {
+			return false
+		}
+	}
+
+	// Check if dry-run added new top-level fields not in existing
+	for k := range existing.Object {
+		if k == "metadata" {
+			continue
+		}
+		if _, ok := dryRun.Object[k]; !ok {
+			return false
+		}
+	}
+
+	// Compare annotations
+	if !reflect.DeepEqual(dryRun.GetAnnotations(), existing.GetAnnotations()) {
+		return false
+	}
+
+	// Compare labels
+	if !reflect.DeepEqual(dryRun.GetLabels(), existing.GetLabels()) {
+		return false
+	}
+
+	// Compare ownerReferences
+	if !reflect.DeepEqual(dryRun.GetOwnerReferences(), existing.GetOwnerReferences()) {
+		return false
+	}
+
+	return true
 }
 
 // DeleteResource deletes a resource respecting deletion policy
