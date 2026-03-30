@@ -176,24 +176,32 @@ func (a *Applier) ApplyResource(
 	}
 
 	// Apply ignoreFields filtering if resource already exists
-	// Instead of removing ignored fields, we COPY values from the existing resource.
-	// This ensures SSA doesn't delete fields that should be preserved.
 	if existsBeforeApply && len(ignoreFields) > 0 {
 		filter, err := fieldfilter.NewFilter(ignoreFields)
 		if err != nil {
 			return false, fmt.Errorf("failed to create field filter: %w", err)
 		}
 
-		// Preserve ignored fields by copying values from existing resource
-		// This ensures SSA doesn't delete fields that are externally controlled
-		if err := filter.PreserveIgnoredFields(obj, existing); err != nil {
-			return false, fmt.Errorf("failed to preserve ignored fields: %w", err)
+		switch patchStrategy {
+		case lynqv1.PatchStrategyReplace:
+			// For replace strategy, preserve existing values since replace overwrites everything
+			if err := filter.PreserveIgnoredFields(obj, existing); err != nil {
+				return false, fmt.Errorf("failed to preserve ignored fields: %w", err)
+			}
+		default:
+			// For SSA (apply) and merge strategies, REMOVE ignored fields from desired object.
+			// SSA: not sending a field means we don't claim ownership — other field managers retain theirs.
+			// Merge: not sending a field means it won't be touched.
+			if err := filter.RemoveIgnoredFields(obj); err != nil {
+				return false, fmt.Errorf("failed to remove ignored fields: %w", err)
+			}
 		}
 
 		logger := log.FromContext(ctx)
-		logger.V(1).Info("Preserved ignored fields from existing resource",
+		logger.V(1).Info("Applied ignoreFields filtering",
 			"resource", fmt.Sprintf("%s/%s", obj.GetNamespace(), obj.GetName()),
 			"kind", obj.GetKind(),
+			"patchStrategy", patchStrategy,
 			"ignoreFields", ignoreFields)
 	}
 
