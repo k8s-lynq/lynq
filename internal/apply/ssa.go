@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sync"
 	"time"
 
@@ -209,17 +210,20 @@ func (a *Applier) ApplyResource(
 			"ignoreFields", ignoreFields)
 	}
 
-	// Check if we can skip the apply (desired spec unchanged AND resource not externally modified).
-	// The hash is computed from the PRE-patch desired object (before server mutations).
+	// Skip SSA apply if the desired state matches the existing state.
+	// K8s SSA can update managedFields.time even on no-op applies, which changes
+	// resourceVersion and triggers watch events from external controllers (e.g., Kyverno),
+	// creating an infinite reconciliation loop. Pre-comparing avoids unnecessary PATCHes.
 	rvKey := fmt.Sprintf("%s/%s/%s", obj.GetKind(), obj.GetNamespace(), obj.GetName())
 	preApplyDesiredHash := a.computeDesiredHash(obj)
-	if existsBeforeApply {
-		if prev, ok := a.appliedRV.Load(rvKey); ok {
-			state := prev.(*appliedState)
-			if state.desiredHash == preApplyDesiredHash && state.resourceVersion == beforeResourceVersion {
-				// Nothing changed: our desired spec is identical AND no external modification
-				return false, nil
-			}
+	if existsBeforeApply && (patchStrategy == lynqv1.PatchStrategyApply || patchStrategy == "") {
+		if a.isApplyRedundant(obj, existing) {
+			// Store state so future reconciles also skip
+			a.appliedRV.Store(rvKey, &appliedState{
+				desiredHash:     preApplyDesiredHash,
+				resourceVersion: existing.GetResourceVersion(),
+			})
+			return false, nil
 		}
 	}
 
@@ -300,14 +304,70 @@ func (a *Applier) ApplyResource(
 
 // computeDesiredHash produces a lightweight hash of the desired spec for PATCH skip detection.
 func (a *Applier) computeDesiredHash(obj *unstructured.Unstructured) string {
-	// Use JSON serialization of the spec for a deterministic hash.
-	// This is called at most once per resource per reconcile (on apply or skip-check).
 	data, err := json.Marshal(obj.Object)
 	if err != nil {
-		return "" // Force apply on hash failure
+		return ""
 	}
 	h := sha256.Sum256(data)
-	return fmt.Sprintf("%x", h[:8]) // 16-char hex, sufficient for change detection
+	return fmt.Sprintf("%x", h[:8])
+}
+
+// isApplyRedundant checks if an SSA apply would be a no-op by comparing the desired
+// object's fields with the existing object. This prevents unnecessary PATCHes that
+// would update managedFields.time and change resourceVersion, which can trigger
+// external controllers (e.g., Kyverno) and create infinite reconciliation loops.
+func (a *Applier) isApplyRedundant(desired, existing *unstructured.Unstructured) bool {
+	// Compare all non-metadata top-level fields (e.g., data, type, spec)
+	for k, dv := range desired.Object {
+		if k == "metadata" {
+			continue
+		}
+		ev, ok := existing.Object[k]
+		if !ok || !reflect.DeepEqual(dv, ev) {
+			return false
+		}
+	}
+
+	// Compare annotations: each annotation in desired must match existing
+	da := desired.GetAnnotations()
+	ea := existing.GetAnnotations()
+	for k, v := range da {
+		if ea[k] != v {
+			return false
+		}
+	}
+
+	// Compare labels: each label in desired must match existing
+	dl := desired.GetLabels()
+	el := existing.GetLabels()
+	for k, v := range dl {
+		if el[k] != v {
+			return false
+		}
+	}
+
+	// Compare ownerReferences: each ownerRef in desired must exist in existing (by UID)
+	desiredOwnerRefs := desired.GetOwnerReferences()
+	existingOwnerRefs := existing.GetOwnerReferences()
+	for _, dRef := range desiredOwnerRefs {
+		found := false
+		for _, eRef := range existingOwnerRefs {
+			if dRef.UID == eRef.UID &&
+				dRef.APIVersion == eRef.APIVersion &&
+				dRef.Kind == eRef.Kind &&
+				dRef.Name == eRef.Name &&
+				reflect.DeepEqual(dRef.BlockOwnerDeletion, eRef.BlockOwnerDeletion) &&
+				reflect.DeepEqual(dRef.Controller, eRef.Controller) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+
+	return true
 }
 
 // DeleteResource deletes a resource respecting deletion policy
