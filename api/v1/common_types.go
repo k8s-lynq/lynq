@@ -137,10 +137,11 @@ type TResource struct {
 	// +kubebuilder:default=apply
 	PatchStrategy PatchStrategy `json:"patchStrategy,omitempty"`
 
-	// IgnoreFields specifies JSONPath expressions for fields to exclude from synchronization
-	// These fields will be applied during initial creation but ignored in subsequent reconciliations
-	// Only effective when CreationPolicy is WhenNeeded (default)
-	// Allows fine-grained control for fields that should be managed externally (e.g., HPA-controlled replicas)
+	// IgnoreFields specifies JSONPath expressions for fields to exclude from synchronization.
+	// These fields are never included in SSA/merge payloads, so Lynq never claims ownership.
+	// External controllers (e.g., HPA, ExternalSecrets Operator) can manage these fields freely.
+	// Only effective when CreationPolicy is WhenNeeded (default).
+	// For replace strategy, existing values are preserved instead of being removed.
 	// Example: ["$.spec.replicas", "$.spec.template.spec.containers[0].resources"]
 	// +optional
 	IgnoreFields []string `json:"ignoreFields,omitempty"`
