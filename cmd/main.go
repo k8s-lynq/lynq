@@ -19,6 +19,8 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"net/http"
+	_ "net/http/pprof" // Register pprof handlers with default mux
 	"os"
 	"path/filepath"
 
@@ -38,8 +40,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	lynqv1 "github.com/k8s-lynq/lynq/api/v1"
+	"github.com/k8s-lynq/lynq/internal/apply"
 	"github.com/k8s-lynq/lynq/internal/controller"
+	"github.com/k8s-lynq/lynq/internal/readiness"
 	"github.com/k8s-lynq/lynq/internal/status"
+	"github.com/k8s-lynq/lynq/internal/template"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -64,6 +69,7 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var enablePprof bool
 	var hubConcurrency int
 	var formConcurrency int
 	var nodeConcurrency int
@@ -91,6 +97,8 @@ func main() {
 		"Number of concurrent reconciliations for LynqForm controller")
 	flag.IntVar(&nodeConcurrency, "node-concurrency", 10,
 		"Number of concurrent reconciliations for LynqNode controller")
+	flag.BoolVar(&enablePprof, "enable-pprof", false,
+		"Enable pprof profiling endpoint on :6060 for CPU/memory diagnostics")
 	opts := zap.Options{
 		Development: false,
 	}
@@ -98,6 +106,15 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	if enablePprof {
+		go func() {
+			setupLog.Info("Starting pprof server on :6060")
+			if err := http.ListenAndServe(":6060", nil); err != nil {
+				setupLog.Error(err, "pprof server failed")
+			}
+		}()
+	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -234,10 +251,13 @@ func main() {
 	statusManager := status.NewManager(mgr.GetClient())
 
 	lynqnodeReconciler := &controller.LynqNodeReconciler{
-		Client:        mgr.GetClient(),
-		Scheme:        mgr.GetScheme(),
-		Recorder:      mgr.GetEventRecorderFor("lynqnode-controller"),
-		StatusManager: statusManager,
+		Client:           mgr.GetClient(),
+		Scheme:           mgr.GetScheme(),
+		Recorder:         mgr.GetEventRecorderFor("lynqnode-controller"),
+		StatusManager:    statusManager,
+		TemplateEngine:   template.NewEngine(),
+		Applier:          apply.NewApplier(mgr.GetClient(), mgr.GetScheme()),
+		ReadinessChecker: readiness.NewChecker(mgr.GetClient()),
 	}
 
 	if err := lynqnodeReconciler.SetupWithManager(mgr, nodeConcurrency); err != nil {
