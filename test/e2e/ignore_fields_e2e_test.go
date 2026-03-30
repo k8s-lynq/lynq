@@ -80,6 +80,9 @@ var _ = Describe("Field-Level Ignore Control (ignoreFields)", Ordered, func() {
 		Describe("Preserving externally controlled fields", func() {
 			It("should preserve ignored ConfigMap data fields during reconciliation", func() {
 				By("Given a LynqForm with ignoreFields for $.data.externalKey")
+				// Note: externalKey is NOT included in the template spec because ignored fields
+				// should never be sent via SSA — Lynq must never claim ownership of them.
+				// The external value will be set separately (simulating an external controller).
 				createForm(formName, hubName, `
   configMaps:
     - id: ignore-config
@@ -92,7 +95,6 @@ var _ = Describe("Field-Level Ignore Control (ignoreFields)", Ordered, func() {
         kind: ConfigMap
         data:
           managedKey: managed-value
-          externalKey: initial-external-value
 `)
 
 				By("And active data in MySQL")
@@ -104,33 +106,27 @@ var _ = Describe("Field-Level Ignore Control (ignoreFields)", Ordered, func() {
 
 				configMapName := fmt.Sprintf("%s-ignore-config", uid)
 
-				By("Then the ConfigMap should be created with all fields")
+				By("Then the ConfigMap should be created with managed fields only")
 				Eventually(func(g Gomega) {
 					cmd := exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
 						"-o", "jsonpath={.data.managedKey}")
 					output, err := utils.Run(cmd)
 					g.Expect(err).NotTo(HaveOccurred())
 					g.Expect(output).To(Equal("managed-value"))
-
-					cmd = exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
-						"-o", "jsonpath={.data.externalKey}")
-					output, err = utils.Run(cmd)
-					g.Expect(err).NotTo(HaveOccurred())
-					g.Expect(output).To(Equal("initial-external-value"))
 				}, policyTestTimeout, policyTestInterval).Should(Succeed())
 
-				By("When the externalKey is manually changed")
+				By("When an external controller sets the externalKey")
 				cmd := exec.Command("kubectl", "patch", "configmap", configMapName, "-n", policyTestNamespace,
-					"--type=merge", "-p", `{"data":{"externalKey":"manually-changed-value"}}`)
+					"--type=merge", "-p", `{"data":{"externalKey":"externally-set-value"}}`)
 				_, err := utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred())
 
-				// Verify the change
+				// Verify the external value was set
 				cmd = exec.Command("kubectl", "get", "configmap", configMapName, "-n", policyTestNamespace,
 					"-o", "jsonpath={.data.externalKey}")
 				output, err := utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(output).To(Equal("manually-changed-value"))
+				Expect(output).To(Equal("externally-set-value"))
 
 				By("And the template is updated (triggering reconciliation)")
 				createForm(formName, hubName, `
@@ -145,7 +141,6 @@ var _ = Describe("Field-Level Ignore Control (ignoreFields)", Ordered, func() {
         kind: ConfigMap
         data:
           managedKey: updated-managed-value
-          externalKey: template-external-value
 `)
 
 				By("Then the managedKey should be updated")
@@ -163,7 +158,7 @@ var _ = Describe("Field-Level Ignore Control (ignoreFields)", Ordered, func() {
 						"-o", "jsonpath={.data.externalKey}")
 					output, err := utils.Run(cmd)
 					g.Expect(err).NotTo(HaveOccurred())
-					g.Expect(output).To(Equal("manually-changed-value"))
+					g.Expect(output).To(Equal("externally-set-value"))
 				}, 15*time.Second, policyTestInterval).Should(Succeed())
 			})
 		})
@@ -281,6 +276,8 @@ var _ = Describe("Field-Level Ignore Control (ignoreFields)", Ordered, func() {
 		Describe("Wildcard ignoreFields", func() {
 			It("should preserve all container resources when using wildcard", func() {
 				By("Given a LynqForm with wildcard ignoreFields for container resources")
+				// Note: resources are NOT included in the template spec because ignored fields
+				// are never sent via SSA — Lynq must never claim ownership of them.
 				createForm(formName, hubName, `
   deployments:
     - id: wildcard-deployment
@@ -306,13 +303,6 @@ var _ = Describe("Field-Level Ignore Control (ignoreFields)", Ordered, func() {
               - name: app
                 image: busybox:1.36
                 command: ["sh", "-c", "sleep 3600"]
-                resources:
-                  requests:
-                    memory: "64Mi"
-                    cpu: "100m"
-                  limits:
-                    memory: "128Mi"
-                    cpu: "200m"
 `)
 
 				By("And active data in MySQL")
@@ -324,17 +314,17 @@ var _ = Describe("Field-Level Ignore Control (ignoreFields)", Ordered, func() {
 
 				deploymentName := fmt.Sprintf("%s-wildcard-app", uid)
 
-				By("Then the Deployment should be created with initial resources")
+				By("Then the Deployment should be created without resources")
 				Eventually(func(g Gomega) {
 					cmd := exec.Command("kubectl", "get", "deployment", deploymentName, "-n", policyTestNamespace,
-						"-o", "jsonpath={.spec.template.spec.containers[0].resources.limits.memory}")
+						"-o", "jsonpath={.spec.template.spec.containers[0].name}")
 					output, err := utils.Run(cmd)
 					g.Expect(err).NotTo(HaveOccurred())
-					g.Expect(output).To(Equal("128Mi"))
+					g.Expect(output).To(Equal("app"))
 				}, policyTestTimeout, policyTestInterval).Should(Succeed())
 
-				By("When container resources are manually tuned")
-				patchCmd := `{"spec":{"template":{"spec":{"containers":[{"name":"app","resources":{"limits":{"memory":"256Mi","cpu":"500m"}}}]}}}}`
+				By("When container resources are set externally (simulating VPA or manual tuning)")
+				patchCmd := `{"spec":{"template":{"spec":{"containers":[{"name":"app","resources":{"requests":{"memory":"64Mi","cpu":"100m"},"limits":{"memory":"256Mi","cpu":"500m"}}}]}}}}`
 				cmd := exec.Command("kubectl", "patch", "deployment", deploymentName, "-n", policyTestNamespace,
 					"--type=strategic", "-p", patchCmd)
 				_, err := utils.Run(cmd)
@@ -375,13 +365,6 @@ var _ = Describe("Field-Level Ignore Control (ignoreFields)", Ordered, func() {
               - name: app
                 image: busybox:1.36.1
                 command: ["sh", "-c", "sleep 3600"]
-                resources:
-                  requests:
-                    memory: "64Mi"
-                    cpu: "100m"
-                  limits:
-                    memory: "128Mi"
-                    cpu: "200m"
 `)
 
 				By("Then the image should be updated")
@@ -393,7 +376,7 @@ var _ = Describe("Field-Level Ignore Control (ignoreFields)", Ordered, func() {
 					g.Expect(output).To(Equal("busybox:1.36.1"))
 				}, policyTestTimeout, policyTestInterval).Should(Succeed())
 
-				By("And the manually tuned resources should be preserved")
+				By("And the externally set resources should be preserved")
 				Consistently(func(g Gomega) {
 					cmd := exec.Command("kubectl", "get", "deployment", deploymentName, "-n", policyTestNamespace,
 						"-o", "jsonpath={.spec.template.spec.containers[0].resources.limits.memory}")

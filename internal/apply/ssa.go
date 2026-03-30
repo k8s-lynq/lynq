@@ -175,8 +175,8 @@ func (a *Applier) ApplyResource(
 		}
 	}
 
-	// Apply ignoreFields filtering if resource already exists
-	if existsBeforeApply && len(ignoreFields) > 0 {
+	// Apply ignoreFields filtering
+	if len(ignoreFields) > 0 {
 		filter, err := fieldfilter.NewFilter(ignoreFields)
 		if err != nil {
 			return false, fmt.Errorf("failed to create field filter: %w", err)
@@ -184,14 +184,18 @@ func (a *Applier) ApplyResource(
 
 		switch patchStrategy {
 		case lynqv1.PatchStrategyReplace:
-			// For replace strategy, preserve existing values since replace overwrites everything
-			if err := filter.PreserveIgnoredFields(obj, existing); err != nil {
-				return false, fmt.Errorf("failed to preserve ignored fields: %w", err)
+			// For replace strategy, preserve existing values since replace overwrites everything.
+			// Only applicable when resource already exists.
+			if existsBeforeApply {
+				if err := filter.PreserveIgnoredFields(obj, existing); err != nil {
+					return false, fmt.Errorf("failed to preserve ignored fields: %w", err)
+				}
 			}
 		default:
-			// For SSA (apply) and merge strategies, REMOVE ignored fields from desired object.
-			// SSA: not sending a field means we don't claim ownership — other field managers retain theirs.
-			// Merge: not sending a field means it won't be touched.
+			// For SSA (apply) and merge strategies, ALWAYS remove ignored fields from desired object,
+			// even on initial creation. SSA tracks field ownership: if we send a field once and then
+			// stop sending it, SSA interprets this as "remove the field". By never sending ignored
+			// fields, we never claim ownership, so external controllers can manage them freely.
 			if err := filter.RemoveIgnoredFields(obj); err != nil {
 				return false, fmt.Errorf("failed to remove ignored fields: %w", err)
 			}
