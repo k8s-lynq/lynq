@@ -19,7 +19,6 @@ package apply
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -194,21 +193,32 @@ func (a *Applier) ApplyResource(
 			"ignoreFields", ignoreFields)
 	}
 
-	// Skip SSA apply if the desired state matches the existing state.
-	// K8s SSA can update managedFields.time even on no-op applies, which changes
-	// resourceVersion and triggers watch events from external controllers (e.g., Kyverno),
-	// creating an infinite reconciliation loop. Pre-comparing avoids unnecessary PATCHes.
-	if existsBeforeApply && (patchStrategy == lynqv1.PatchStrategyApply || patchStrategy == "") {
-		if a.isApplyRedundant(obj, existing) {
-			return false, nil
-		}
-	}
-
 	// Apply resource based on patch strategy
 	switch patchStrategy {
 	case lynqv1.PatchStrategyApply, "":
 		// Server-Side Apply (default)
 		force := conflictPolicy == lynqv1.ConflictPolicyForce
+
+		// Use dry-run to check if the apply would change the resource (Flux pattern).
+		// K8s SSA can update managedFields.time even on semantic no-op applies, which
+		// bumps resourceVersion and triggers watch events from external controllers
+		// (e.g., Kyverno), creating infinite reconciliation loops.
+		// A server-side dry-run returns the would-be result including server defaulting
+		// and normalization. If the dry-run resourceVersion matches the existing one,
+		// the apply is a true no-op — skip the actual PATCH entirely.
+		if existsBeforeApply {
+			dryRunObj := obj.DeepCopy()
+			dryRunErr := a.client.Patch(ctx, dryRunObj, client.Apply, &client.PatchOptions{
+				FieldManager: FieldManager,
+				Force:        &force,
+				DryRun:       []string{metav1.DryRunAll},
+			})
+			if dryRunErr == nil && dryRunObj.GetResourceVersion() == beforeResourceVersion {
+				// Server confirmed no changes would be made — skip the real apply
+				return false, nil
+			}
+			// If dry-run failed or showed changes, proceed with the real apply
+		}
 
 		if err := a.client.Patch(ctx, obj, client.Apply, &client.PatchOptions{
 			FieldManager: FieldManager,
@@ -269,64 +279,6 @@ func (a *Applier) ApplyResource(
 	changed := beforeResourceVersion != afterResourceVersion
 
 	return changed, nil
-}
-
-// isApplyRedundant checks if an SSA apply would be a no-op by comparing the desired
-// object's fields with the existing object. This prevents unnecessary PATCHes that
-// would update managedFields.time and change resourceVersion, which can trigger
-// external controllers (e.g., Kyverno) and create infinite reconciliation loops.
-func (a *Applier) isApplyRedundant(desired, existing *unstructured.Unstructured) bool {
-	// Compare all non-metadata top-level fields (e.g., data, type, spec)
-	for k, dv := range desired.Object {
-		if k == "metadata" {
-			continue
-		}
-		ev, ok := existing.Object[k]
-		if !ok || !reflect.DeepEqual(dv, ev) {
-			return false
-		}
-	}
-
-	// Compare annotations: each annotation in desired must match existing
-	da := desired.GetAnnotations()
-	ea := existing.GetAnnotations()
-	for k, v := range da {
-		if ea[k] != v {
-			return false
-		}
-	}
-
-	// Compare labels: each label in desired must match existing
-	dl := desired.GetLabels()
-	el := existing.GetLabels()
-	for k, v := range dl {
-		if el[k] != v {
-			return false
-		}
-	}
-
-	// Compare ownerReferences: each ownerRef in desired must exist in existing (by UID)
-	desiredOwnerRefs := desired.GetOwnerReferences()
-	existingOwnerRefs := existing.GetOwnerReferences()
-	for _, dRef := range desiredOwnerRefs {
-		found := false
-		for _, eRef := range existingOwnerRefs {
-			if dRef.UID == eRef.UID &&
-				dRef.APIVersion == eRef.APIVersion &&
-				dRef.Kind == eRef.Kind &&
-				dRef.Name == eRef.Name &&
-				reflect.DeepEqual(dRef.BlockOwnerDeletion, eRef.BlockOwnerDeletion) &&
-				reflect.DeepEqual(dRef.Controller, eRef.Controller) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-
-	return true
 }
 
 // DeleteResource deletes a resource respecting deletion policy
