@@ -18,11 +18,7 @@ package apply
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/json"
 	"fmt"
-	"reflect"
-	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -78,17 +74,10 @@ func (e *ConflictError) Unwrap() error {
 	return e.Err
 }
 
-// appliedState tracks the last successful apply for a resource to skip no-op PATCHes.
-type appliedState struct {
-	desiredHash     string // hash of the desired spec we last applied
-	resourceVersion string // post-apply resourceVersion from API server
-}
-
 // Applier handles Server-Side Apply operations
 type Applier struct {
-	client    client.Client
-	scheme    *runtime.Scheme
-	appliedRV sync.Map // key: "kind/ns/name" → *appliedState
+	client client.Client
+	scheme *runtime.Scheme
 }
 
 // NewApplier creates a new Applier
@@ -168,12 +157,6 @@ func (a *Applier) ApplyResource(
 			logger.V(1).Info("Failed to remove orphan markers, continuing anyway", "error", err)
 		}
 		_ = removed // Will be used for event logging in controller
-
-		// If orphan markers were removed, the cluster resource's RV changed.
-		// Force apply (disable skip) so the re-adoption is properly recorded.
-		if removed {
-			beforeResourceVersion = ""
-		}
 	}
 
 	// Apply ignoreFields filtering
@@ -210,28 +193,32 @@ func (a *Applier) ApplyResource(
 			"ignoreFields", ignoreFields)
 	}
 
-	// Skip SSA apply if the desired state matches the existing state.
-	// K8s SSA can update managedFields.time even on no-op applies, which changes
-	// resourceVersion and triggers watch events from external controllers (e.g., Kyverno),
-	// creating an infinite reconciliation loop. Pre-comparing avoids unnecessary PATCHes.
-	rvKey := fmt.Sprintf("%s/%s/%s", obj.GetKind(), obj.GetNamespace(), obj.GetName())
-	preApplyDesiredHash := a.computeDesiredHash(obj)
-	if existsBeforeApply && (patchStrategy == lynqv1.PatchStrategyApply || patchStrategy == "") {
-		if a.isApplyRedundant(obj, existing) {
-			// Store state so future reconciles also skip
-			a.appliedRV.Store(rvKey, &appliedState{
-				desiredHash:     preApplyDesiredHash,
-				resourceVersion: existing.GetResourceVersion(),
-			})
-			return false, nil
-		}
-	}
-
 	// Apply resource based on patch strategy
 	switch patchStrategy {
 	case lynqv1.PatchStrategyApply, "":
 		// Server-Side Apply (default)
 		force := conflictPolicy == lynqv1.ConflictPolicyForce
+
+		// Use dry-run to check if the apply would change the resource (Flux pattern).
+		// K8s SSA can update managedFields.time even on semantic no-op applies, which
+		// bumps resourceVersion and triggers watch events from external controllers
+		// (e.g., Kyverno), creating infinite reconciliation loops.
+		// A server-side dry-run returns the would-be result including server defaulting
+		// and normalization. If the dry-run resourceVersion matches the existing one,
+		// the apply is a true no-op — skip the actual PATCH entirely.
+		if existsBeforeApply {
+			dryRunObj := obj.DeepCopy()
+			dryRunErr := a.client.Patch(ctx, dryRunObj, client.Apply, &client.PatchOptions{
+				FieldManager: FieldManager,
+				Force:        &force,
+				DryRun:       []string{metav1.DryRunAll},
+			})
+			if dryRunErr == nil && dryRunObj.GetResourceVersion() == beforeResourceVersion {
+				// Server confirmed no changes would be made — skip the real apply
+				return false, nil
+			}
+			// If dry-run failed or showed changes, proceed with the real apply
+		}
 
 		if err := a.client.Patch(ctx, obj, client.Apply, &client.PatchOptions{
 			FieldManager: FieldManager,
@@ -291,83 +278,7 @@ func (a *Applier) ApplyResource(
 	afterResourceVersion := obj.GetResourceVersion()
 	changed := beforeResourceVersion != afterResourceVersion
 
-	// Store applied state for future skip checks.
-	// Use preApplyDesiredHash (computed before Patch mutates obj with server response)
-	// so that the next reconcile's skip check compares like-with-like.
-	a.appliedRV.Store(rvKey, &appliedState{
-		desiredHash:     preApplyDesiredHash,
-		resourceVersion: afterResourceVersion,
-	})
-
 	return changed, nil
-}
-
-// computeDesiredHash produces a lightweight hash of the desired spec for PATCH skip detection.
-func (a *Applier) computeDesiredHash(obj *unstructured.Unstructured) string {
-	data, err := json.Marshal(obj.Object)
-	if err != nil {
-		return ""
-	}
-	h := sha256.Sum256(data)
-	return fmt.Sprintf("%x", h[:8])
-}
-
-// isApplyRedundant checks if an SSA apply would be a no-op by comparing the desired
-// object's fields with the existing object. This prevents unnecessary PATCHes that
-// would update managedFields.time and change resourceVersion, which can trigger
-// external controllers (e.g., Kyverno) and create infinite reconciliation loops.
-func (a *Applier) isApplyRedundant(desired, existing *unstructured.Unstructured) bool {
-	// Compare all non-metadata top-level fields (e.g., data, type, spec)
-	for k, dv := range desired.Object {
-		if k == "metadata" {
-			continue
-		}
-		ev, ok := existing.Object[k]
-		if !ok || !reflect.DeepEqual(dv, ev) {
-			return false
-		}
-	}
-
-	// Compare annotations: each annotation in desired must match existing
-	da := desired.GetAnnotations()
-	ea := existing.GetAnnotations()
-	for k, v := range da {
-		if ea[k] != v {
-			return false
-		}
-	}
-
-	// Compare labels: each label in desired must match existing
-	dl := desired.GetLabels()
-	el := existing.GetLabels()
-	for k, v := range dl {
-		if el[k] != v {
-			return false
-		}
-	}
-
-	// Compare ownerReferences: each ownerRef in desired must exist in existing (by UID)
-	desiredOwnerRefs := desired.GetOwnerReferences()
-	existingOwnerRefs := existing.GetOwnerReferences()
-	for _, dRef := range desiredOwnerRefs {
-		found := false
-		for _, eRef := range existingOwnerRefs {
-			if dRef.UID == eRef.UID &&
-				dRef.APIVersion == eRef.APIVersion &&
-				dRef.Kind == eRef.Kind &&
-				dRef.Name == eRef.Name &&
-				reflect.DeepEqual(dRef.BlockOwnerDeletion, eRef.BlockOwnerDeletion) &&
-				reflect.DeepEqual(dRef.Controller, eRef.Controller) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-
-	return true
 }
 
 // DeleteResource deletes a resource respecting deletion policy
