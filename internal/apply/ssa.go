@@ -19,7 +19,6 @@ package apply
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -214,7 +213,7 @@ func (a *Applier) ApplyResource(
 				Force:        &force,
 				DryRun:       []string{metav1.DryRunAll},
 			})
-			if dryRunErr == nil && isObjectUnchanged(dryRunObj, existing) {
+			if dryRunErr == nil && isSemanticallyUnchanged(existing, dryRunObj) {
 				return false, nil
 			}
 		}
@@ -278,48 +277,6 @@ func (a *Applier) ApplyResource(
 	changed := beforeResourceVersion != afterResourceVersion
 
 	return changed, nil
-}
-
-// isObjectUnchanged compares a dry-run result with the existing object to detect no-op applies.
-// It compares all fields except volatile metadata (resourceVersion, managedFields, etc.)
-// that change on every write regardless of semantic changes.
-func isObjectUnchanged(dryRun, existing *unstructured.Unstructured) bool {
-	// Compare all non-metadata top-level fields (spec, data, type, etc.)
-	for k := range dryRun.Object {
-		if k == "metadata" {
-			continue
-		}
-		if !reflect.DeepEqual(dryRun.Object[k], existing.Object[k]) {
-			return false
-		}
-	}
-
-	// Check if dry-run added new top-level fields not in existing
-	for k := range existing.Object {
-		if k == "metadata" {
-			continue
-		}
-		if _, ok := dryRun.Object[k]; !ok {
-			return false
-		}
-	}
-
-	// Compare annotations
-	if !reflect.DeepEqual(dryRun.GetAnnotations(), existing.GetAnnotations()) {
-		return false
-	}
-
-	// Compare labels
-	if !reflect.DeepEqual(dryRun.GetLabels(), existing.GetLabels()) {
-		return false
-	}
-
-	// Compare ownerReferences
-	if !reflect.DeepEqual(dryRun.GetOwnerReferences(), existing.GetOwnerReferences()) {
-		return false
-	}
-
-	return true
 }
 
 // DeleteResource deletes a resource respecting deletion policy
