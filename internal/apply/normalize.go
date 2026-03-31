@@ -38,15 +38,36 @@ func isSemanticallyUnchanged(live, dryRun *unstructured.Unstructured) bool {
 
 	equal := apiequality.Semantic.DeepEqual(liveN.Object, dryN.Object)
 	if !equal {
-		// Debug: find which top-level keys differ
-		for k := range liveN.Object {
-			if !apiequality.Semantic.DeepEqual(liveN.Object[k], dryN.Object[k]) {
-				fmt.Printf("[DEBUG] SSA diff at key %q: live_type=%T dryrun_type=%T\n", k, liveN.Object[k], dryN.Object[k])
+		// Debug: find which metadata sub-keys differ
+		liveMeta, _ := liveN.Object["metadata"].(map[string]interface{})
+		dryMeta, _ := dryN.Object["metadata"].(map[string]interface{})
+		if liveMeta != nil && dryMeta != nil {
+			allKeys := map[string]bool{}
+			for k := range liveMeta {
+				allKeys[k] = true
+			}
+			for k := range dryMeta {
+				allKeys[k] = true
+			}
+			for k := range allKeys {
+				lv, lok := liveMeta[k]
+				dv, dok := dryMeta[k]
+				if !lok {
+					fmt.Printf("[DEBUG] metadata key %q: only in dryrun\n", k)
+				} else if !dok {
+					fmt.Printf("[DEBUG] metadata key %q: only in live\n", k)
+				} else if !apiequality.Semantic.DeepEqual(lv, dv) {
+					fmt.Printf("[DEBUG] metadata key %q differs: live_type=%T dryrun_type=%T\n", k, lv, dv)
+				}
 			}
 		}
-		for k := range dryN.Object {
-			if _, ok := liveN.Object[k]; !ok {
-				fmt.Printf("[DEBUG] SSA diff: key %q only in dryrun\n", k)
+		// Check non-metadata keys too
+		for k := range liveN.Object {
+			if k == "metadata" {
+				continue
+			}
+			if !apiequality.Semantic.DeepEqual(liveN.Object[k], dryN.Object[k]) {
+				fmt.Printf("[DEBUG] top-level key %q differs\n", k)
 			}
 		}
 	}
