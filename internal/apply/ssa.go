@@ -213,8 +213,17 @@ func (a *Applier) ApplyResource(
 				Force:        &force,
 				DryRun:       []string{metav1.DryRunAll},
 			})
-			if dryRunErr == nil && isSemanticallyUnchanged(existing, dryRunObj) {
+			if dryRunErr != nil {
+				logger := log.FromContext(ctx)
+				logger.Info("SSA dry-run failed, proceeding with real apply",
+					"resource", fmt.Sprintf("%s/%s/%s", obj.GetKind(), obj.GetNamespace(), obj.GetName()),
+					"error", dryRunErr)
+			} else if isSemanticallyUnchanged(existing, dryRunObj) {
 				return false, nil
+			} else {
+				logger := log.FromContext(ctx)
+				logger.Info("SSA dry-run detected changes, proceeding with real apply",
+					"resource", fmt.Sprintf("%s/%s/%s", obj.GetKind(), obj.GetNamespace(), obj.GetName()))
 			}
 		}
 
