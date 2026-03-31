@@ -17,6 +17,8 @@ limitations under the License.
 package apply
 
 import (
+	"fmt"
+
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -34,7 +36,21 @@ func isSemanticallyUnchanged(live, dryRun *unstructured.Unstructured) bool {
 	liveN := prepareForDiff(live)
 	dryN := prepareForDiff(dryRun)
 
-	return apiequality.Semantic.DeepEqual(liveN.Object, dryN.Object)
+	equal := apiequality.Semantic.DeepEqual(liveN.Object, dryN.Object)
+	if !equal {
+		// Debug: find which top-level keys differ
+		for k := range liveN.Object {
+			if !apiequality.Semantic.DeepEqual(liveN.Object[k], dryN.Object[k]) {
+				fmt.Printf("[DEBUG] SSA diff at key %q: live_type=%T dryrun_type=%T\n", k, liveN.Object[k], dryN.Object[k])
+			}
+		}
+		for k := range dryN.Object {
+			if _, ok := liveN.Object[k]; !ok {
+				fmt.Printf("[DEBUG] SSA diff: key %q only in dryrun\n", k)
+			}
+		}
+	}
+	return equal
 }
 
 // prepareForDiff strips volatile metadata and status from an object for semantic
