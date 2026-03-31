@@ -1,0 +1,10 @@
+# This patch enables the pprof profiling endpoint for CPU/memory diagnostics
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: --enable-pprof
+- op: add
+  path: /spec/template/spec/containers/0/ports/-
+  value:
+    containerPort: 6060
+    name: pprof
+    protocol: TCP

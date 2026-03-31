@@ -18,7 +18,10 @@ package apply
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -74,10 +77,17 @@ func (e *ConflictError) Unwrap() error {
 	return e.Err
 }
 
+// appliedState tracks the last successful apply for a resource to skip no-op PATCHes.
+type appliedState struct {
+	desiredHash     string // hash of the desired spec we last applied
+	resourceVersion string // post-apply resourceVersion from API server
+}
+
 // Applier handles Server-Side Apply operations
 type Applier struct {
-	client client.Client
-	scheme *runtime.Scheme
+	client    client.Client
+	scheme    *runtime.Scheme
+	appliedRV sync.Map // key: "kind/ns/name" → *appliedState
 }
 
 // NewApplier creates a new Applier
@@ -157,6 +167,12 @@ func (a *Applier) ApplyResource(
 			logger.V(1).Info("Failed to remove orphan markers, continuing anyway", "error", err)
 		}
 		_ = removed // Will be used for event logging in controller
+
+		// If orphan markers were removed, the cluster resource's RV changed.
+		// Force apply (disable skip) so the re-adoption is properly recorded.
+		if removed {
+			beforeResourceVersion = ""
+		}
 	}
 
 	// Apply ignoreFields filtering if resource already exists
@@ -179,6 +195,20 @@ func (a *Applier) ApplyResource(
 			"resource", fmt.Sprintf("%s/%s", obj.GetNamespace(), obj.GetName()),
 			"kind", obj.GetKind(),
 			"ignoreFields", ignoreFields)
+	}
+
+	// Check if we can skip the apply (desired spec unchanged AND resource not externally modified).
+	// The hash is computed from the PRE-patch desired object (before server mutations).
+	rvKey := fmt.Sprintf("%s/%s/%s", obj.GetKind(), obj.GetNamespace(), obj.GetName())
+	preApplyDesiredHash := a.computeDesiredHash(obj)
+	if existsBeforeApply {
+		if prev, ok := a.appliedRV.Load(rvKey); ok {
+			state := prev.(*appliedState)
+			if state.desiredHash == preApplyDesiredHash && state.resourceVersion == beforeResourceVersion {
+				// Nothing changed: our desired spec is identical AND no external modification
+				return false, nil
+			}
+		}
 	}
 
 	// Apply resource based on patch strategy
@@ -245,7 +275,27 @@ func (a *Applier) ApplyResource(
 	afterResourceVersion := obj.GetResourceVersion()
 	changed := beforeResourceVersion != afterResourceVersion
 
+	// Store applied state for future skip checks.
+	// Use preApplyDesiredHash (computed before Patch mutates obj with server response)
+	// so that the next reconcile's skip check compares like-with-like.
+	a.appliedRV.Store(rvKey, &appliedState{
+		desiredHash:     preApplyDesiredHash,
+		resourceVersion: afterResourceVersion,
+	})
+
 	return changed, nil
+}
+
+// computeDesiredHash produces a lightweight hash of the desired spec for PATCH skip detection.
+func (a *Applier) computeDesiredHash(obj *unstructured.Unstructured) string {
+	// Use JSON serialization of the spec for a deterministic hash.
+	// This is called at most once per resource per reconcile (on apply or skip-check).
+	data, err := json.Marshal(obj.Object)
+	if err != nil {
+		return "" // Force apply on hash failure
+	}
+	h := sha256.Sum256(data)
+	return fmt.Sprintf("%x", h[:8]) // 16-char hex, sufficient for change detection
 }
 
 // DeleteResource deletes a resource respecting deletion policy
