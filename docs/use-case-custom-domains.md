@@ -4,10 +4,6 @@ description: "Provisioning custom domains per node with ExternalDNS and cert-man
 
 # Custom Domain Provisioning with External DNS
 
-::: info Multi-Node Example
-This guide uses **Multi-Node** (SaaS application with multiple customers) as an example, which is the most common use case for Lynq. The pattern shown here can be adapted for any database-driven infrastructure automation scenario.
-:::
-
 ## Overview
 
 Enable each node to have their own custom domain with automatic DNS and SSL certificate management using **Let's Encrypt** and **cert-manager**.

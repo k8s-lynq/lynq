@@ -117,7 +117,7 @@ export default withMermaid(
         },
         {
           text: "Operations",
-          collapsed: true,
+          collapsed: false,
           items: [
             { text: "Monitoring", link: "/monitoring" },
             { text: "Prometheus Queries", link: "/prometheus-queries" },

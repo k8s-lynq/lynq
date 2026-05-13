@@ -4,7 +4,7 @@ description: "Step-by-step runbooks for each Lynq Prometheus alert. Covers diagn
 
 # Alert Runbooks
 
-Comprehensive troubleshooting guide for Lynq alerts. Each alert includes diagnosis steps and resolution procedures.
+Diagnosis and resolution steps for every Lynq Prometheus alert. Each runbook identifies the root cause, lists confirmation commands, and provides a remediation path.
 
 
 

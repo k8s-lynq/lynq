@@ -4,10 +4,6 @@ description: "Provisioning multi-tier application stacks (frontend, backend, dat
 
 # Multi-Tier Application Stack
 
-::: info Multi-Node Example
-This guide uses **Multi-Node** (SaaS application with multiple customers) as an example, which is the most common use case for Lynq. The pattern shown here can be adapted for any database-driven infrastructure automation scenario.
-:::
-
 ## Overview
 
 Deploy complex applications spanning multiple services (web, API, workers, caches) using multiple templates per node. Each template handles a specific tier of the stack.

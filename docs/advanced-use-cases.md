@@ -4,13 +4,7 @@ description: "Advanced Lynq patterns: custom domains, blue-green deployments, mu
 
 # Advanced Use Cases
 
-::: info Multi-Node Examples
-As the most common use case for Lynq, this guide presents various patterns using **Multi-Node** (SaaS application with multiple customers/nodes) as examples. These patterns can be adapted for any database-driven infrastructure automation scenario.
-:::
-
-## Overview
-
-Lynq's flexible architecture enables powerful automation patterns beyond basic resource provisioning. This guide helps you understand which pattern fits your requirements.
+Lynq's template and policy system enables patterns beyond basic resource provisioning. This guide maps common requirements to specific patterns and links to detailed walkthroughs.
 
 ## Available Patterns
 

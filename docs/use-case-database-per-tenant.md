@@ -4,14 +4,6 @@ description: "Provisioning a dedicated database per node using Crossplane and Ly
 
 # Database per Node with Crossplane
 
-::: warning Historical File Name
-This file name contains "tenant" for historical reasons. The content has been updated to use "node" terminology throughout.
-:::
-
-::: info Multi-Node Example
-This guide uses **Multi-Node** (SaaS application with multiple customers) as an example, which is the most common use case for Lynq. The pattern shown here can be adapted for any database-driven infrastructure automation scenario.
-:::
-
 ## Overview
 
 Provision isolated cloud databases (RDS, Cloud SQL) automatically for each node using Crossplane.

@@ -2,9 +2,9 @@
 description: "Monitor Lynq with Prometheus metrics, Grafana dashboards, and Kubernetes events. Covers alert rules, custom queries, and observability best practices."
 ---
 
-# Monitoring & Observability Guide
+# Monitoring & Observability
 
-Comprehensive guide for monitoring Lynq with Prometheus, Grafana, and Kubernetes events.
+Lynq exposes 15 Prometheus metrics at `:8443/metrics`, emits structured Kubernetes events per reconciliation, and includes a pre-built Grafana dashboard. This guide covers setup, key metrics, alerting, and troubleshooting.
 
 
 

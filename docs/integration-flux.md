@@ -4,11 +4,7 @@ description: "Use Lynq with Flux for GitOps-style node provisioning. Manage GitR
 
 # Flux Integration Guide
 
-::: info Multi-Node Example
-This guide uses **Multi-Node** (SaaS application with multiple customers/nodes) as an example, which is the most common use case for Lynq. The pattern shown here can be adapted for any GitOps-driven multi-node deployment scenario.
-:::
-
-This guide shows how to integrate Lynq with Flux for GitOps-based application deployment per node.
+Use Lynq with Flux to give each database row its own GitOps scope: a `GitRepository` and `Kustomization` provisioned automatically when a node activates, removed when it deactivates.
 
 
 

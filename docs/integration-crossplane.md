@@ -4,7 +4,7 @@ description: "Combine Lynq with Crossplane to provision cloud infrastructure per
 
 # Crossplane Integration Guide
 
-This guide shows how to integrate Lynq with Crossplane for provisioning cloud resources (AWS, GCP, Azure) per node using a Kubernetes-native approach.
+Combine Lynq with Crossplane to provision cloud resources (RDS, GCS, Azure SQL) alongside Kubernetes workloads — all driven by database rows, managed as Kubernetes CRs.
 
 
 
