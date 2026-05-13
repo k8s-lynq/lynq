@@ -4,15 +4,7 @@ description: "Provisioning custom domains per node with ExternalDNS and cert-man
 
 # Custom Domain Provisioning with External DNS
 
-## Overview
-
-Enable each node to have their own custom domain with automatic DNS and SSL certificate management using **Let's Encrypt** and **cert-manager**.
-
-**Key Features:**
-- Automatic DNS record creation via External DNS
-- Automatic SSL certificate provisioning with Let's Encrypt
-- Domain verification workflows
-- CNAME delegation support
+Each active row in your database provisions its own Ingress, DNS record (via ExternalDNS), and TLS certificate (via cert-manager / Let's Encrypt). Adding a domain column to your table is all it takes to enable per-node custom domains at any scale.
 
 ## Architecture
 

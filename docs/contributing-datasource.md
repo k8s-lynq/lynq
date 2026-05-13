@@ -8,9 +8,7 @@ This guide walks you through implementing a new datasource adapter for Lynq. The
 
 
 
-## Overview
-
-Lynq uses a pluggable datasource architecture:
+## Architecture
 
 ```mermaid
 flowchart LR
@@ -31,12 +29,7 @@ flowchart LR
     class MySQL,Postgres,Custom adapter
 ```
 
-**Key Benefits:**
-- ✅ Clean interface - Only 2 methods to implement
-- ✅ Reference implementation - MySQL adapter as example
-- ✅ Type-safe - Strongly typed configuration
-- ✅ Testable - Easy to mock and test
-- ✅ Isolated - No changes to core controller logic
+The interface requires two methods: `FetchNodes` (query active rows) and `Close` (release connections). The MySQL adapter in `pkg/datasource/mysql/` is the canonical reference implementation.
 
 ## Prerequisites
 

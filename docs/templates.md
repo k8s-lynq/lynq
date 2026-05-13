@@ -2,9 +2,9 @@
 description: "Master Lynq's template system powered by Go text/template and 200+ Sprig functions. Learn template syntax, custom functions, variables, and best practices."
 ---
 
-# Template Guide
+# Templates
 
-Templates are the core of Lynq's resource generation system. Lynq uses Go's `text/template` engine with the Sprig function library, providing 200+ built-in functions.
+LynqForm resource specs are Go `text/template` strings rendered at reconciliation time. Variables come from the LynqHub row; 200+ Sprig functions plus a handful of Lynq-specific helpers are available.
 
 ```mermaid
 flowchart LR

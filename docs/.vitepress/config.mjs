@@ -39,6 +39,7 @@ export default withMermaid(
       ],
 
       sidebar: [
+        // 1. Get it running
         {
           text: "Getting Started",
           collapsed: false,
@@ -47,6 +48,7 @@ export default withMermaid(
             { text: "Installation", link: "/installation" },
           ],
         },
+        // 2. Understand it
         {
           text: "Concepts",
           collapsed: false,
@@ -57,6 +59,7 @@ export default withMermaid(
             { text: "Architecture", link: "/architecture" },
           ],
         },
+        // 3. Use it
         {
           text: "Guides",
           collapsed: false,
@@ -70,7 +73,7 @@ export default withMermaid(
                 { text: "Syntax & Functions", link: "/templates-syntax" },
                 { text: "Type Conversion", link: "/templates-typed-values" },
                 { text: "Debugging", link: "/templates-troubleshooting" },
-                { text: "🛠️ Form Builder", link: "/template-builder" },
+                { text: "Form Builder", link: "/template-builder" },
               ],
             },
             {
@@ -87,22 +90,12 @@ export default withMermaid(
               collapsed: false,
               items: [
                 { text: "Overview", link: "/dependencies" },
-                { text: "🔍 Visualizer", link: "/dependency-visualizer" },
+                { text: "Dependency Visualizer", link: "/dependency-visualizer" },
               ],
             },
           ],
         },
-        {
-          text: "Reference",
-          collapsed: false,
-          items: [
-            { text: "API Reference", link: "/api" },
-            { text: "Resource Lifecycle", link: "/api-lifecycle" },
-            { text: "Configuration", link: "/configuration" },
-            { text: "Dashboard", link: "/dashboard" },
-            { text: "Glossary", link: "/glossary" },
-          ],
-        },
+        // 4. Real-world examples
         {
           text: "Use Cases",
           collapsed: false,
@@ -115,6 +108,30 @@ export default withMermaid(
             { text: "Feature Flags", link: "/use-case-feature-flags" },
           ],
         },
+        // 5. Connect with other tools
+        {
+          text: "Integrations",
+          collapsed: false,
+          items: [
+            { text: "Crossplane", link: "/integration-crossplane" },
+            { text: "External DNS", link: "/integration-external-dns" },
+            { text: "Flux", link: "/integration-flux" },
+            { text: "Argo CD", link: "/integration-argocd" },
+          ],
+        },
+        // 6. Look things up
+        {
+          text: "Reference",
+          collapsed: false,
+          items: [
+            { text: "API Reference", link: "/api" },
+            { text: "Resource Lifecycle", link: "/api-lifecycle" },
+            { text: "Configuration", link: "/configuration" },
+            { text: "Dashboard", link: "/dashboard" },
+            { text: "Glossary", link: "/glossary" },
+          ],
+        },
+        // 7. Run it in production
         {
           text: "Operations",
           collapsed: false,
@@ -127,16 +144,7 @@ export default withMermaid(
             { text: "Troubleshooting", link: "/troubleshooting" },
           ],
         },
-        {
-          text: "Integrations",
-          collapsed: false,
-          items: [
-            { text: "Crossplane", link: "/integration-crossplane" },
-            { text: "External DNS", link: "/integration-external-dns" },
-            { text: "Flux", link: "/integration-flux" },
-            { text: "Argo CD", link: "/integration-argocd" },
-          ],
-        },
+        // 8. Contribute
         {
           text: "Contributing",
           collapsed: true,

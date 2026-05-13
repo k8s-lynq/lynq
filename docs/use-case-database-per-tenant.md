@@ -4,16 +4,7 @@ description: "Provisioning a dedicated database per node using Crossplane and Ly
 
 # Database per Node with Crossplane
 
-## Overview
-
-Provision isolated cloud databases (RDS, Cloud SQL) automatically for each node using Crossplane.
-
-This pattern provides:
-- **True Data Isolation**: Each node gets a dedicated database instance
-- **Compliance**: Meets regulatory requirements for data separation
-- **Performance**: No noisy neighbor problems
-- **Scalability**: Independent database sizing per node
-- **Automated Provisioning**: Cloud resources managed as Kubernetes objects
+Combine Lynq and Crossplane to provision a dedicated cloud database (RDS, Cloud SQL) for each active row. Lynq handles the Kubernetes workload; Crossplane manages the cloud resource. Activating a node creates both.
 
 ## Prerequisites
 

@@ -4,16 +4,7 @@ description: "Using Lynq to apply dynamic feature flags per node by updating a s
 
 # Dynamic Feature Flags
 
-## Overview
-
-Enable/disable features per node using environment variables and separate templates for optional components.
-
-This pattern enables:
-- **A/B Testing**: Test new features with subset of users
-- **Gradual Rollout**: Enable features progressively
-- **Plan-Based Features**: Different features for different subscription tiers
-- **Cost Control**: Expensive features (GPU, etc.) only for paying customers
-- **Rapid Iteration**: Enable/disable features without redeploying
+Boolean columns in your database become infrastructure switches. Flip a column and the corresponding Kubernetes resources appear or disappear within the next sync interval — no deployments, no YAML edits.
 
 ## Patterns
 

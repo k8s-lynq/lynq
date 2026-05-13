@@ -4,15 +4,7 @@ description: "Implementing zero-downtime blue-green deployments per node using L
 
 # Blue-Green Deployment Pattern
 
-## Overview
-
-Implement zero-downtime deployments by maintaining two complete environments (blue and green) and switching traffic between them.
-
-This pattern is useful when:
-- You need instant rollback capability
-- You want to test new versions in production before switching traffic
-- You need to validate deployments with real production load
-- Zero-downtime is critical for your SLA
+Store the active color (`blue` or `green`) as a database column. Updating that single column switches traffic for a node instantly — no YAML changes, no redeployment. Roll back by reverting the column value.
 
 ## Architecture
 

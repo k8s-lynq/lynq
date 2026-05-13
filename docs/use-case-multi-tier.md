@@ -4,9 +4,7 @@ description: "Provisioning multi-tier application stacks (frontend, backend, dat
 
 # Multi-Tier Application Stack
 
-## Overview
-
-Deploy complex applications spanning multiple services (web, API, workers, caches) using multiple templates per node. Each template handles a specific tier of the stack.
+Use multiple LynqForms referencing the same hub to provision separate tiers (web, API, worker, data) per node. Each form manages its own resources independently; dependency ordering ensures the data tier is ready before the API tier starts.
 
 ## Architecture
 

@@ -6,11 +6,11 @@
     <!-- Capabilities Strip -->
     <CapabilitiesStrip />
 
-    <!-- Problem vs Solution -->
-    <ProblemSolution />
-
     <!-- How It Works Pipeline -->
     <InteractivePipeline />
+
+    <!-- Problem vs Solution -->
+    <ProblemSolution />
 
     <!-- Safety Policies -->
     <SafetyControls />
