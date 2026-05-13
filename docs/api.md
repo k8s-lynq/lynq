@@ -348,164 +348,41 @@ Examples: `30s`, `1m`, `2h`
 - `merge`: Strategic Merge Patch
 - `replace`: Full replacement
 
-## Annotations
+## Labels and Annotations
 
-### Node Annotations (auto-generated)
+Quick reference for labels and annotations used by Lynq. For the full lifecycle explanation (orphan markers, finalizers, cross-namespace tracking, re-adoption), see [Resource Lifecycle](api-lifecycle.md).
 
-```yaml
-# Template variables
-lynq.sh/uid: string
-# lynq.sh/host: string                # DEPRECATED v1.1.11+ (removed in v1.3.0)
-# lynq.sh/hostOrUrl: string           # DEPRECATED v1.1.11+ (removed in v1.3.0)
-lynq.sh/activate: string
+### LynqNode Labels (set by hub controller)
 
-# Extra variables from extraValueMappings (recommended approach)
-lynq.sh/<key>: value
+| Label | Value |
+|-------|-------|
+| `lynq.sh/hub` | Hub name |
+| `lynq.sh/uid` | Row UID |
 
-# CreationPolicy tracking
-lynq.sh/created-once: "true"
-```
+### Managed Resource Labels
 
-### Resource Tracking Labels
+| Label | Value | When set |
+|-------|-------|---------|
+| `lynq.sh/node` | LynqNode name | Cross-namespace, Retain, or Namespace resources |
+| `lynq.sh/node-namespace` | LynqNode namespace | Paired with `lynq.sh/node` |
+| `lynq.sh/orphaned` | `"true"` | Resource retained after removal from template |
 
-**Label-based tracking** is used instead of ownerReferences for:
-- Cross-namespace resources (ownerReferences don't work across namespaces)
-- Namespace resources (cannot have ownerReferences)
-- **DeletionPolicy=Retain resources** (to prevent automatic garbage collection)
+### Managed Resource Annotations
 
-```yaml
-# Tracking labels (set at resource creation)
-lynq.sh/node: node-name
-lynq.sh/node-namespace: node-namespace
+| Annotation | Value | Purpose |
+|-----------|-------|---------|
+| `lynq.sh/deletion-policy` | `"Delete"` or `"Retain"` | Stored at creation; used during orphan cleanup |
+| `lynq.sh/created-once` | `"true"` | Marks `creationPolicy: Once` resources |
+| `lynq.sh/orphaned-at` | RFC3339 timestamp | When the resource became orphaned |
+| `lynq.sh/orphaned-reason` | `"RemovedFromTemplate"` or `"LynqNodeDeleted"` | Why it was orphaned |
 
-# Orphan label (added when resource becomes orphaned - for selector queries)
-lynq.sh/orphaned: "true"
-```
+### LynqNode Annotations (set by hub controller)
 
-**Orphan Markers:**
-
-When resources are retained (not deleted) due to `DeletionPolicy=Retain`, the operator adds:
-
-- **Label** `orphaned: "true"` - For easy filtering with label selectors
-- **Annotation** `orphaned-at` - RFC3339 timestamp when the resource became orphaned
-- **Annotation** `orphaned-reason` - Reason for becoming orphaned:
-  - `RemovedFromTemplate`: Resource was removed from LynqForm
-  - `LynqNodeDeleted`: LynqNode CR was deleted
-
-**Why split label/annotation?**
-- **Label**: Simple value for selector queries (Kubernetes label values must be RFC 1123 compliant)
-- **Annotations**: Detailed metadata like timestamps (no value restrictions)
-
-**Orphan Marker Lifecycle:**
-
-1. **Resource removed from template** → Orphan markers added (label + annotations)
-2. **Resource re-added to template** → Orphan markers automatically removed during apply
-3. **No manual cleanup needed** → Operator manages the full lifecycle
-
-This enables safe template evolution: you can freely add/remove resources from templates, and previously orphaned resources will be cleanly re-adopted if you add them back.
-
-**Finding orphaned resources:**
-
-```bash
-# Find all orphaned resources
-kubectl get all -A -l lynq.sh/orphaned=true
-
-# Find orphaned resources by reason (using annotation)
-kubectl get all -A -l lynq.sh/orphaned=true -o jsonpath='{range .items[?(@.metadata.annotations.lynq.sh/orphaned-reason=="RemovedFromTemplate")]}{.kind}/{.metadata.name}{"\n"}{end}'
-
-# Find orphaned resources from a specific node (label still available)
-kubectl get all -A -l lynq.sh/orphaned=true,lynq.sh/node=my-node
-```
-
-**Re-adoption YAML Comparison:**
-
-When a previously orphaned resource is re-added to the template, Lynq automatically removes orphan markers:
-
-::: code-group
-```yaml [Before: Orphaned Resource]
-# Resource after being removed from template (orphaned)
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: acme-api
-  namespace: production
-  labels:
-    lynq.sh/node: acme-web
-    lynq.sh/node-namespace: production
-    lynq.sh/orphaned: "true"           # ← Orphan label
-  annotations:
-    lynq.sh/orphaned-at: "2024-01-15T10:30:00Z"        # ← Orphan timestamp
-    lynq.sh/orphaned-reason: "RemovedFromTemplate"    # ← Orphan reason
-    lynq.sh/deletion-policy: "Retain"
-spec:
-  # ...
-```
-
-```yaml [After: Re-adopted Resource]
-# Same resource after being re-added to template (re-adopted)
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: acme-api
-  namespace: production
-  labels:
-    lynq.sh/node: acme-web
-    lynq.sh/node-namespace: production
-    # ✅ lynq.sh/orphaned label REMOVED
-  annotations:
-    lynq.sh/deletion-policy: "Retain"
-    # ✅ lynq.sh/orphaned-at REMOVED
-    # ✅ lynq.sh/orphaned-reason REMOVED
-  ownerReferences:
-    - apiVersion: operator.lynq.sh/v1
-      kind: LynqNode
-      name: acme-web
-      uid: xxx-xxx-xxx
-spec:
-  # ...
-```
-:::
-
-**Verify re-adoption:**
-
-```bash
-# Check if resource is no longer orphaned
-kubectl get deployment acme-api -n production -o jsonpath='{.metadata.labels.lynq\.sh/orphaned}'
-# Output: (empty - label removed)
-
-# Check ownerReference is set (for same-namespace resources with Delete policy)
-kubectl get deployment acme-api -n production -o jsonpath='{.metadata.ownerReferences[0].name}'
-# Output: acme-web
-```
-
-### Resource Annotations
-
-**DeletionPolicy Annotation:**
-
-The operator automatically adds a `deletion-policy` annotation to all created resources:
-
-```yaml
-metadata:
-  annotations:
-    lynq.sh/deletion-policy: "Retain"  # or "Delete"
-```
-
-**Purpose:**
-- **Critical for orphan cleanup**: When resources are removed from templates, they no longer exist in the template spec
-- The annotation is the **only source of truth** for determining the correct cleanup behavior
-- Without this annotation, all orphaned resources would default to `Delete` policy
-
-**Behavior:**
-- Set automatically during resource creation by `renderResource` function
-- Read during orphan cleanup in `deleteOrphanedResource` function
-- Falls back to `Delete` if annotation is missing (defensive default)
-
-**Example query:**
-
-```bash
-# Find all Retain resources
-kubectl get all -A -o jsonpath='{range .items[?(@.metadata.annotations.lynq.sh/deletion-policy=="Retain")]}{.kind}/{.metadata.name}{"\n"}{end}'
-```
+| Annotation | Purpose |
+|-----------|---------|
+| `lynq.sh/uid` | Node UID — available as `.uid` in templates |
+| `lynq.sh/activate` | Activation flag — available as `.activate` in templates |
+| `lynq.sh/<key>` | One entry per `extraValueMappings` key |
 
 ## Examples
 
@@ -626,6 +503,7 @@ kubectl get lynqnodes -o custom-columns='NAME:.metadata.name,READY:.status.ready
 
 ## See Also
 
-- [Template Guide](templates.md) - Template syntax and functions
-- [Policies Guide](policies.md) - Policy options
+- [Resource Lifecycle](api-lifecycle.md) — Tracking labels, orphan markers, finalizers, cross-namespace behavior
+- [Template Guide](templates.md) — Template syntax and functions
+- [Policies Guide](policies.md) — `deletionPolicy`, `creationPolicy`, `conflictPolicy`
 - [Dependencies Guide](dependencies.md) - Resource ordering

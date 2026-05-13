@@ -57,6 +57,7 @@ export default withMermaid(
             { text: "How It Works", link: "/how-it-works" },
             { text: "Architecture", link: "/architecture" },
             { text: "API Reference", link: "/api" },
+            { text: "Resource Lifecycle", link: "/api-lifecycle" },
             { text: "Configuration", link: "/configuration" },
             { text: "Datasources", link: "/datasource" },
             {
@@ -64,6 +65,9 @@ export default withMermaid(
               collapsed: false,
               items: [
                 { text: "Overview", link: "/templates" },
+                { text: "Syntax Reference", link: "/templates-syntax" },
+                { text: "Type Conversion", link: "/templates-typed-values" },
+                { text: "Debugging & Migration", link: "/templates-troubleshooting" },
                 { text: "🛠️ Form Builder", link: "/template-builder" },
               ],
             },

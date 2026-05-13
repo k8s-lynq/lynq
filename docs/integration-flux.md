@@ -36,53 +36,6 @@ flowchart LR
     class Apps apps;
 ```
 
-### Key Benefits
-
-**GitOps-Driven Deployment**:
-- 🔄 **Single Source of Truth**: All configuration stored in Git
-- 🚀 **Automated Sync**: Flux continuously reconciles desired state
-- 📜 **Audit Trail**: Git history provides complete deployment history
-- 🔒 **Security**: Git-based access control and approval workflows
-- ⚡ **Fast Rollback**: Git revert for instant rollback
-
-**Per-Node Isolation**:
-- 🎯 **Isolated GitRepository**: Each node can track different branches/paths
-- 📦 **Independent Kustomizations**: Node-specific overlays and patches
-- 🔐 **Separate Secrets**: Node-specific secret management
-- 🎨 **Custom Helm Values**: Per-node Helm chart customization
-
-**Flux Resource Types**:
-- **GitRepository**: Track Git repositories as deployment sources
-- **OCIRepository**: Use OCI artifacts (container images) as sources
-- **HelmRepository**: Track Helm chart repositories
-- **HelmRelease**: Deploy Helm charts with custom values
-- **Kustomization**: Apply Kustomize overlays and transformations
-- **ImageRepository/ImagePolicy**: Automate image updates
-
-### Use Cases
-
-#### Multi-Tenant SaaS Application
-- **Separate Git Branches**: Each node deploys from its own branch (e.g., `customers/acme`, `customers/beta`)
-- **Kustomize Overlays**: Base configuration + per-node overlays
-- **Feature Flags**: Node-specific feature toggles via ConfigMaps
-- **Progressive Rollouts**: Deploy to staging nodes first, then production
-
-#### Microservices Architecture
-- **Service Mesh per Node**: Istio/Linkerd configurations per node
-- **API Gateway**: Node-specific ingress routing
-- **Service Discovery**: Consul/Eureka per node
-- **Monitoring Stack**: Prometheus + Grafana per node
-
-#### Multi-Region Deployment
-- **Region-Specific Configurations**: Different configs per region
-- **Compliance Requirements**: GDPR, HIPAA per node
-- **Geo-Distributed Applications**: Edge deployments
-- **Disaster Recovery**: Multi-region failover configurations
-
-#### Development Environments
-- **Developer Sandboxes**: Isolated environments per developer
-- **PR Previews**: Ephemeral environments per pull request
-- **Testing Environments**: Integration test environments per feature branch
 
 ## Prerequisites
 

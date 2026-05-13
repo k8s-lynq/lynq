@@ -393,120 +393,31 @@ A comprehensive Grafana dashboard is available at: `config/monitoring/grafana-da
 
 ## Alerting
 
-### Prometheus Alert Rules
+### Deploying Alert Rules
 
-A comprehensive set of Prometheus alert rules is available at: **`config/prometheus/alerts.yaml`**
-
-**To deploy the alerts:**
+A PrometheusRule resource with all alert definitions is included at `config/prometheus/alerts.yaml`.
 
 ```bash
-# Apply the PrometheusRule resource
 kubectl apply -f config/prometheus/alerts.yaml
-
-# Or use kustomize
+# or
 kubectl apply -k config/prometheus
 ```
 
 ### Alert Categories
 
-The alert configuration includes three severity levels:
+| Severity | Count | When to act |
+|----------|-------|-------------|
+| **Critical** | 5 | Immediate — production impact |
+| **Warning** | 8 | Investigate — potential issues |
+| **Info** | 1 | Awareness only |
 
-| Severity | Alerts | Description |
-|----------|--------|-------------|
-| **Critical** | 5 alerts | Immediate action required - production impact |
-| **Warning** | 8 alerts | Investigation needed - potential issues |
-| **Info** | 1 alert | Informational - awareness only |
+**Critical:** `LynqNodeDegraded`, `LynqNodeResourcesFailed`, `LynqNodeNotReady`, `LynqNodeStatusUnknown`, `HubManyNodesFailure`
 
-**Critical Alerts:**
-- `LynqNodeDegraded` - LynqNode in degraded state
-- `LynqNodeResourcesFailed` - LynqNode has failed resources
-- `LynqNodeNotReady` - LynqNode not ready for extended period
-- `LynqNodeStatusUnknown` - LynqNode condition status unknown
-- `HubManyNodesFailure` - Many nodes failing in a hub
+**Warning:** `LynqNodeResourcesMismatch`, `LynqNodeResourcesConflicted`, `LynqNodeHighConflictRate`, `HubNodesFailure`, `HubSyncIssues`, `LynqNodeReconciliationErrors`, `LynqNodeReconciliationSlow`, `HighApplyFailureRate`
 
-**Warning Alerts:**
-- `LynqNodeResourcesMismatch` - Ready count doesn't match desired
-- `LynqNodeResourcesConflicted` - Resources in conflict state
-- `LynqNodeHighConflictRate` - High rate of conflicts
-- `HubNodesFailure` - Some nodes failing
-- `HubSyncIssues` - Hub sync problems
-- `LynqNodeReconciliationErrors` - High error rate
-- `LynqNodeReconciliationSlow` - Slow reconciliation performance
-- `HighApplyFailureRate` - High apply failure rate
+**Info:** `LynqNodeNewConflictsDetected`
 
-**Info Alerts:**
-- `LynqNodeNewConflictsDetected` - New conflicts detected
-
-::: tip Alert Configuration
-For complete alert definitions with thresholds and runbook links, see `config/prometheus/alerts.yaml`.
-:::
-
-### Sample Alert Rules
-
-**Critical:**
-```yaml
-# LynqNode has failed resources
-- alert: LynqNodeResourcesFailed
-  expr: lynqnode_resources_failed > 0
-  for: 5m
-  labels:
-    severity: critical
-  annotations:
-    summary: "LynqNode {{ $labels.lynqnode }} has {{ $value }} failed resource(s)"
-    runbook_url: "https://lynq.sh/runbooks/node-resources-failed"
-```
-
-**Warning:**
-```yaml
-# Resources in conflict
-- alert: LynqNodeResourcesConflicted
-  expr: lynqnode_resources_conflicted > 0
-  for: 10m
-  labels:
-    severity: warning
-  annotations:
-    summary: "LynqNode {{ $labels.lynqnode }} has resources in conflict"
-    runbook_url: "https://lynq.sh/runbooks/node-conflicts"
-```
-
-### Alert Routing (AlertManager)
-
-Configure AlertManager to route alerts based on severity:
-
-```yaml
-# alertmanager.yml
-route:
-  group_by: ['alertname', 'lynqnode', 'namespace']
-  group_wait: 10s
-  group_interval: 10s
-  repeat_interval: 12h
-  receiver: 'default'
-  routes:
-  # Critical alerts to PagerDuty
-  - match:
-      severity: critical
-    receiver: 'pagerduty'
-
-  # Warning alerts to Slack
-  - match:
-      severity: warning
-    receiver: 'slack'
-
-  # Info alerts to email
-  - match:
-      severity: info
-    receiver: 'email'
-
-receivers:
-- name: 'pagerduty'
-  pagerduty_configs:
-  - service_key: '<pagerduty-key>'
-
-- name: 'slack'
-  slack_configs:
-  - api_url: '<slack-webhook>'
-    channel: '#lynq-alerts'
-```
+For per-alert diagnosis steps and resolution procedures, see the [Alert Runbooks](alert-runbooks.md).
 
 ## Best Practices
 
