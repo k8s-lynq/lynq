@@ -4,7 +4,7 @@ description: "Set up a local Lynq development environment on Minikube with cert-
 
 # Local Development with Minikube
 
-Development workflow guide for contributing to and modifying Lynq.
+Covers building Lynq from source, running against a live Minikube cluster with webhooks enabled, and wiring up a local MySQL datasource for end-to-end testing.
 
 
 

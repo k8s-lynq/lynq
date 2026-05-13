@@ -105,7 +105,7 @@ export default withMermaid(
         },
         {
           text: "Use Cases",
-          collapsed: true,
+          collapsed: false,
           items: [
             { text: "Overview", link: "/advanced-use-cases" },
             { text: "Custom Domains", link: "/use-case-custom-domains" },
@@ -129,7 +129,7 @@ export default withMermaid(
         },
         {
           text: "Integrations",
-          collapsed: true,
+          collapsed: false,
           items: [
             { text: "Crossplane", link: "/integration-crossplane" },
             { text: "External DNS", link: "/integration-external-dns" },

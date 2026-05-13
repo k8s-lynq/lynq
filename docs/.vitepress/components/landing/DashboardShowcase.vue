@@ -2,9 +2,9 @@
   <section class="dashboard-section">
     <div class="container">
       <div class="section-header fade-up">
-        <span class="section-label">Visibility</span>
-        <h2>See Everything at a Glance</h2>
-        <p class="section-subtitle">Monitor Hub-Form-Node relationships and quickly identify issues</p>
+        <span class="section-label">Dashboard</span>
+        <h2>Observe the Full Hub → Form → Node Graph</h2>
+        <p class="section-subtitle">A web UI that shows live resource health, reconciliation events, and topology relationships — no kubectl required</p>
       </div>
 
       <div class="browser-mockup fade-up-scale" style="animation-delay: 0.2s">

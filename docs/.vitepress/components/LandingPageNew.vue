@@ -3,6 +3,9 @@
     <!-- Hero with 3D Particles -->
     <HeroParticles />
 
+    <!-- Capabilities Strip -->
+    <CapabilitiesStrip />
+
     <!-- Problem vs Solution -->
     <ProblemSolution />
 
@@ -116,6 +119,7 @@ import InteractivePipeline from './landing/InteractivePipeline.vue'
 import SafetyControls from './landing/SafetyControls.vue'
 import DashboardShowcase from './landing/DashboardShowcase.vue'
 import LatestBlog from './landing/LatestBlog.vue'
+import CapabilitiesStrip from './landing/CapabilitiesStrip.vue'
 </script>
 
 <style scoped>

@@ -2,11 +2,9 @@
 description: "How to use field-level ignore control to prevent Lynq from overwriting fields managed by other controllers."
 ---
 
-# Field-Level Ignore Control
+# Field-Level Ignore
 
-## Overview
-
-The `ignoreFields` feature provides fine-grained control over which fields should be excluded from synchronization. This allows you to manage most resource fields declaratively through templates while letting specific fields be controlled externally (e.g., by HPA, manual scaling, or other operators).
+Use `ignoreFields` to exclude specific resource fields from Lynq's synchronization loop — letting HPA, other controllers, or manual changes own those fields while Lynq manages the rest.
 
 <script setup>
 import FieldIgnoreAnimation from './.vitepress/components/FieldIgnoreAnimation.vue'
@@ -14,7 +12,7 @@ import FieldIgnoreAnimation from './.vitepress/components/FieldIgnoreAnimation.v
 
 <FieldIgnoreAnimation />
 
-## Problem Statement
+## Why ignoreFields Exists
 
 Standard `CreationPolicy` options are too coarse-grained:
 
@@ -23,7 +21,7 @@ Standard `CreationPolicy` options are too coarse-grained:
 
 **Real-world scenario**: You want HPA to dynamically control `spec.replicas`, but still want the operator to manage container images, environment variables, and other configuration.
 
-## Solution: Selective Field Ignoring
+## How It Works
 
 The `ignoreFields` array accepts **standard JSONPath expressions** to specify which fields should be excluded from synchronization.
 
