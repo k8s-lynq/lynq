@@ -1,8 +1,12 @@
+---
+description: "Security guide for Lynq covering RBAC requirements, credential management, network policies, and operational hardening."
+---
+
 # Security Guide
 
 Security best practices for Lynq.
 
-[[toc]]
+
 
 ## Credentials Management
 
@@ -243,7 +247,7 @@ kubectl auth can-i delete ingresses -n staging \
 
 ```bash
 # If operator logs show "forbidden" errors:
-$ kubectl logs -n lynq-system deployment/lynq-controller-manager | grep forbidden
+kubectl logs -n lynq-system deployment/lynq-controller-manager | grep forbidden
 
 # Example error:
 # "deployments.apps is forbidden: User ... cannot create resource ... in API group"

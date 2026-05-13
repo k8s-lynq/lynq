@@ -1,8 +1,12 @@
+---
+description: "Developer guide for building and testing Lynq locally. Covers prerequisites, local cluster setup, build commands, and E2E tests."
+---
+
 # Development Guide
 
 Guide for developing and contributing to Lynq.
 
-[[toc]]
+
 
 ::: tip First time here?
 Start with the [Quick Start guide](quickstart.md) to get familiar with the system before diving into development tooling.

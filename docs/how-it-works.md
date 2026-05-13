@@ -7,7 +7,7 @@ description: "See how Lynq bridges your database and Kubernetes cluster with a t
 
 Lynq is a **RecordOps platform** that implements **Infrastructure as Data** for Kubernetes. It bridges your database and cluster with a three-component architecture that automates infrastructure provisioning based on database records.
 
-[[toc]]
+
 
 ::: tip Infrastructure as Data in Action
 Lynq implements Infrastructure as Data through RecordOps—database records control infrastructure state. When you insert, update, or delete a row, infrastructure changes automatically. No YAML files, no CI/CD delays—just real-time infrastructure that follows your data.
@@ -224,7 +224,7 @@ spec:
 When Lynq syncs, it creates **LynqNode CRs** for each active row:
 
 ```bash
-$ kubectl get lynqnodes -n lynq-system
+kubectl get lynqnodes -n lynq-system
 NAME                       READY   DESIRED   FAILED   SKIPPED   AGE
 acme-corp-customer-web-app   2/2     2         0        0         5m
 startup-io-customer-web-app  2/2     2         0        0         5m
@@ -236,17 +236,17 @@ startup-io-customer-web-app  2/2     2         0        0         5m
 
 ```bash
 # Check the generated Deployment
-$ kubectl get deployments -n lynq-system -l customer=acme-corp
+kubectl get deployments -n lynq-system -l customer=acme-corp
 NAME            READY   UP-TO-DATE   AVAILABLE   AGE
 acme-corp-web   3/3     3            3           5m   # 3 replicas for enterprise plan
 
 # Check the generated Service
-$ kubectl get services -n lynq-system -l customer=acme-corp
+kubectl get services -n lynq-system -l customer=acme-corp
 NAME               TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE
 acme-corp-web-svc  ClusterIP   10.96.45.123    <none>        80/TCP    5m
 
 # Inspect the LynqNode status
-$ kubectl describe lynqnode acme-corp-customer-web-app -n lynq-system
+kubectl describe lynqnode acme-corp-customer-web-app -n lynq-system
 ...
 Status:
   Conditions:

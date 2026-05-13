@@ -1,3 +1,7 @@
+---
+description: "Provisioning custom domains per node with ExternalDNS and cert-manager, driven by database records."
+---
+
 # Custom Domain Provisioning with External DNS
 
 ::: info Multi-Tenancy Example

@@ -6,7 +6,7 @@ description: "Monitor Lynq with Prometheus metrics, Grafana dashboards, and Kube
 
 Comprehensive guide for monitoring Lynq with Prometheus, Grafana, and Kubernetes events.
 
-[[toc]]
+
 
 ## Getting Started
 

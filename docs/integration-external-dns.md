@@ -1,8 +1,12 @@
+---
+description: "Automatically manage DNS records per node using ExternalDNS with Route53, Cloudflare, and other providers."
+---
+
 # ExternalDNS Integration Guide
 
 This guide shows how to integrate Lynq with ExternalDNS for automatic DNS record management.
 
-[[toc]]
+
 
 ## Overview
 

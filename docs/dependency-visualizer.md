@@ -1,4 +1,5 @@
 ---
+description: "Interactive visualizer for inspecting resource dependency graphs within a LynqForm."
 layout: doc
 aside: false
 ---

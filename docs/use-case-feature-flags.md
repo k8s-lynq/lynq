@@ -1,3 +1,7 @@
+---
+description: "Using Lynq to apply dynamic feature flags per node by updating a single database column."
+---
+
 # Dynamic Feature Flags
 
 ::: info Multi-Tenancy Example

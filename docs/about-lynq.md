@@ -40,7 +40,7 @@ I've collected some of my favorite use cases that show what Lynq can really do:
 
 Check out the full [Advanced Use Cases](./advanced-use-cases.md) guide for more inspiration.
 
-:::tip Pro Tip
+::: tip Pro Tip
 Honestly? Pair Lynq with [Crossplane](./integration-crossplane.md), and you can manage pretty much any repeatable infrastructure in a data-driven way. It's been a game-changer for me.
 :::
 

@@ -6,7 +6,7 @@ description: "Install and configure the Lynq Dashboard web UI. Visualize Hub, Fo
 
 Lynq Dashboard is a web UI for visualizing and monitoring Lynq Operator status. You can view the hierarchical structure of Hub, Form, and Node in a topology view, and quickly find problematic resources.
 
-[[toc]]
+
 
 ## Choose Installation Method
 

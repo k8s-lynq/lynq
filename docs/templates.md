@@ -6,7 +6,7 @@ description: "Master Lynq's template system powered by Go text/template and 200+
 
 Templates are the core of Lynq's resource generation system. This guide covers template syntax, available functions, and best practices.
 
-[[toc]]
+
 
 ## Template Basics
 
@@ -791,7 +791,7 @@ kubectl apply -f test-lynqnode.yaml --dry-run=server -o yaml
 
 ```bash
 # View the fully rendered deployment spec
-$ kubectl get lynqnode acme-corp-customer-web-app -n lynq-system \
+kubectl get lynqnode acme-corp-customer-web-app -n lynq-system \
     -o jsonpath='{.spec.deployments[0]}' | jq .
 
 # Expected output (template already evaluated):
@@ -843,7 +843,7 @@ View rendered LynqNode CR to see evaluated templates:
 
 ```bash
 # Get full LynqNode CR
-$ kubectl get lynqnode acme-corp-customer-web-app -n lynq-system -o yaml
+kubectl get lynqnode acme-corp-customer-web-app -n lynq-system -o yaml
 
 # Output includes rendered values:
 apiVersion: operator.lynq.sh/v1
@@ -862,7 +862,7 @@ spec:
 # ...
 
 # Check specific rendered field
-$ kubectl get lynqnode acme-corp-customer-web-app -n lynq-system \
+kubectl get lynqnode acme-corp-customer-web-app -n lynq-system \
     -o jsonpath='{.spec.deployments[0].spec.replicas}'
 3  # ← Correctly rendered as integer (not "3")
 ```
@@ -871,7 +871,7 @@ $ kubectl get lynqnode acme-corp-customer-web-app -n lynq-system \
 
 ```bash
 # Check operator logs for render errors
-$ kubectl logs -n lynq-system deployment/lynq-controller-manager -f | grep -E "(render|template|error)"
+kubectl logs -n lynq-system deployment/lynq-controller-manager -f | grep -E "(render|template|error)"
 
 # Example: Successful rendering
 2025-01-15T10:30:00Z INFO  controller.lynqnode  Rendered template successfully  {"lynqnode": "acme-corp-customer-web-app", "resources": 3}
@@ -880,7 +880,7 @@ $ kubectl logs -n lynq-system deployment/lynq-controller-manager -f | grep -E "(
 2025-01-15T10:30:00Z ERROR controller.lynqnode  Template rendering failed  {"lynqnode": "test-node", "error": "template: tmpl:1: function \"unknownFunc\" not defined"}
 
 # Check LynqNode events for errors
-$ kubectl describe lynqnode acme-corp-customer-web-app -n lynq-system
+kubectl describe lynqnode acme-corp-customer-web-app -n lynq-system
 Events:
   Type     Reason                Age   Message
   ----     ------                ----  -------
@@ -1177,7 +1177,7 @@ deployments:
 
 ```bash
 # Step 1: Check the orphaned resource
-$ kubectl get deployment acme-worker -o yaml
+kubectl get deployment acme-worker -o yaml
 ```
 
 ```yaml
@@ -1228,11 +1228,11 @@ spec:
 **Verify re-adoption:**
 ```bash
 # Confirm orphan markers are removed
-$ kubectl get deployment acme-worker -o jsonpath='{.metadata.labels.lynq\.sh/orphaned}'
+kubectl get deployment acme-worker -o jsonpath='{.metadata.labels.lynq\.sh/orphaned}'
 # (empty output = successfully re-adopted)
 
 # Confirm tracking labels are restored
-$ kubectl get deployment acme-worker -o jsonpath='{.metadata.labels.lynq\.sh/node}'
+kubectl get deployment acme-worker -o jsonpath='{.metadata.labels.lynq\.sh/node}'
 acme-customer-web-app
 ```
 

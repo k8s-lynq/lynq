@@ -8,7 +8,7 @@ If you've ever built a multi-tenant SaaS platform, you've probably felt this pai
 
 **RecordOps** changes this. It's a new paradigm called **Infrastructure as Data** where database records become the source of truth for infrastructure. When you insert a row, infrastructure provisions. When you update a field, resources reconfigure. When you delete a record, everything cleans up.
 
-[[toc]]
+
 
 ## What is Infrastructure as Data?
 

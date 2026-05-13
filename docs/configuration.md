@@ -6,7 +6,7 @@ description: "Configure Lynq controller flags, concurrency settings, metrics, he
 
 Configure Lynq consistently across environments.
 
-[[toc]]
+
 
 ## Operator Runtime
 

@@ -1,8 +1,12 @@
+---
+description: "Practical examples of combining CreationPolicy, DeletionPolicy, ConflictPolicy, and PatchStrategy in real-world LynqForms."
+---
+
 # Policy Combinations - Practical Examples
 
 Real-world examples showing how to combine CreationPolicy, DeletionPolicy, ConflictPolicy, and PatchStrategy for different resource types.
 
-[[toc]]
+
 
 ::: tip Core Concepts First
 If you're new to policies, start with the [Policies Guide](policies.md) to understand each policy type before diving into these examples.

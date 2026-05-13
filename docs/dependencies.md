@@ -6,7 +6,7 @@ description: "Define resource ordering with dependency graphs in Lynq. Learn abo
 
 Resource ordering and dependency graphs in Lynq.
 
-[[toc]]
+
 
 ## Overview
 
@@ -173,7 +173,7 @@ configMaps:
 
 **Error message:**
 ```bash
-$ kubectl describe lynqnode acme-customer-web-app
+kubectl describe lynqnode acme-customer-web-app
 Events:
   Type     Reason           Age   Message
   ----     ------           ----  -------
@@ -347,7 +347,7 @@ T=20s: Deployment fails (ImagePullBackOff, timeout exceeded)
 #### State 1: Blocked (Waiting for dependency to become ready)
 
 ```bash
-$ kubectl describe lynqnode acme-customer-web-app -n lynq-system
+kubectl describe lynqnode acme-customer-web-app -n lynq-system
 
 Status:
   Conditions:
@@ -369,10 +369,10 @@ Events:
   # Note: NO events for app or svc - they're silently blocked
 
 # Check the blocking dependency
-$ kubectl get deployment acme-db -o jsonpath='{.status.conditions[*].type}'
+kubectl get deployment acme-db -o jsonpath='{.status.conditions[*].type}'
 Progressing Available
 
-$ kubectl get deployment acme-db -o jsonpath='{.status.availableReplicas}'
+kubectl get deployment acme-db -o jsonpath='{.status.availableReplicas}'
 0  # ← Still starting up, not yet available
 ```
 
@@ -381,7 +381,7 @@ $ kubectl get deployment acme-db -o jsonpath='{.status.availableReplicas}'
 #### State 2: Failed (Dependency encountered an error)
 
 ```bash
-$ kubectl describe lynqnode acme-customer-web-app -n lynq-system
+kubectl describe lynqnode acme-customer-web-app -n lynq-system
 
 Status:
   Conditions:
@@ -411,11 +411,11 @@ Events:
   Warning  DependencySkipped  60s   Resource 'svc' skipped because dependency 'app' skipped
 
 # Check the failed dependency
-$ kubectl get deployment acme-db
+kubectl get deployment acme-db
 NAME      READY   UP-TO-DATE   AVAILABLE   AGE
 acme-db   0/1     1            0           2m
 
-$ kubectl get pods -l app=acme-db
+kubectl get pods -l app=acme-db
 NAME                      READY   STATUS             RESTARTS   AGE
 acme-db-5f8b7c9d4-xyz12   0/1     ImagePullBackOff   0          2m
 ```

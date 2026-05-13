@@ -6,7 +6,7 @@ description: "Install Lynq on Kubernetes using Helm, Kustomize, or from source. 
 
 This guide covers various installation methods for Lynq.
 
-[[toc]]
+
 
 ::: tip Trying it locally?
 Use the [Quick Start with Minikube](quickstart.md) guide for an automated setup tailored to first-time users.

@@ -1,4 +1,5 @@
 ---
+description: "Interactive Form Builder for composing LynqForm resource templates visually."
 layout: doc
 aside: false
 ---

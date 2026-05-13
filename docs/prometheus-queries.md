@@ -1,8 +1,12 @@
+---
+description: "Production-ready Prometheus query examples for Lynq: health, performance, conflicts, rollouts, and hub metrics."
+---
+
 # Prometheus Query Examples
 
 This document provides ready-to-use PromQL queries for monitoring Lynq.
 
-[[toc]]
+
 
 ## Node Health
 

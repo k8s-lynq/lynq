@@ -1,8 +1,12 @@
+---
+description: "Combine Lynq with Crossplane to provision cloud infrastructure per node. Covers database-per-node and cloud resource templates."
+---
+
 # Crossplane Integration Guide
 
 This guide shows how to integrate Lynq with Crossplane for provisioning cloud resources (AWS, GCP, Azure) per node using a Kubernetes-native approach.
 
-[[toc]]
+
 
 ## Overview
 

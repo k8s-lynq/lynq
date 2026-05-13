@@ -1,3 +1,7 @@
+---
+description: "Provisioning multi-tier application stacks (frontend, backend, database) per node with Lynq dependency ordering."
+---
+
 # Multi-Tier Application Stack
 
 ::: info Multi-Tenancy Example

@@ -1,8 +1,12 @@
+---
+description: "Tuning guide for Lynq at scale. Covers concurrency flags, requeue intervals, watch predicates, and large node count recommendations."
+---
+
 # Performance Tuning Guide
 
 Practical optimization strategies for scaling Lynq to thousands of nodes.
 
-[[toc]]
+
 
 ## Understanding Performance
 
@@ -306,12 +310,12 @@ Performance Issue?
 **Before Optimization:**
 ```bash
 # Status: Slow reconciliation, high CPU
-$ kubectl logs -n lynq-system deployment/lynq-controller-manager | grep "Reconciliation completed" | tail -5
+kubectl logs -n lynq-system deployment/lynq-controller-manager | grep "Reconciliation completed" | tail -5
 2024-01-15T10:30:45.123Z INFO  Reconciliation completed  {"node": "node-001", "duration": "45.2s"}
 2024-01-15T10:31:30.456Z INFO  Reconciliation completed  {"node": "node-002", "duration": "43.8s"}
 2024-01-15T10:32:15.789Z INFO  Reconciliation completed  {"node": "node-003", "duration": "47.1s"}
 
-$ kubectl top pods -n lynq-system
+kubectl top pods -n lynq-system
 NAME                                     CPU(cores)   MEMORY(bytes)
 lynq-controller-manager-xxx              1850m        1.8Gi
 
@@ -345,12 +349,12 @@ args:
 **After Optimization:**
 ```bash
 # Status: Fast reconciliation, normal CPU
-$ kubectl logs -n lynq-system deployment/lynq-controller-manager | grep "Reconciliation completed" | tail -5
+kubectl logs -n lynq-system deployment/lynq-controller-manager | grep "Reconciliation completed" | tail -5
 2024-01-15T11:30:02.123Z INFO  Reconciliation completed  {"node": "node-001", "duration": "3.2s"}
 2024-01-15T11:30:05.456Z INFO  Reconciliation completed  {"node": "node-002", "duration": "2.8s"}
 2024-01-15T11:30:08.789Z INFO  Reconciliation completed  {"node": "node-003", "duration": "3.5s"}
 
-$ kubectl top pods -n lynq-system
+kubectl top pods -n lynq-system
 NAME                                     CPU(cores)   MEMORY(bytes)
 lynq-controller-manager-xxx              450m         890Mi
 

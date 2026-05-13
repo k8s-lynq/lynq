@@ -10,7 +10,7 @@ Get Lynq running on Minikube in under 5 minutes using automated scripts.
 As the most common use case for Lynq, this guide uses **Multi-Node** infrastructure (SaaS application with multiple customers/nodes) as an example. The pattern shown here can be adapted for any database-driven infrastructure automation scenario.
 :::
 
-[[toc]]
+
 
 ## Overview
 
@@ -194,7 +194,8 @@ cert-manager is **automatically installed** by the setup script. It's required f
 />
 
 <div id="qs-success"></div>
-<h2>🎉 Success! You're Running Lynq</h2>
+
+## 🎉 Success! You're Running Lynq
 
 You now have:
 - ✅ **Minikube cluster** with **cert-manager** (for webhook TLS)

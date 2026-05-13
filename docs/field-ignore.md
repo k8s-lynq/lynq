@@ -1,3 +1,7 @@
+---
+description: "How to use field-level ignore control to prevent Lynq from overwriting fields managed by other controllers."
+---
+
 # Field-Level Ignore Control
 
 ## Overview

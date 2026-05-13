@@ -253,7 +253,7 @@ status:
 
 ```bash
 # List all LynqNodes for this hub
-$ kubectl get lynqnodes -l lynq.sh/hub=customer-hub
+kubectl get lynqnodes -l lynq.sh/hub=customer-hub
 NAME              READY   DESIRED   FAILED   AGE
 acme-web-app      5/5     5         0        10m
 acme-worker       3/3     3         0        10m

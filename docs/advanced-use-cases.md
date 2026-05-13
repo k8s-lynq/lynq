@@ -1,3 +1,7 @@
+---
+description: "Advanced Lynq patterns: custom domains, blue-green deployments, multi-tier stacks, database-per-node, and feature flags."
+---
+
 # Advanced Use Cases
 
 ::: info Multi-Tenancy Examples

@@ -1,3 +1,7 @@
+---
+description: "Use Lynq with Flux for GitOps-style node provisioning. Manage GitRepositories and Kustomizations per node from database records."
+---
+
 # Flux Integration Guide
 
 ::: info Multi-Tenancy Example
@@ -6,7 +10,7 @@ This guide uses **Multi-Tenancy** (SaaS application with multiple customers/node
 
 This guide shows how to integrate Lynq with Flux for GitOps-based application deployment per node.
 
-[[toc]]
+
 
 ## Overview
 

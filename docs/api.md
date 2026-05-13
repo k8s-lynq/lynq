@@ -6,7 +6,7 @@ description: "Complete API reference for Lynq CRDs — LynqHub, LynqForm, and Ly
 
 Complete API reference for Lynq CRDs.
 
-[[toc]]
+
 
 ## LynqHub
 

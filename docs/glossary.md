@@ -1,8 +1,12 @@
+---
+description: "Definitions of key terms in Lynq: LynqHub, LynqForm, LynqNode, RecordOps, policies, and more."
+---
+
 # Glossary
 
 Comprehensive reference of terms and concepts used in Lynq.
 
-[[toc]]
+
 
 ## Core Concepts
 

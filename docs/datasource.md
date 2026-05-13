@@ -6,7 +6,7 @@ description: "Configure MySQL and other datasources for Lynq. Covers connection 
 
 Complete guide for configuring datasources with Lynq.
 
-[[toc]]
+
 
 ## Overview
 
@@ -606,7 +606,7 @@ SELECT COUNT(*) AS expected_lynqnodes FROM node_configs WHERE is_active IN ('1',
 
 ```bash
 # After deploying LynqHub, verify operator synced correctly
-$ kubectl get lynqhub production-nodes -o jsonpath='{.status}'
+kubectl get lynqhub production-nodes -o jsonpath='{.status}'
 
 # Expected:
 # {
@@ -623,7 +623,7 @@ $ kubectl get lynqhub production-nodes -o jsonpath='{.status}'
 # }
 
 # List created LynqNodes
-$ kubectl get lynqnodes
+kubectl get lynqnodes
 NAME          READY   DESIRED   AGE
 node-1        5/5     5         1m
 node-2        5/5     5         1m

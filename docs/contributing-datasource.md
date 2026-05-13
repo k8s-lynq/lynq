@@ -1,8 +1,12 @@
+---
+description: "Guide for implementing a new datasource adapter for Lynq. Covers the Datasource interface, factory registration, API types, and testing."
+---
+
 # Contributing a New Datasource
 
 This guide walks you through implementing a new datasource adapter for Lynq. The operator uses an adapter pattern to support multiple data sources, making it easy to add support for new databases or data sources.
 
-[[toc]]
+
 
 ## Overview
 

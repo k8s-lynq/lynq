@@ -1,8 +1,12 @@
+---
+description: "Set up a local Lynq development environment on Minikube with cert-manager, webhooks, and a sample MySQL datasource."
+---
+
 # Local Development with Minikube
 
 Development workflow guide for contributing to and modifying Lynq.
 
-[[toc]]
+
 
 ::: tip Quick taste
 If you only want to experience the operator, follow the [Quick Start guide](quickstart.md) instead.

@@ -1,8 +1,12 @@
+---
+description: "Solutions to common Lynq issues: Hub sync failures, stuck LynqNodes, resource conflicts, finalizer problems, and log analysis."
+---
+
 # Troubleshooting Guide
 
 Common issues and solutions for Lynq.
 
-[[toc]]
+
 
 ## Quick Diagnostic Decision Tree
 
@@ -177,7 +181,7 @@ kubectl describe lynqnode <name> | grep -A5 "TemplateRenderError"
 ```
 
 ```bash [❌ Failure - kubectl Events]
-$ kubectl describe lynqnode acme-web
+kubectl describe lynqnode acme-web
 ...
 Events:
   Type     Reason               Age   From                    Message
@@ -243,7 +247,7 @@ Failed to query database: dial tcp: connect: connection refused
 
 ::: code-group
 ```bash [✅ Success - Hub Syncing]
-$ kubectl logs -n lynq-system deployment/lynq-controller-manager | grep -i "hub\|mysql\|database"
+kubectl logs -n lynq-system deployment/lynq-controller-manager | grep -i "hub\|mysql\|database"
 
 2024-01-15T10:30:00.100Z INFO  controller.lynqhub  Starting sync  {"hub": "customer-hub", "namespace": "production"}
 2024-01-15T10:30:00.150Z INFO  controller.lynqhub  Database connected  {"host": "mysql.default.svc.cluster.local", "database": "saas_platform"}
@@ -254,7 +258,7 @@ $ kubectl logs -n lynq-system deployment/lynq-controller-manager | grep -i "hub\
 ```
 
 ```bash [❌ Failure - Connection Refused]
-$ kubectl logs -n lynq-system deployment/lynq-controller-manager | grep -i "hub\|mysql\|error"
+kubectl logs -n lynq-system deployment/lynq-controller-manager | grep -i "hub\|mysql\|error"
 
 2024-01-15T10:30:00.100Z INFO  controller.lynqhub  Starting sync  {"hub": "customer-hub", "namespace": "production"}
 2024-01-15T10:30:05.100Z ERROR controller.lynqhub  Failed to connect to database  {"host": "mysql.wrong-namespace.svc.cluster.local", "error": "dial tcp 10.96.0.1:3306: connect: connection refused"}
@@ -262,14 +266,14 @@ $ kubectl logs -n lynq-system deployment/lynq-controller-manager | grep -i "hub\
 ```
 
 ```bash [❌ Failure - Authentication Error]
-$ kubectl logs -n lynq-system deployment/lynq-controller-manager | grep -i "hub\|mysql\|error"
+kubectl logs -n lynq-system deployment/lynq-controller-manager | grep -i "hub\|mysql\|error"
 
 2024-01-15T10:30:00.100Z INFO  controller.lynqhub  Starting sync  {"hub": "customer-hub"}
 2024-01-15T10:30:00.200Z ERROR controller.lynqhub  Database authentication failed  {"error": "Error 1045 (28000): Access denied for user 'lynq'@'10.244.0.15' (using password: YES)"}
 ```
 
 ```bash [❌ Failure - Query Error]
-$ kubectl logs -n lynq-system deployment/lynq-controller-manager | grep -i "hub\|query\|error"
+kubectl logs -n lynq-system deployment/lynq-controller-manager | grep -i "hub\|query\|error"
 
 2024-01-15T10:30:00.100Z INFO  controller.lynqhub  Starting sync  {"hub": "customer-hub"}
 2024-01-15T10:30:00.150Z INFO  controller.lynqhub  Database connected
@@ -281,7 +285,7 @@ $ kubectl logs -n lynq-system deployment/lynq-controller-manager | grep -i "hub\
 
 ::: code-group
 ```yaml [✅ Healthy Hub Status]
-$ kubectl get lynqhub customer-hub -o yaml
+kubectl get lynqhub customer-hub -o yaml
 status:
   conditions:
   - lastTransitionTime: "2024-01-15T10:30:00Z"
@@ -297,7 +301,7 @@ status:
 ```
 
 ```yaml [❌ Failed Hub Status]
-$ kubectl get lynqhub customer-hub -o yaml
+kubectl get lynqhub customer-hub -o yaml
 status:
   conditions:
   - lastTransitionTime: "2024-01-15T10:30:05Z"
@@ -849,7 +853,7 @@ Understanding reconciliation logs helps quickly identify issues:
 **Complete Healthy Reconciliation Cycle:**
 
 ```bash
-$ kubectl logs -n lynq-system deployment/lynq-controller-manager --tail=50
+kubectl logs -n lynq-system deployment/lynq-controller-manager --tail=50
 
 # ✅ Phase 1: Start
 2024-01-15T10:30:00.000Z INFO  controller.lynqnode  Reconciliation started  {"node": "acme-web", "namespace": "production"}

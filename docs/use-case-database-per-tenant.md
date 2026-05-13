@@ -1,3 +1,7 @@
+---
+description: "Provisioning a dedicated database per node using Crossplane and Lynq, driven by MySQL records."
+---
+
 # Database per Node with Crossplane
 
 ::: warning Historical File Name

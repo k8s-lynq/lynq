@@ -1,3 +1,7 @@
+---
+description: "Implementing zero-downtime blue-green deployments per node using Lynq and database-driven flags."
+---
+
 # Blue-Green Deployment Pattern
 
 ::: info Multi-Tenancy Example

@@ -6,7 +6,7 @@ description: "Control resource lifecycle with Lynq's four policy types: Creation
 
 Lynq provides fine-grained control over resource lifecycle through four policy types. This guide explains each policy and when to use them.
 
-[[toc]]
+
 
 ## Policy Types Overview
 
@@ -595,7 +595,7 @@ kubectl describe lynqnode <lynqnode-name>
 #### Stuck Policy Events
 
 ```bash
-$ kubectl describe lynqnode acme-customer-web-app -n lynq-system
+kubectl describe lynqnode acme-customer-web-app -n lynq-system
 
 Events:
   Type     Reason            Age   From                  Message
@@ -627,7 +627,7 @@ Status:
 #### Force Policy Events
 
 ```bash
-$ kubectl describe lynqnode acme-customer-web-app -n lynq-system
+kubectl describe lynqnode acme-customer-web-app -n lynq-system
 
 Events:
   Type     Reason            Age   From                  Message
@@ -683,7 +683,7 @@ See [Monitoring Guide](monitoring.md) for complete metrics reference.
 ::: v-pre
 
 ```bash
-$ kubectl get lynqnode acme-customer-web-app -n lynq-system
+kubectl get lynqnode acme-customer-web-app -n lynq-system
 NAME                        READY   DESIRED   FAILED   DEGRADED   AGE
 acme-customer-web-app       2/3     3         0        true       10m
 ```
@@ -692,7 +692,7 @@ acme-customer-web-app       2/3     3         0        true       10m
 
 ```bash
 # Check LynqNode status for conflict details
-$ kubectl get lynqnode acme-customer-web-app -n lynq-system \
+kubectl get lynqnode acme-customer-web-app -n lynq-system \
     -o jsonpath='{.status.conditions[?(@.type=="Degraded")].message}'
 Deployment default/acme-app managed by 'helm', not 'lynq'
 ```
@@ -701,7 +701,7 @@ Deployment default/acme-app managed by 'helm', not 'lynq'
 
 ```bash
 # Check the field manager (owner)
-$ kubectl get deployment acme-app -o yaml | grep -A10 managedFields
+kubectl get deployment acme-app -o yaml | grep -A10 managedFields
   managedFields:
   - apiVersion: apps/v1
     fieldsType: FieldsV1
@@ -723,11 +723,11 @@ $ kubectl get deployment acme-app -o yaml | grep -A10 managedFields
 
 ```bash
 # After choosing a strategy, trigger reconciliation
-$ kubectl annotate lynqnode acme-customer-web-app -n lynq-system \
+kubectl annotate lynqnode acme-customer-web-app -n lynq-system \
     lynq.sh/force-reconcile=$(date +%s) --overwrite
 
 # Verify degraded status is cleared
-$ kubectl get lynqnode acme-customer-web-app -n lynq-system
+kubectl get lynqnode acme-customer-web-app -n lynq-system
 NAME                        READY   DESIRED   FAILED   DEGRADED   AGE
 acme-customer-web-app       3/3     3         0        false      12m
 ```
@@ -743,7 +743,7 @@ acme-customer-web-app       3/3     3         0        false      12m
 **Diagnosis:**
 ```bash
 # Check if resource has the Once annotation
-$ kubectl get deployment acme-app -o jsonpath='{.metadata.annotations.lynq\.sh/created-once}'
+kubectl get deployment acme-app -o jsonpath='{.metadata.annotations.lynq\.sh/created-once}'
 true  # ← This resource won't be updated
 ```
 
@@ -757,11 +757,11 @@ true  # ← This resource won't be updated
 
 ```bash
 # Option 1: Force recreation
-$ kubectl delete deployment acme-app
+kubectl delete deployment acme-app
 # Lynq will recreate on next reconciliation
 
 # Option 2: Change policy and remove annotation
-$ kubectl patch deployment acme-app --type=json \
+kubectl patch deployment acme-app --type=json \
     -p='[{"op":"remove","path":"/metadata/annotations/lynq.sh~1created-once"}]'
 # Then update LynqForm with creationPolicy: WhenNeeded
 ```
@@ -775,17 +775,17 @@ $ kubectl patch deployment acme-app --type=json \
 **Diagnosis:**
 ```bash
 # Check for orphan labels
-$ kubectl get deployment acme-app -o jsonpath='{.metadata.labels.lynq\.sh/orphaned}'
+kubectl get deployment acme-app -o jsonpath='{.metadata.labels.lynq\.sh/orphaned}'
 true  # ← Orphaned by design
 ```
 
 **Solution:**
 ```bash
 # Manual cleanup (if desired)
-$ kubectl delete deployment acme-app
+kubectl delete deployment acme-app
 
 # Or find all orphaned resources
-$ kubectl get all -A -l lynq.sh/orphaned=true
+kubectl get all -A -l lynq.sh/orphaned=true
 ```
 
 **This is expected behavior for Retain policy.**
@@ -828,7 +828,7 @@ kubectl annotate lynqnode <node-name> -n <namespace> \
 
 **Step 3:** Verify the resource no longer has ownerReference
 ```bash
-$ kubectl get deployment acme-app -o jsonpath='{.metadata.ownerReferences}'
+kubectl get deployment acme-app -o jsonpath='{.metadata.ownerReferences}'
 # Should be empty or null for Retain policy
 ```
 
@@ -845,7 +845,7 @@ The operator will automatically switch from ownerReference-based tracking to lab
 **Step 1:** Verify you want automatic deletion
 ```bash
 # List all resources that will be affected
-$ kubectl get all -l lynq.sh/node=<lynqnode-name>
+kubectl get all -l lynq.sh/node=<lynqnode-name>
 ```
 
 **Step 2:** Update the LynqForm
@@ -864,7 +864,7 @@ kubectl annotate lynqnode <node-name> -n <namespace> \
 
 **Step 4:** Verify ownerReference is now set
 ```bash
-$ kubectl get deployment acme-app -o jsonpath='{.metadata.ownerReferences[0].name}'
+kubectl get deployment acme-app -o jsonpath='{.metadata.ownerReferences[0].name}'
 acme-customer-web-app  # ← ownerReference restored
 ```
 
@@ -874,7 +874,7 @@ acme-customer-web-app  # ← ownerReference restored
 
 **Step 1:** Identify currently conflicted resources
 ```bash
-$ kubectl get lynqnode <node-name> -o jsonpath='{.status.conditions[?(@.type=="Degraded")]}'
+kubectl get lynqnode <node-name> -o jsonpath='{.status.conditions[?(@.type=="Degraded")]}'
 ```
 
 **Step 2:** Update the LynqForm
@@ -894,7 +894,7 @@ kubectl get events -n <namespace> --field-selector reason=ForceApply
 
 **Step 4:** Verify ownership transferred
 ```bash
-$ kubectl get deployment acme-app -o yaml | grep -A5 managedFields
+kubectl get deployment acme-app -o yaml | grep -A5 managedFields
 # Should show "manager: lynq"
 ```
 
@@ -904,10 +904,10 @@ $ kubectl get deployment acme-app -o yaml | grep -A5 managedFields
 
 **Step 1:** Remove the Once annotation from existing resources
 ```bash
-$ kubectl get deployment acme-app -o jsonpath='{.metadata.annotations}'
+kubectl get deployment acme-app -o jsonpath='{.metadata.annotations}'
 # Find: "lynq.sh/created-once": "true"
 
-$ kubectl patch deployment acme-app --type=json \
+kubectl patch deployment acme-app --type=json \
     -p='[{"op":"remove","path":"/metadata/annotations/lynq.sh~1created-once"}]'
 ```
 
