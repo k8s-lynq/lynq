@@ -39,8 +39,8 @@
       </div>
       <div class="cta-container">
         <div class="cta-content fade-up">
-          <h2>Ready to Simplify Your Infrastructure?</h2>
-          <p>Get started with Lynq in minutes. No complex setup required.</p>
+          <h2>Start Automating Infrastructure from Your Database</h2>
+          <p>Requires Kubernetes and cert-manager. The quickstart provisions a full local environment — MySQL, Lynq, and sample resources — using automated setup scripts.</p>
 
           <div class="cta-buttons">
             <a href="/quickstart" class="cta-primary">

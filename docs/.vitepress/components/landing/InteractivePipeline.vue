@@ -4,7 +4,7 @@
       <div class="section-header fade-up">
         <span class="section-label">How It Works</span>
         <h2>From Data to Resources in Seconds</h2>
-        <p class="section-subtitle">Click each step to see how Lynq transforms database records into Kubernetes resources</p>
+        <p class="section-subtitle">Click each step to explore the full lifecycle — from database row to running Kubernetes resources</p>
       </div>
 
       <div
@@ -170,7 +170,7 @@ const pipelineVisible = ref(false)
 const steps = [
   {
     title: 'Connect Your Database',
-    description: 'LynqHub connects to your existing MySQL database and periodically syncs active records that should have Kubernetes resources.',
+    description: 'LynqHub polls your MySQL or PostgreSQL table at the configured syncInterval (default: 1 minute). Any row where the activate column is truthy gets a corresponding LynqNode CR. Existing infrastructure keeps running if the database goes temporarily offline.',
     filename: 'lynqhub.yaml',
     code: `apiVersion: operator.lynq.sh/v1
 kind: LynqHub
@@ -179,7 +179,7 @@ metadata:
 spec:
   source:
     type: mysql
-    syncInterval: 30s
+    syncInterval: 1m
     mysql:
       host: mysql.default.svc
       port: 3306
@@ -191,20 +191,20 @@ spec:
       table: node_configs`
   },
   {
-    title: 'Define Value Mappings',
-    description: 'Map database columns to template variables. Lynq extracts the UID, activation status, and any custom fields you need.',
+    title: 'Map Your Columns',
+    description: 'Map table columns to Lynq\'s required fields: uid (unique identifier per row) and activate (on/off switch). Use extraValueMappings for any additional columns your templates need — plan tiers, hostnames, replica counts, feature flags.',
     filename: 'lynqhub.yaml',
     code: `spec:
   valueMappings:
-    uid: node_id          # Unique identifier
-    activate: is_active   # Boolean flag
+    uid: node_id          # Required: unique row identifier
+    activate: is_active   # Required: boolean on/off flag
   extraValueMappings:
     planId: subscription_plan
     nodeUrl: node_url`
   },
   {
-    title: 'Create Templates',
-    description: 'LynqForm defines what Kubernetes resources to create for each record. Use Go templates with your mapped values.',
+    title: 'Define Resource Templates',
+    description: 'LynqForm defines exactly which Kubernetes resources to create per active row, using Go template syntax with sprig functions. Per-resource policies (conflictPolicy, deletionPolicy, creationPolicy) give fine-grained control over lifecycle behavior. Multiple LynqForms can reference the same hub.',
     filename: 'lynqform.yaml',
     code: `apiVersion: operator.lynq.sh/v1
 kind: LynqForm
@@ -215,6 +215,8 @@ spec:
   deployments:
     - id: app
       nameTemplate: "{{ .uid }}-app"
+      conflictPolicy: Stuck   # halt if another controller owns this
+      deletionPolicy: Delete  # clean up when row is deactivated
       spec:
         replicas: 1
         selector:
@@ -230,8 +232,8 @@ spec:
                 image: nginx:stable`
   },
   {
-    title: 'Resources Appear',
-    description: 'Lynq automatically creates and manages Kubernetes resources for each database record. Add a row, get resources. Delete a row, resources are cleaned up.',
+    title: 'Resources Tracked Per Node',
+    description: 'Each active row gets a LynqNode CR that tracks readiness, failures, conflicts, and skipped resources. The Ready condition is True only when all resources pass their readiness checks. Deactivate a row and resources are cleaned up; conflictPolicy: Stuck surfaces ownership conflicts before they cause damage.',
     filename: 'kubectl output',
     code: `$ kubectl get lynqnodes
 NAME                  UID        FORM       READY  DESIRED  SKIPPED  CONFLICTED  CONDITIONS   AGE
