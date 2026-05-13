@@ -106,6 +106,8 @@ export default withMermaid(
             { text: "Blue-Green Deployments", link: "/use-case-blue-green" },
             { text: "Database per Node", link: "/use-case-database-per-tenant" },
             { text: "Feature Flags", link: "/use-case-feature-flags" },
+            { text: "Preview Environments", link: "/use-case-preview-environments" },
+            { text: "Developer Sandboxes", link: "/use-case-sandbox-environments" },
           ],
         },
         // 5. Connect with other tools
