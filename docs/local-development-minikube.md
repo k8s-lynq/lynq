@@ -8,8 +8,8 @@ Development workflow guide for contributing to and modifying Lynq.
 
 
 
-::: tip Quick taste
-If you only want to experience the operator, follow the [Quick Start guide](quickstart.md) instead.
+::: tip Just trying it out?
+Follow the [Quick Start guide](quickstart.md) instead — it uses pre-built images and takes 5 minutes.
 :::
 
 ## Overview

@@ -4,7 +4,7 @@ description: "Definitions of key terms in Lynq: LynqHub, LynqForm, LynqNode, Rec
 
 # Glossary
 
-Comprehensive reference of terms and concepts used in Lynq.
+Definitions for the terms, CRDs, labels, and concepts used throughout the Lynq documentation.
 
 
 
@@ -12,11 +12,11 @@ Comprehensive reference of terms and concepts used in Lynq.
 
 ### Lynq
 
-A Kubernetes operator that automates database-driven infrastructure provisioning by synchronizing node data from external data sources (MySQL, PostgreSQL) and creating Kubernetes resources using template-based declarative configuration.
+A Kubernetes operator that synchronizes database records with Kubernetes resources. Active rows provision resources; inactive or deleted rows trigger cleanup.
 
 ### Multi-Node
 
-An architectural pattern where a single instance of software serves multiple customers (nodes), each with isolated resources and data. Previously called "Multi-Tenancy" in earlier versions.
+A deployment pattern where each customer, device, or project gets its own isolated set of Kubernetes resources provisioned from a shared template.
 
 ### Operator Pattern
 

@@ -4,7 +4,7 @@ description: "Integrate Lynq with Argo CD for GitOps-driven node provisioning. C
 
 # Argo CD Integration Guide
 
-Deliver GitOps-driven node environments by mapping each **LynqNode** to an **Argo CD Application**.
+Map each **LynqNode** to an **Argo CD Application**. Lynq renders the Application manifests from database rows; Argo CD handles GitOps sync and progressive delivery.
 
 
 

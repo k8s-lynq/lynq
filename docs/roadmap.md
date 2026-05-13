@@ -4,7 +4,7 @@ description: "Lynq feature roadmap with completed milestones (v1.0, v1.1) and pl
 
 # Roadmap
 
-Future plans and feature roadmap for Lynq.
+Completed milestones (v1.0, v1.1) and planned features for v1.2 and beyond.
 
 
 

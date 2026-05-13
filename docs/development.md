@@ -4,7 +4,7 @@ description: "Developer guide for building and testing Lynq locally. Covers prer
 
 # Development Guide
 
-Guide for developing and contributing to Lynq.
+Build, test, and iterate on Lynq locally. Covers prerequisites, cluster setup, make targets, and E2E test execution.
 
 
 

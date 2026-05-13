@@ -4,7 +4,7 @@ description: "Control resource lifecycle with Lynq's four policy types: Creation
 
 # Policies Guide
 
-Lynq provides fine-grained control over resource lifecycle through four policy types. This guide explains each policy and when to use them.
+Four policy types control how Lynq creates, updates, and deletes managed resources.
 
 
 
@@ -16,10 +16,6 @@ Lynq provides fine-grained control over resource lifecycle through four policy t
 | DeletionPolicy | What happens on delete | `Delete` | `Delete`, `Retain` |
 | ConflictPolicy | Ownership conflict handling | `Stuck` | `Stuck`, `Force` |
 | PatchStrategy | How resources are updated | `apply` | `apply`, `merge`, `replace` |
-
-::: tip Practical Examples
-See [Policy Combinations Examples](policies-examples.md) for detailed real-world scenarios with diagrams and step-by-step explanations.
-:::
 
 ::: tip Field-Level Control (v1.1.4+)
 For fine-grained control over specific fields while using `WhenNeeded`, see [Field-Level Ignore Control](field-ignore.md). This allows you to selectively ignore certain fields during reconciliation (e.g., HPA-managed replicas).

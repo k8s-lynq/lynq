@@ -6,7 +6,7 @@ aside: false
 
 # Form Builder
 
-Build LynqForm YAML configurations using an intuitive UI. Create resources, manage dependencies, and export production-ready forms.
+Build LynqForm YAML configurations interactively. Add resources, set dependency ordering, and export a ready-to-apply manifest.
 
 <TemplateBuilder />
 

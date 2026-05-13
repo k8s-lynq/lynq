@@ -8,10 +8,6 @@ Real-world examples showing how to combine CreationPolicy, DeletionPolicy, Confl
 
 
 
-::: tip Core Concepts First
-If you're new to policies, start with the [Policies Guide](policies.md) to understand each policy type before diving into these examples.
-:::
-
 ## Overview
 
 This guide demonstrates how policies work together through four common scenarios:

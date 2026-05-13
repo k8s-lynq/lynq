@@ -4,13 +4,7 @@ description: "Deep dive into Lynq's three-controller architecture, CRD design, r
 
 # Architecture
 
-This document provides a detailed overview of Lynq's architecture as a RecordOps platform, including system components, reconciliation flow, and key design decisions that enable Infrastructure as Data.
-
-::: tip Infrastructure as Data Architecture
-Lynq implements Infrastructure as Data through the RecordOps pattern. Database records control infrastructure state, enabling real-time provisioning without YAML files or CI/CD pipelines.
-
-[Learn more about Infrastructure as Data →](./recordops.md)
-:::
+Three controllers, three CRDs, one SSA apply engine. This page covers the system components, reconciliation flow, and key design decisions behind Lynq.
 
 ## System Overview
 

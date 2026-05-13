@@ -4,7 +4,7 @@ description: "Automatically manage DNS records per node using ExternalDNS with R
 
 # ExternalDNS Integration Guide
 
-This guide shows how to integrate Lynq with ExternalDNS for automatic DNS record management.
+Use ExternalDNS with Lynq to manage DNS records per node. When Lynq provisions an Ingress or Service for a node, ExternalDNS creates the corresponding DNS record; when the node is removed, the record is deleted.
 
 
 

@@ -4,7 +4,7 @@ description: "Configure Lynq controller flags, concurrency settings, metrics, he
 
 # Configuration Guide
 
-Configure Lynq consistently across environments.
+Controller flags, concurrency settings, metrics endpoints, and environment-specific options for Lynq.
 
 
 
