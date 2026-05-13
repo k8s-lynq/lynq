@@ -2,9 +2,9 @@
 description: "Configure MySQL and other datasources for Lynq. Covers connection setup, column mappings, SQL VIEWs, extraValueMappings, and data transformation."
 ---
 
-# DataSource Configuration Guide
+# Datasource Configuration
 
-Complete guide for configuring datasources with Lynq.
+LynqHub connects to your database, queries active rows, and reconciles the corresponding LynqNode CRs. This guide covers connection setup, credential management, column mappings, and data transformation with `extraValueMappings`.
 
 
 

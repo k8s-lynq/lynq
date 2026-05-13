@@ -2,9 +2,9 @@
 description: "Define resource ordering with dependency graphs in Lynq. Learn about DAG-based topological sorting, cycle detection, and the interactive dependency visualizer."
 ---
 
-# Dependency Management Guide
+# Dependency Management
 
-Resource ordering and dependency graphs in Lynq.
+Lynq applies resources within a LynqNode in topological order. Use `dependIds` to declare ordering constraints; `waitForReady` blocks a dependent resource until its dependency is ready.
 
 
 

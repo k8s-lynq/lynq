@@ -6,12 +6,6 @@ description: "Get Lynq running on Minikube in under 5 minutes. Set up a complete
 
 Get Lynq running on Minikube in under 5 minutes using automated scripts.
 
-::: info Multi-Node Example
-As the most common use case for Lynq, this guide uses **Multi-Node** infrastructure (SaaS application with multiple customers/nodes) as an example. The pattern shown here can be adapted for any database-driven infrastructure automation scenario.
-:::
-
-
-
 ## Overview
 
 This guide uses automated scripts to set up a complete local environment:
@@ -195,7 +189,7 @@ cert-manager is **automatically installed** by the setup script. It's required f
 
 <div id="qs-success"></div>
 
-## 🎉 Success! You're Running Lynq
+## Success: Lynq is Running
 
 You now have:
 - ✅ **Minikube cluster** with **cert-manager** (for webhook TLS)
@@ -228,7 +222,7 @@ kubectl logs -n lynq-system -l control-plane=controller-manager -f
 
 ## Real-World Example
 
-Let's see the complete lifecycle of a node from database to Kubernetes.
+The following illustrates the complete lifecycle of a node from database to Kubernetes.
 
 ### Adding a Node
 

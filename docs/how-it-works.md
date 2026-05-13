@@ -9,11 +9,6 @@ Lynq is a **RecordOps platform** that implements **Infrastructure as Data** for 
 
 
 
-::: tip Infrastructure as Data in Action
-Lynq implements Infrastructure as Data through RecordOps—database records control infrastructure state. When you insert, update, or delete a row, infrastructure changes automatically. No YAML files, no CI/CD delays—just real-time infrastructure that follows your data.
-
-[Learn more about Infrastructure as Data →](./recordops.md)
-:::
 
 ## Architecture Overview
 
@@ -123,7 +118,7 @@ Lynq implements Infrastructure as Data through a straightforward three-step proc
 
 ## Concrete Example: End-to-End Walkthrough
 
-Let's trace how a single database row becomes Kubernetes infrastructure.
+The following traces how a single database row becomes Kubernetes infrastructure.
 
 ### Step 1: Your Database Table
 

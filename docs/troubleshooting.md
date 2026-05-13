@@ -4,7 +4,7 @@ description: "Solutions to common Lynq issues: Hub sync failures, stuck LynqNode
 
 # Troubleshooting Guide
 
-Common issues and solutions for Lynq.
+Diagnosis steps for common Lynq issues: hub sync failures, stuck LynqNodes, resource conflicts, finalizer problems, and template errors.
 
 
 

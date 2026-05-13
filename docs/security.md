@@ -4,7 +4,7 @@ description: "Security guide for Lynq covering RBAC requirements, credential man
 
 # Security Guide
 
-Security best practices for Lynq.
+Covers RBAC requirements, credential management, network policies, and multi-node isolation models for production deployments.
 
 
 
@@ -279,9 +279,9 @@ spec:
   serviceAccountName: custom-sa
 ```
 
-## Multi-Tenancy Isolation
+## Node Isolation
 
-Lynq supports multiple isolation models for multi-tenant environments.
+Lynq supports multiple isolation models for separating node resources within a cluster.
 
 ### Namespace Isolation Model
 

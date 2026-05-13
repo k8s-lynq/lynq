@@ -233,8 +233,8 @@ Move JOIN operations and complex filtering to database views.
 
 ## Contributing
 
-Have a use case not covered here? We'd love to hear about it!
+Have a use case not covered here? Open an issue or submit a guide:
 
 - **Open an Issue**: [GitHub Issues](https://github.com/k8s-lynq/lynq/issues)
-- **Share Your Story**: Contribute a use case guide
-- **Join Discussions**: Share your experience with the community
+- **Contribute a Guide**: Submit a pull request with your use case
+- **Discussions**: Share patterns and experiences with the community

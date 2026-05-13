@@ -66,7 +66,7 @@
           <ul class="points">
             <li>
               <span class="point-icon">&#128736;</span>
-              Manual kubectl for each tenant
+              Manual kubectl for each customer
             </li>
             <li>
               <span class="point-icon">&#128221;</span>

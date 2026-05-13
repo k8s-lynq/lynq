@@ -99,7 +99,7 @@ const HeroParticlesSkeleton = {
         ),
         h('div', { style: { display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' } }, [
           h('span', { style: { padding: '1rem 2rem', fontSize: '1rem', borderRadius: '12px' } }, 'Get Started →'),
-          h('span', { style: { padding: '1rem 2rem', fontSize: '1rem', borderRadius: '12px' } }, '► Watch Demo'),
+          h('span', { style: { padding: '1rem 2rem', fontSize: '1rem', borderRadius: '12px' } }, '◆ View on GitHub'),
         ]),
       ]),
     ])
