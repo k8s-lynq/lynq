@@ -80,24 +80,24 @@ import { ref } from 'vue'
 const showVideo = ref(true)
 const features = [
   {
+    icon: '🗺️',
+    title: 'Topology View',
+    description: 'Hub → Form → Node hierarchy with live status'
+  },
+  {
     icon: '📊',
-    title: 'Resource Status',
-    description: 'Ready, pending, failed at a glance'
+    title: 'Resource Health',
+    description: 'Ready, pending, failed counts per node'
+  },
+  {
+    icon: '📋',
+    title: 'Event Stream',
+    description: 'Reconciliation events and error details per node'
   },
   {
     icon: '🔍',
     title: 'Quick Search',
-    description: '⌘K to find any resource instantly'
-  },
-  {
-    icon: '🌐',
-    title: 'i18n Support',
-    description: 'English & Korean languages'
-  },
-  {
-    icon: '🌙',
-    title: 'Dark Mode',
-    description: 'Easy on the eyes'
+    description: '⌘K to find any hub, form, or node instantly'
   }
 ]
 </script>

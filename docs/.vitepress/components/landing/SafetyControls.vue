@@ -3,9 +3,9 @@
     <div class="grid-background"></div>
     <div class="container">
       <div class="section-header fade-up">
-        <span class="section-label">Safety First</span>
-        <h2>Control at Every Step</h2>
-        <p class="section-subtitle">Built-in policies prevent disasters before they happen</p>
+        <span class="section-label">Policies</span>
+        <h2>Precise Lifecycle Control</h2>
+        <p class="section-subtitle">Per-resource policies for creation, deletion, conflict resolution, and rollout pacing</p>
       </div>
 
       <div class="policies-grid">

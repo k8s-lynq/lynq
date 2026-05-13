@@ -357,13 +357,9 @@ Always use parameterized queries. Validate all inputs. Protect database credenti
 Lynq syncs every 30 seconds by default. Small delay between data change and infrastructure provisioning. For most cases, this is fine. Tune as needed for your latency requirements.
 :::
 
-## Getting Started with Infrastructure as Data
+## Getting Started
 
-Ready to try Infrastructure as Data with Lynq?
-
-**1. Design your data schema as infrastructure API**
-
-What database rows should represent infrastructure? Customers? Projects? Environments?
+**1. Add infrastructure columns to your schema**
 
 ```sql
 ALTER TABLE customers
@@ -372,9 +368,7 @@ ALTER TABLE customers
   ADD COLUMN active BOOLEAN DEFAULT TRUE;
 ```
 
-Your schema IS your infrastructure API.
-
-**2. Install Lynq and connect to your database**
+**2. Connect Lynq to your database**
 
 ```yaml
 apiVersion: operator.lynq.sh/v1
@@ -395,35 +389,19 @@ spec:
     plan: plan
 ```
 
-**3. Define your infrastructure template**
+**3. Define a LynqForm** — one template describing what each active row should provision (Namespace, Deployment, Service, Ingress, …).
 
-What should each record create? Namespace? Deployment? Services? Define once in a LynqForm.
-
-**4. Test with data**
+**4. Insert a row and verify**
 
 ```sql
 INSERT INTO customers VALUES ('test', 'test.example.com', 'pro', true, 2);
 ```
 
-Watch infrastructure provision. If something's wrong, delete the row and try again. It's just data.
+Within 30 seconds, the corresponding Kubernetes resources appear.
 
-## Closing Thoughts
+## See Also
 
-Infrastructure as Data isn't about replacing every tool you use. It's about recognizing when your infrastructure naturally maps to your data and eliminating the artificial gap between them.
-
-**Infrastructure as Code** is powerful for cloud resources and cluster setup. **Infrastructure as Data** is powerful for per-customer stacks and data-driven applications.
-
-**RecordOps** is how you practice Infrastructure as Data. **Lynq** is an open-source platform that implements it for Kubernetes.
-
-If your infrastructure follows your data model, maybe it's time to let your data drive your infrastructure directly.
-
-## Learn More
-
-- [How Lynq Works](./how-it-works.md) - RecordOps architecture
-- [Quick Start](./quickstart.md) - Try Infrastructure as Data in 5 minutes
-- [Architecture](./architecture.md) - Lynq system design
-- [Use Cases](./advanced-use-cases.md) - Real-world patterns
-
----
-
-Questions? Open an issue on [GitHub](https://github.com/k8s-lynq/lynq/issues) or start a [discussion](https://github.com/k8s-lynq/lynq/discussions).
+- [Quick Start](./quickstart.md) — running on Minikube in 5 minutes
+- [How It Works](./how-it-works.md) — controller internals and reconciliation flow
+- [Architecture](./architecture.md) — system design
+- [Use Cases](./advanced-use-cases.md) — real-world patterns

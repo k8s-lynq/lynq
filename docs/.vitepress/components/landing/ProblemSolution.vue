@@ -2,8 +2,8 @@
   <section class="problem-solution">
     <div class="container">
       <div class="section-header fade-up">
-        <span class="section-label">The Challenge</span>
-        <h2>Scale Without the Pain</h2>
+        <span class="section-label">The Problem</span>
+        <h2>Your Database Knows. Your Cluster Doesn't.</h2>
       </div>
 
       <div class="split-container">
