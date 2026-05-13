@@ -4,8 +4,8 @@ description: "Using Lynq to apply dynamic feature flags per node by updating a s
 
 # Dynamic Feature Flags
 
-::: info Multi-Tenancy Example
-This guide uses **Multi-Tenancy** (SaaS application with multiple customers) as an example, which is the most common use case for Lynq. The pattern shown here can be adapted for any database-driven infrastructure automation scenario.
+::: info Multi-Node Example
+This guide uses **Multi-Node** (SaaS application with multiple customers) as an example, which is the most common use case for Lynq. The pattern shown here can be adapted for any database-driven infrastructure automation scenario.
 :::
 
 ## Overview

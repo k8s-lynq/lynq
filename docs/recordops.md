@@ -4,9 +4,7 @@ description: "Understand RecordOps and Infrastructure as Data — the paradigm w
 
 # RecordOps: Infrastructure as Data
 
-If you've ever built a multi-tenant SaaS platform, you've probably felt this pain: your customer data lives in your database, but their infrastructure is managed somewhere else (YAML files in Git, Terraform state, manual kubectl commands). Every time you onboard a new customer, you're coordinating between multiple systems that don't naturally talk to each other.
-
-**RecordOps** changes this. It's a new paradigm called **Infrastructure as Data** where database records become the source of truth for infrastructure. When you insert a row, infrastructure provisions. When you update a field, resources reconfigure. When you delete a record, everything cleans up.
+**RecordOps** is the operational pattern behind **Infrastructure as Data**: database records become the source of truth for infrastructure. When you insert a row, infrastructure provisions. When you update a field, resources reconfigure. When you delete a record, everything cleans up.
 
 
 
@@ -56,7 +54,7 @@ Lynq watches your database and continuously syncs infrastructure state to match 
 
 ## The Problem This Solves
 
-Let me show you a typical customer onboarding flow:
+Consider a typical customer onboarding flow:
 
 ::: code-group
 
@@ -170,7 +168,7 @@ WHERE id IN (...);
 
 ::: info They Complement Each Other
 - **IaC**: Provision your Kubernetes cluster, cloud resources
-- **IaD**: Declarative automation (Ansible for config, Crossplane for cloud, RecordOps for tenants)
+- **IaD**: Declarative automation (Ansible for config, Crossplane for cloud, RecordOps for app nodes)
 :::
 
 ### Infrastructure as Data vs GitOps
@@ -192,15 +190,15 @@ Lynq implements Infrastructure as Data through three components:
 
 **2. LynqForm** - Infrastructure template. Defines what each database record creates
 
-**3. LynqNode** - One per active record, managing all resources for that customer/tenant/project
+**3. LynqNode** - One per active record, managing all resources for that customer/project/device
 
 ### A Concrete Example
 
 Your database schema defines your infrastructure API:
 
 ```sql
-CREATE TABLE tenants (
-  tenant_id VARCHAR(50) PRIMARY KEY,
+CREATE TABLE customers (
+  customer_id VARCHAR(50) PRIMARY KEY,
   domain VARCHAR(255) NOT NULL,
   plan VARCHAR(20),
   active BOOLEAN DEFAULT TRUE,
@@ -210,12 +208,12 @@ CREATE TABLE tenants (
 
 This is Infrastructure as Data. Columns become infrastructure parameters.
 
-You define a LynqForm template once: "For each active tenant, create namespace, deployment (with `replicas` replicas), service, and ingress (pointing to `domain`)."
+You define a LynqForm template once: "For each active customer, create namespace, deployment (with `replicas` replicas), service, and ingress (pointing to `domain`)."
 
 Now infrastructure follows your data:
 
 ```sql
-INSERT INTO tenants VALUES
+INSERT INTO customers VALUES
   ('acme-corp', 'acme.example.com', 'enterprise', true, 5);
 ```
 
@@ -322,7 +320,7 @@ Feature rollouts are database toggles. The gap between what your application kno
 ## When Infrastructure as Data Makes Sense
 
 ::: tip ✅ Perfect For
-- **Multi-tenant SaaS platforms** - Each customer/tenant needs isolated infrastructure
+- **SaaS platforms** - Each customer needs isolated infrastructure
 - **Data-driven applications** - Infrastructure follows your data model
 - **Frequent provisioning** - Multiple times per day
 - **Repeated patterns** - Same stack per customer/project
@@ -336,7 +334,7 @@ Feature rollouts are database toggles. The gap between what your application kno
 :::
 
 ::: info 🤝 Best: Combine Both
-Use Infrastructure as Code for your cluster and cloud resources. Use Infrastructure as Data for customer/tenant infrastructure. They complement each other perfectly.
+Use Infrastructure as Code for your cluster and cloud resources. Use Infrastructure as Data for application-level nodes. They complement each other perfectly.
 :::
 
 ## Considerations for Infrastructure as Data

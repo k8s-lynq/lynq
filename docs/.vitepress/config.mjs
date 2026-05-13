@@ -43,40 +43,34 @@ export default withMermaid(
           text: "Getting Started",
           collapsed: false,
           items: [
-            { text: "About Lynq", link: "/about-lynq" },
-            { text: "Installation", link: "/installation" },
             { text: "Quick Start", link: "/quickstart" },
-            { text: "Dashboard", link: "/dashboard" },
+            { text: "Installation", link: "/installation" },
           ],
         },
         {
-          text: "Core Concepts",
+          text: "Concepts",
           collapsed: false,
           items: [
+            { text: "What is Lynq", link: "/about-lynq" },
             { text: "Infrastructure as Data", link: "/recordops" },
             { text: "How It Works", link: "/how-it-works" },
             { text: "Architecture", link: "/architecture" },
-            { text: "API Reference", link: "/api" },
-            { text: "Resource Lifecycle", link: "/api-lifecycle" },
-            { text: "Configuration", link: "/configuration" },
+          ],
+        },
+        {
+          text: "Guides",
+          collapsed: false,
+          items: [
             { text: "Datasources", link: "/datasource" },
             {
               text: "Templates",
               collapsed: false,
               items: [
                 { text: "Overview", link: "/templates" },
-                { text: "Syntax Reference", link: "/templates-syntax" },
+                { text: "Syntax & Functions", link: "/templates-syntax" },
                 { text: "Type Conversion", link: "/templates-typed-values" },
-                { text: "Debugging & Migration", link: "/templates-troubleshooting" },
+                { text: "Debugging", link: "/templates-troubleshooting" },
                 { text: "🛠️ Form Builder", link: "/template-builder" },
-              ],
-            },
-            {
-              text: "Dependencies",
-              collapsed: false,
-              items: [
-                { text: "Overview", link: "/dependencies" },
-                { text: "🔍 Visualizer", link: "/dependency-visualizer" },
               ],
             },
             {
@@ -88,79 +82,70 @@ export default withMermaid(
                 { text: "Field-Level Ignore", link: "/field-ignore" },
               ],
             },
+            {
+              text: "Dependencies",
+              collapsed: false,
+              items: [
+                { text: "Overview", link: "/dependencies" },
+                { text: "🔍 Visualizer", link: "/dependency-visualizer" },
+              ],
+            },
           ],
         },
         {
-          text: "Advanced Use Cases",
+          text: "Reference",
           collapsed: false,
+          items: [
+            { text: "API Reference", link: "/api" },
+            { text: "Resource Lifecycle", link: "/api-lifecycle" },
+            { text: "Configuration", link: "/configuration" },
+            { text: "Dashboard", link: "/dashboard" },
+            { text: "Glossary", link: "/glossary" },
+          ],
+        },
+        {
+          text: "Use Cases",
+          collapsed: true,
           items: [
             { text: "Overview", link: "/advanced-use-cases" },
             { text: "Custom Domains", link: "/use-case-custom-domains" },
             { text: "Multi-Tier Stack", link: "/use-case-multi-tier" },
             { text: "Blue-Green Deployments", link: "/use-case-blue-green" },
-            {
-              text: "Database-per-Tenant",
-              link: "/use-case-database-per-tenant",
-            },
+            { text: "Database per Node", link: "/use-case-database-per-tenant" },
             { text: "Feature Flags", link: "/use-case-feature-flags" },
           ],
         },
         {
           text: "Operations",
-          collapsed: false,
+          collapsed: true,
           items: [
-            {
-              text: "Monitoring & Observability",
-              link: "/monitoring",
-            },
+            { text: "Monitoring", link: "/monitoring" },
             { text: "Prometheus Queries", link: "/prometheus-queries" },
-            { text: "Performance Tuning", link: "/performance" },
-            { text: "Security", link: "/security" },
-            { text: "Troubleshooting", link: "/troubleshooting" },
             { text: "Alert Runbooks", link: "/alert-runbooks" },
+            { text: "Security", link: "/security" },
+            { text: "Performance", link: "/performance" },
+            { text: "Troubleshooting", link: "/troubleshooting" },
           ],
         },
         {
           text: "Integrations",
-          collapsed: false,
+          collapsed: true,
           items: [
-            {
-              text: "Crossplane (Recommended)",
-              link: "/integration-crossplane",
-            },
-            {
-              text: "External DNS (Recommended)",
-              link: "/integration-external-dns",
-            },
-            {
-              text: "Flux",
-              link: "/integration-flux",
-            },
-            {
-              text: "Argo CD",
-              link: "/integration-argocd",
-            },
+            { text: "Crossplane", link: "/integration-crossplane" },
+            { text: "External DNS", link: "/integration-external-dns" },
+            { text: "Flux", link: "/integration-flux" },
+            { text: "Argo CD", link: "/integration-argocd" },
           ],
         },
         {
-          text: "Development",
-          collapsed: false,
+          text: "Contributing",
+          collapsed: true,
           items: [
-            {
-              text: "Local Development",
-              link: "/local-development-minikube",
-            },
+            { text: "Local Development", link: "/local-development-minikube" },
             { text: "Development Guide", link: "/development" },
-            {
-              text: "Contributing",
-              link: "/contributing-datasource",
-            },
+            { text: "Adding a Datasource", link: "/contributing-datasource" },
             { text: "Roadmap", link: "/roadmap" },
           ],
-        },
-        {
-          text: "Glossary",
-          link: "/glossary",
         },
       ],
 

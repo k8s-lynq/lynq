@@ -43,9 +43,9 @@
           Get Started
           <span class="arrow">&#8594;</span>
         </a>
-        <a href="/blog/introducing-lynq-dashboard" class="cta-secondary">
-          <span class="play-icon">&#9658;</span>
-          Watch Demo
+        <a href="https://github.com/k8s-lynq/lynq" class="cta-secondary" target="_blank" rel="noopener">
+          <span class="github-icon">&#9670;</span>
+          View on GitHub
         </a>
       </motion.div>
     </div>

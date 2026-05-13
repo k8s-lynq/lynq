@@ -710,7 +710,7 @@ kubectl get distribution node-alpha-cdn -w
 
 ## Advanced Examples
 
-### Example 1: Schema-Based Multi-Tenancy (Cost-Effective)
+### Example 1: Schema-Based Multi-Node (Cost-Effective)
 
 Create isolated schemas within a single database for maximum resource efficiency:
 

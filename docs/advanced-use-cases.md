@@ -4,8 +4,8 @@ description: "Advanced Lynq patterns: custom domains, blue-green deployments, mu
 
 # Advanced Use Cases
 
-::: info Multi-Tenancy Examples
-As the most common use case for Lynq, this guide presents various patterns using **Multi-Tenancy** (SaaS application with multiple customers/nodes) as examples. These patterns can be adapted for any database-driven infrastructure automation scenario.
+::: info Multi-Node Examples
+As the most common use case for Lynq, this guide presents various patterns using **Multi-Node** (SaaS application with multiple customers/nodes) as examples. These patterns can be adapted for any database-driven infrastructure automation scenario.
 :::
 
 ## Overview
