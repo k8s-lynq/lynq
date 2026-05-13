@@ -150,15 +150,15 @@
           <ul class="points">
             <li>
               <span class="point-icon success">&#128196;</span>
-              Define once in LynqForm
+              One LynqForm template per resource type
             </li>
             <li>
               <span class="point-icon success">&#9889;</span>
-              Data drives provisioning
+              INSERT a row → resources appear within 60s
             </li>
             <li>
               <span class="point-icon success">&#128260;</span>
-              Automatic sync & cleanup
+              DELETE a row → resources are cleaned up
             </li>
           </ul>
         </div>

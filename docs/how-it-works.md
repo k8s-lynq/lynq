@@ -376,7 +376,7 @@ sequenceDiagram
 
 ### Real-Time Synchronization
 
-Changes in your database trigger automatic infrastructure updates within 30 seconds (default hub sync interval). This is Infrastructure as Data in practice: your database transaction becomes an infrastructure operation.
+Changes in your database are picked up at the LynqHub's configured `syncInterval` (default: 1 minute). Resource status changes are reflected within 30 seconds via the periodic requeue. Your database row becomes a Kubernetes resource set without any manual apply step.
 
 ### Drift Detection & Auto-Correction
 

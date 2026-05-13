@@ -64,7 +64,7 @@
           <div class="policy-content">
             <div class="policy-tag">conflictPolicy</div>
             <h3>Conflict Detection</h3>
-            <p>Stops reconciliation if another controller already owns the resource. No silent overwrites.</p>
+            <p>Halts if another controller owns the resource. Choose <code>Stuck</code> to surface conflicts or <code>Force</code> to take ownership.</p>
           </div>
           <div class="policy-code">
             <code>conflictPolicy: Stuck</code>
@@ -127,7 +127,7 @@
           <div class="policy-content">
             <div class="policy-tag">maxSkew</div>
             <h3>Gradual Rollout</h3>
-            <p>Limit concurrent updates. Change 500 resources safely, a few at a time.</p>
+            <p>Limit how many nodes update simultaneously when a LynqForm template changes.</p>
           </div>
           <div class="policy-code">
             <code>maxSkew: 2</code>
@@ -171,8 +171,8 @@
           </div>
           <div class="policy-content">
             <div class="policy-tag">deletionPolicy</div>
-            <h3>Data Protection</h3>
-            <p>Keep critical resources (like PVCs) even when the source record is deleted.</p>
+            <h3>Retain on Delete</h3>
+            <p>Keep specific resources (PVCs, Secrets) when a row is deactivated. Resources get orphan markers for audit.</p>
           </div>
           <div class="policy-code">
             <code>deletionPolicy: Retain</code>

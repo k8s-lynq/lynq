@@ -16,10 +16,7 @@ Lynq uses three reconciliation layers:
 2. **Periodic (30 seconds)**: Fast status updates and drift detection
 3. **Database Sync (Configurable)**: Syncs node data at defined intervals
 
-This architecture ensures:
-- ✅ Immediate drift correction
-- ✅ Fast status reflection (30s)
-- ✅ Configurable database sync frequency
+This architecture means drift is corrected within 30 seconds of detection, database changes are picked up at the configured `syncInterval` (default: 1 minute), and resource changes trigger immediate reconciliation.
 
 ## Configuration Tuning
 
