@@ -135,7 +135,7 @@ The following deprecated features will be **removed** in v1.3.0:
 
     # In templates: {{ .nodeUrl | toHost }}
     ```
-  - **Rationale**: Lynq evolved from "tenant-operator" to a general database-driven automation platform, removing hardcoded host/URL requirements provides flexibility for diverse use cases
+  - **Rationale**: Lynq is a general database-driven automation platform; removing the hardcoded host/URL requirement provides flexibility for diverse use cases beyond web-hosting scenarios
 
 ### Improvements
 - [ ] Enhanced reconciliation performance for large node counts

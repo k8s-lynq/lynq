@@ -129,7 +129,7 @@ env:
 :::
 
 **Why this change?**
-Lynq is now a **database-driven automation platform**, not limited to tenant/host provisioning. Requiring `.hostOrUrl` was an unnecessary constraint from the legacy "tenant-operator" design.
+Lynq is a **database-driven automation platform**, not limited to host provisioning. Requiring `.hostOrUrl` was an unnecessary constraint that has since been removed.
 
 ::: v-pre
 
@@ -245,19 +245,19 @@ enabled: true          # ✅ Boolean
 
 ::: v-pre
 
-#### `toInt(value)`
+#### `int(value)`
 Convert value to integer (int):
 
 ```yaml
 # Basic conversion
-replicas: "{{ .maxReplicas | toInt }}"          # "3" → 3
-containerPort: "{{ .appPort | toInt }}"         # "8080" → 8080
+replicas: "{{ .maxReplicas | int }}"          # "3" → 3
+containerPort: "{{ .appPort | int }}"         # "8080" → 8080
 
 # With default value
-replicas: "{{ .replicas | default \"2\" | toInt }}"  # Ensures integer output
+replicas: "{{ .replicas | default \"2\" | int }}"  # Ensures integer output
 
 # From float (truncates)
-value: "{{ .cpuCount | toInt }}"                # 2.8 → 2
+value: "{{ .cpuCount | int }}"                # 2.8 → 2
 ```
 
 **Conversion rules:**
@@ -266,18 +266,18 @@ value: "{{ .cpuCount | toInt }}"                # 2.8 → 2
 - Already int: Returns as-is
 - Invalid input: Returns `0` (graceful fallback)
 
-#### `toFloat(value)`
+#### `float(value)`
 Convert value to floating-point number (float64):
 
 ```yaml
 # Resource limits with decimals
 resources:
   limits:
-    cpu: "{{ .cpuLimit | toFloat }}"            # "1.5" → 1.5
-    memory: "{{ .memoryGb | toFloat }}Gi"       # "2.5" → "2.5Gi"
+    cpu: "{{ .cpuLimit | float }}"            # "1.5" → 1.5
+    memory: "{{ .memoryGb | float }}Gi"       # "2.5" → "2.5Gi"
 
 # Percentage calculations
-targetCPUUtilization: "{{ .threshold | toFloat }}"  # "75.5" → 75.5
+targetCPUUtilization: "{{ .threshold | float }}"  # "75.5" → 75.5
 ```
 
 **Conversion rules:**
@@ -286,16 +286,16 @@ targetCPUUtilization: "{{ .threshold | toFloat }}"  # "75.5" → 75.5
 - Already float: Returns as-is
 - Invalid input: Returns `0.0`
 
-#### `toBool(value)`
+#### `bool(value)`
 Convert value to boolean:
 
 ```yaml
 # Feature flags
-enabled: "{{ .featureEnabled | toBool }}"       # "true" → true
-readOnly: "{{ .isReadOnly | toBool }}"          # "false" → false
+enabled: "{{ .featureEnabled | bool }}"       # "true" → true
+readOnly: "{{ .isReadOnly | bool }}"          # "false" → false
 
 # From integers (common in databases)
-automountServiceAccountToken: "{{ .autoMount | toBool }}"  # 1 → true, 0 → false
+automountServiceAccountToken: "{{ .autoMount | bool }}"  # 1 → true, 0 → false
 ```
 
 **Truthy values** (converted to `true`):
@@ -315,7 +315,7 @@ automountServiceAccountToken: "{{ .autoMount | toBool }}"  # 1 → true, 0 → f
 ::: v-pre
 
 ```yaml
-apiVersion: lynq.sh/v1
+apiVersion: operator.lynq.sh/v1
 kind: LynqForm
 metadata:
   name: typed-app
@@ -329,17 +329,17 @@ spec:
         kind: Deployment
         spec:
           # Integer field - type conversion required
-          replicas: "{{ .maxReplicas | default \"2\" | toInt }}"
+          replicas: "{{ .maxReplicas | default \"2\" | int }}"
           template:
             spec:
               # Boolean field - type conversion required
-              automountServiceAccountToken: "{{ .mountToken | toBool }}"
+              automountServiceAccountToken: "{{ .mountToken | bool }}"
               containers:
                 - name: app
                   image: "{{ .image }}"
                   ports:
                     # Integer field - type conversion required
-                    - containerPort: "{{ .appPort | toInt }}"
+                    - containerPort: "{{ .appPort | int }}"
                       protocol: TCP
                   env:
                     # String fields - no conversion needed
@@ -353,10 +353,10 @@ spec:
                   resources:
                     limits:
                       # Float field - type conversion required
-                      cpu: "{{ .cpuLimit | toFloat }}"
+                      cpu: "{{ .cpuLimit | float }}"
                       memory: "{{ .memoryLimit }}Mi"
                     requests:
-                      cpu: "{{ .cpuRequest | toFloat }}"
+                      cpu: "{{ .cpuRequest | float }}"
                       memory: "{{ .memoryRequest }}Mi"
 ```
 
@@ -387,7 +387,7 @@ The hybrid approach uses **type markers** internally:
 
 1. **Template function wraps result with marker:**
    ```go
-   toInt("42") → "__LYNQ_TYPE_INT__42"  // Internal representation
+   int("42") → "__LYNQ_TYPE_INT__42"  // Internal representation
    ```
 
 2. **Go template engine processes normally:**
@@ -511,17 +511,17 @@ deployments:
       apiVersion: apps/v1
       kind: Deployment
       spec:
-        # Integer field - use toInt for conditional numeric values
-        replicas: "{{ if eq .planId \"enterprise\" }}5{{ else }}2{{ end | toInt }}"
+        # Integer field - use int for conditional numeric values
+        replicas: "{{ if eq .planId \"enterprise\" }}5{{ else }}2{{ end | int }}"
         template:
           spec:
-            # Boolean field - use toBool
-            automountServiceAccountToken: "{{ .autoMount | default \"true\" | toBool }}"
+            # Boolean field - use bool
+            automountServiceAccountToken: "{{ .autoMount | default \"true\" | bool }}"
             containers:
             - name: app
               image: "{{ .deployImage | default \"myapp:latest\" }}"
               ports:
-              - containerPort: "{{ .appPort | default \"8080\" | toInt }}"
+              - containerPort: "{{ .appPort | default \"8080\" | int }}"
                 protocol: TCP
               env:
               - name: TENANT_ID
@@ -532,10 +532,10 @@ deployments:
                 value: "{{ .dbHost }}"
               resources:
                 limits:
-                  cpu: "{{ .cpuLimit | default \"1.0\" | toFloat }}"
+                  cpu: "{{ .cpuLimit | default \"1.0\" | float }}"
                   memory: "{{ .memoryLimit | default \"512\" }}Mi"
                 requests:
-                  cpu: "{{ .cpuRequest | default \"0.5\" | toFloat }}"
+                  cpu: "{{ .cpuRequest | default \"0.5\" | float }}"
                   memory: "{{ .memoryRequest | default \"256\" }}Mi"
 ```
 
@@ -651,9 +651,9 @@ Always use type conversion functions for fields expecting numbers or booleans:
 
 ```yaml
 # Good - Kubernetes receives correct types
-replicas: "{{ .maxReplicas | toInt }}"
-containerPort: "{{ .appPort | toInt }}"
-automountServiceAccountToken: "{{ .autoMount | toBool }}"
+replicas: "{{ .maxReplicas | int }}"
+containerPort: "{{ .appPort | int }}"
+automountServiceAccountToken: "{{ .autoMount | bool }}"
 
 # Bad - Kubernetes API validation fails
 replicas: "{{ .maxReplicas }}"        # String "3" instead of 3
@@ -675,7 +675,7 @@ env:
 # Unnecessary
 env:
   - name: PORT
-    value: "{{ .appPort | toInt }}"  # Don't convert
+    value: "{{ .appPort | int }}"  # Don't convert
 ```
 
 ### 5. Handle Missing Variables Gracefully
@@ -698,12 +698,12 @@ Chain type conversion after default values to ensure proper types:
 
 ```yaml
 # Good - provides default then converts type
-replicas: "{{ .replicas | default \"2\" | toInt }}"
-cpu: "{{ .cpuLimit | default \"1.0\" | toFloat }}"
-enabled: "{{ .feature | default \"true\" | toBool }}"
+replicas: "{{ .replicas | default \"2\" | int }}"
+cpu: "{{ .cpuLimit | default \"1.0\" | float }}"
+enabled: "{{ .feature | default \"true\" | bool }}"
 
 # Bad - type conversion on potentially empty value
-replicas: "{{ .replicas | toInt }}"  # May fail if .replicas is empty
+replicas: "{{ .replicas | int }}"  # May fail if .replicas is empty
 ```
 
 ### 7. Use Comments for Complex Logic
@@ -769,7 +769,7 @@ Test your templates locally before deploying to the cluster:
 ```bash
 # Create a test LynqNode manifest with sample data
 cat <<EOF > test-lynqnode.yaml
-apiVersion: lynq.sh/v1
+apiVersion: operator.lynq.sh/v1
 kind: LynqNode
 metadata:
   name: test-node
@@ -846,7 +846,7 @@ View rendered LynqNode CR to see evaluated templates:
 $ kubectl get lynqnode acme-corp-customer-web-app -n lynq-system -o yaml
 
 # Output includes rendered values:
-apiVersion: lynq.sh/v1
+apiVersion: operator.lynq.sh/v1
 kind: LynqNode
 metadata:
   name: acme-corp-customer-web-app
@@ -905,7 +905,7 @@ Template not working?
 │  └─ Check: Is it in valueMappings or extraValueMappings?
 │
 ├─ Type error (string vs int)?
-│  └─ Check: Are you using toInt/toFloat/toBool for K8s fields?
+│  └─ Check: Are you using int/float/bool for K8s fields?
 │
 ├─ Resource not created?
 │  └─ Check: LynqNode events and operator logs
@@ -936,23 +936,23 @@ Template not working?
   replicas: "{{ .maxReplicas }}"  # Renders as string "3"
 
   # After (correct)
-  replicas: "{{ .maxReplicas | toInt }}"  # Renders as integer 3
+  replicas: "{{ .maxReplicas | int }}"  # Renders as integer 3
   ```
 
 **Error:** `json: cannot unmarshal string into Go struct field ... of type int32`
 - **Cause:** Integer field received quoted string value
-- **Fix:** Use `toInt` for integer fields:
+- **Fix:** Use `int` for integer fields:
   ```yaml
-  containerPort: "{{ .port | toInt }}"        # int/int32
-  replicas: "{{ .replicas | toInt }}"         # int32
+  containerPort: "{{ .port | int }}"        # int/int32
+  replicas: "{{ .replicas | int }}"         # int32
   ```
 
 **Error:** `json: cannot unmarshal string into Go struct field ... of type bool`
 - **Cause:** Boolean field received string value
-- **Fix:** Use `toBool` for boolean fields:
+- **Fix:** Use `bool` for boolean fields:
   ```yaml
-  automountServiceAccountToken: "{{ .autoMount | toBool }}"
-  readOnlyRootFilesystem: "{{ .readOnly | toBool }}"
+  automountServiceAccountToken: "{{ .autoMount | bool }}"
+  readOnlyRootFilesystem: "{{ .readOnly | bool }}"
   ```
 
 ## Advanced Template Techniques
@@ -971,7 +971,7 @@ nameTemplate: "{{ $appName }}"
 When building multi-tier applications, nested templates help avoid repetition:
 
 ```yaml
-apiVersion: lynq.sh/v1
+apiVersion: operator.lynq.sh/v1
 kind: LynqForm
 metadata:
   name: multi-tier-app
@@ -993,7 +993,7 @@ spec:
             app.kubernetes.io/component: "{{ $tier }}"
             app.kubernetes.io/version: "{{ $version }}"
         spec:
-          replicas: "{{ .webReplicas | default \"2\" | toInt }}"
+          replicas: "{{ .webReplicas | default \"2\" | int }}"
           template:
             spec:
               containers:
@@ -1019,7 +1019,7 @@ spec:
             app.kubernetes.io/name: "{{ .uid }}"
             app.kubernetes.io/component: "{{ $tier }}"
         spec:
-          replicas: "{{ .apiReplicas | default \"3\" | toInt }}"
+          replicas: "{{ .apiReplicas | default \"3\" | int }}"
           template:
             spec:
               containers:
@@ -1216,7 +1216,7 @@ metadata:
     lynq.sh/deletion-policy: "Retain"
     # orphaned-at and orphaned-reason annotations REMOVED
   ownerReferences:                                 # ← OwnerRef restored
-    - apiVersion: lynq.sh/v1
+    - apiVersion: operator.lynq.sh/v1
       kind: LynqNode
       name: acme-customer-web-app
       uid: abc123-456
@@ -1243,7 +1243,7 @@ You can easily find these orphaned resources later:
 kubectl get all -A -l lynq.sh/orphaned=true
 
 # Find resources orphaned due to template changes (filter by annotation)
-kubectl get all -A -l lynq.sh/orphaned=true -o jsonpath='{range .items[?(@.metadata.annotations.k8s-lynq\.org/orphaned-reason=="RemovedFromTemplate")]}{.kind}/{.metadata.name}{"\n"}{end}'
+kubectl get all -A -l lynq.sh/orphaned=true -o jsonpath='{range .items[?(@.metadata.annotations.lynq.sh/orphaned-reason=="RemovedFromTemplate")]}{.kind}/{.metadata.name}{"\n"}{end}'
 ```
 
 **How it works:**

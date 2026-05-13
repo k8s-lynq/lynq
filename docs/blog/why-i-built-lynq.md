@@ -16,6 +16,10 @@ next: false
 
 # Why I Built Lynq: From Internal Tool to Open Source 👶
 
+::: info Historical post
+This post was written during early development and uses the original internal terminology (e.g., "Tenant", "TenantRegistry"). These have since been renamed to LynqNode, LynqHub, LynqForm. The concepts are the same.
+:::
+
 <BlogPostMeta />
 
 What started as a solution to my own Terraform scaling pains became an open source project exploring a different approach to infrastructure management.

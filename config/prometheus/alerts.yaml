@@ -105,7 +105,7 @@ spec:
             component: lynq
           annotations:
             summary: "LynqNode {{ $labels.lynqnode }} has resource count mismatch"
-            description: "LynqNode {{ $labels.lynqnode }} in namespace {{ $labels.namespace }} has {{ $labels.lynqnode_resources_ready }} ready resources but desires {{ $labels.lynqnode_resources_desired }}. No failures detected but reconciliation may be stuck."
+            description: "LynqNode {{ $labels.lynqnode }} in namespace {{ $labels.namespace }} has a resource count mismatch — ready count does not equal desired count, but no failures are detected. Reconciliation may be stuck."
             dashboard: "https://grafana.example.com/d/lynq/node-details?var-lynqnode={{ $labels.lynqnode }}&var-namespace={{ $labels.namespace }}"
             runbook_url: "https://lynq.sh/alert-runbooks#lynqnoderesourcesmismatch"
 
@@ -160,7 +160,7 @@ spec:
             component: lynq
           annotations:
             summary: "Hub {{ $labels.hub }} has node count mismatch"
-            description: "Hub {{ $labels.hub }} in namespace {{ $labels.namespace }} has {{ $labels.hub_ready }} ready nodes but desires {{ $labels.hub_desired }}. No failures detected but sync may be delayed."
+            description: "Hub {{ $labels.hub }} in namespace {{ $labels.namespace }} has a node count mismatch — ready count does not equal desired count, but no failures are detected. Hub sync may be delayed."
             dashboard: "https://grafana.example.com/d/lynq/hub-overview?var-hub={{ $labels.hub }}&var-namespace={{ $labels.namespace }}"
             runbook_url: "https://lynq.sh/alert-runbooks#hubdesiredcountmismatch"
 
@@ -200,7 +200,7 @@ spec:
         # Warning: High apply failure rate
         - alert: HighApplyFailureRate
           expr: |
-            sum by (kind) (rate(apply_attempts_total{result="failure"}[5m]))
+            sum by (kind) (rate(apply_attempts_total{result="error"}[5m]))
             /
             sum by (kind) (rate(apply_attempts_total[5m]))
             > 0.2

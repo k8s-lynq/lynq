@@ -61,8 +61,8 @@ spec:
         metadata:
           namespace: argocd
           labels:
-            node.lynq.sh/uid: "{{ .uid }}"
-            node.lynq.sh/region: "{{ .region | default \"global\" }}"
+            lynq.sh/uid: "{{ .uid }}"
+            lynq.sh/region: "{{ .region | default \"global\" }}"
         spec:
           project: nodes
           source:
@@ -153,7 +153,7 @@ After deploying, verify the integration works correctly:
 
 ```bash
 # 1. Check LynqNodes created Argo CD Applications
-kubectl get applications -n argocd -l node.lynq.sh/uid
+kubectl get applications -n argocd -l lynq.sh/uid
 
 # Example output:
 # NAME              SYNC STATUS   HEALTH STATUS   AGE
@@ -200,7 +200,7 @@ kubectl get application acme-corp-app -n argocd -o jsonpath='{.status.sync.statu
 
 ## Operational Tips
 
-- Label Applications with node metadata for quick filtering (`node.lynq.sh/uid`).
+- Label Applications with node metadata for quick filtering (`lynq.sh/uid`).
 - Grant the operator service account access to `argoproj.io` API group via ClusterRole.
 - Monitor Argo CD sync status alongside LynqNode status; both must be healthy for end-to-end readiness.
 - Use the `Retain` deletion policy when you need to keep Applications for post-mortem analysis.

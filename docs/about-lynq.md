@@ -85,12 +85,6 @@ I'm constantly thinking about better ways to visualize how Lynq works. I know so
 
 Got an idea for a visualization that would help you understand something better? Maybe a diagram showing the reconciliation flow? An interactive template builder? Anything! Please open a [GitHub Issue](https://github.com/k8s-lynq/lynq/issues) and share your thoughts. I'd genuinely love to hear what would make the learning curve smoother for you.
 
-:::tip Work in Progress
-I recently renamed everything from "Tenant" terminology to the new Lynq naming (Hub, Form, Node). There might still be some old "Tenant" references lurking in examples or comments that I missed.
-
-If you spot any, please open an issue! I'll fix it right away.
-:::
-
 ## License
 
 Lynq is released under the Apache License 2.0. Free to use, free to modify, free to distribute.

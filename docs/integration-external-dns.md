@@ -434,7 +434,7 @@ dig +short acme.example.com @8.8.8.8
 
 ```bash
 # Get all node hostnames and verify DNS
-kubectl get ingress -l lynq.sh/template=web-app-with-dns -o jsonpath='{range .items[*]}{.spec.rules[0].host}{"\n"}{end}' | while read host; do
+kubectl get ingress -l lynq.sh/hub=customer-hub -o jsonpath='{range .items[*]}{.spec.rules[0].host}{"\n"}{end}' | while read host; do
   ip=$(dig +short $host @8.8.8.8 | head -1)
   if [ -n "$ip" ]; then
     echo "✅ $host → $ip"

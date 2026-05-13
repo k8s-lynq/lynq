@@ -18,7 +18,7 @@ Use the [Quick Start with Minikube](quickstart.md) guide for an automated setup 
 
 | Component | Minimum version | Notes |
 | --- | --- | --- |
-| Kubernetes cluster | v1.11.3+ | API compatibility tested with recent releases |
+| Kubernetes cluster | v1.28+ | See [Kubernetes Compatibility](#kubernetes-compatibility) for validated versions |
 | `kubectl` | Matches cluster | Must target the cluster where you deploy |
 | **cert-manager** | **v1.13.0+** | **REQUIRED for all installations** (production, development, local) |
 

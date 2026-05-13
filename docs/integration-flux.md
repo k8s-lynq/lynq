@@ -200,7 +200,7 @@ spec:
       kind: GitRepository
       metadata:
         annotations:
-          lynq.sh/node-id: "{{ .uid }}"
+          lynq.sh/uid: "{{ .uid }}"
       spec:
         interval: 1m
         url: https://github.com/myorg/my-fleet
@@ -220,7 +220,7 @@ spec:
       kind: Kustomization
       metadata:
         annotations:
-          lynq.sh/node-id: "{{ .uid }}"
+          lynq.sh/uid: "{{ .uid }}"
       spec:
         interval: 5m
         path: "./nodes/{{ .uid }}"  # Node-specific path
@@ -385,7 +385,7 @@ spec:
               template:
                 metadata:
                   labels:
-                    node-id: "{{ .uid }}"
+                    lynq.sh/uid: "{{ .uid }}"
           target:
             kind: Deployment
 ```
@@ -707,7 +707,7 @@ kubectl get gitrepositories,helmrepositories,ocirepositories -A
 kubectl get kustomizations,helmreleases -A
 
 # Check specific node's Flux resources
-kubectl get gitrepository,kustomization -l lynq.sh/node-id=node-alpha
+kubectl get gitrepository,kustomization -l lynq.sh/uid=node-alpha
 
 # View Flux events
 flux events --for Kustomization/node-alpha-kustomization
@@ -722,7 +722,7 @@ After deploying, verify the integration works correctly:
 
 ```bash
 # 1. Check LynqNodes created Flux resources
-kubectl get gitrepositories,kustomizations -l lynq.sh/node-id
+kubectl get gitrepositories,kustomizations -l lynq.sh/uid
 
 # Example output:
 # NAME                                              URL                                      READY   STATUS

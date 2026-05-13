@@ -157,7 +157,6 @@ spec: object                         # Kubernetes resource spec (required)
 ```yaml
 status:
   observedGeneration: int64
-  validationErrors: []string         # Template validation errors
   totalNodes: int32                  # Total nodes using this template
   readyNodes: int32                  # Ready nodes
   rollout:                           # Rollout status (only when maxSkew > 0)
@@ -223,8 +222,8 @@ metadata:
     lynq.sh/planId: "enterprise"
     lynq.sh/nodeUrl: "https://acme.example.com"       # Use extraValueMappings instead
 spec:
-  hubId: string                 # Registry name
-  templateRef: string                # Template name
+  uid: string                   # Node unique identifier (from Hub row)
+  templateRef: string           # LynqForm name that generated this node
 
   # Rendered resources (already evaluated)
   deployments: []TResource
@@ -412,7 +411,7 @@ This enables safe template evolution: you can freely add/remove resources from t
 kubectl get all -A -l lynq.sh/orphaned=true
 
 # Find orphaned resources by reason (using annotation)
-kubectl get all -A -l lynq.sh/orphaned=true -o jsonpath='{range .items[?(@.metadata.annotations.k8s-lynq\.org/orphaned-reason=="RemovedFromTemplate")]}{.kind}/{.metadata.name}{"\n"}{end}'
+kubectl get all -A -l lynq.sh/orphaned=true -o jsonpath='{range .items[?(@.metadata.annotations.lynq.sh/orphaned-reason=="RemovedFromTemplate")]}{.kind}/{.metadata.name}{"\n"}{end}'
 
 # Find orphaned resources from a specific node (label still available)
 kubectl get all -A -l lynq.sh/orphaned=true,lynq.sh/node=my-node
@@ -505,7 +504,7 @@ metadata:
 
 ```bash
 # Find all Retain resources
-kubectl get all -A -o jsonpath='{range .items[?(@.metadata.annotations.k8s-lynq\.org/deletion-policy=="Retain")]}{.kind}/{.metadata.name}{"\n"}{end}'
+kubectl get all -A -o jsonpath='{range .items[?(@.metadata.annotations.lynq.sh/deletion-policy=="Retain")]}{.kind}/{.metadata.name}{"\n"}{end}'
 ```
 
 ## Examples

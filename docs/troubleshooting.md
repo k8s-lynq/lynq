@@ -246,7 +246,7 @@ Failed to query database: dial tcp: connect: connection refused
 $ kubectl logs -n lynq-system deployment/lynq-controller-manager | grep -i "hub\|mysql\|database"
 
 2024-01-15T10:30:00.100Z INFO  controller.lynqhub  Starting sync  {"hub": "customer-hub", "namespace": "production"}
-2024-01-15T10:30:00.150Z INFO  controller.lynqhub  Database connected  {"host": "mysql.default.svc.cluster.local", "database": "tenants"}
+2024-01-15T10:30:00.150Z INFO  controller.lynqhub  Database connected  {"host": "mysql.default.svc.cluster.local", "database": "saas_platform"}
 2024-01-15T10:30:00.200Z INFO  controller.lynqhub  Query executed  {"rows": 5, "query": "SELECT id AS uid..."}
 2024-01-15T10:30:00.250Z INFO  controller.lynqhub  Active nodes found  {"count": 5, "templates": 2}
 2024-01-15T10:30:00.300Z INFO  controller.lynqhub  LynqNodes reconciled  {"created": 0, "updated": 10, "deleted": 0}
@@ -273,7 +273,7 @@ $ kubectl logs -n lynq-system deployment/lynq-controller-manager | grep -i "hub\
 
 2024-01-15T10:30:00.100Z INFO  controller.lynqhub  Starting sync  {"hub": "customer-hub"}
 2024-01-15T10:30:00.150Z INFO  controller.lynqhub  Database connected
-2024-01-15T10:30:00.200Z ERROR controller.lynqhub  Query execution failed  {"error": "Error 1054 (42S22): Unknown column 'tenant_id' in 'field list'", "query": "SELECT tenant_id AS uid..."}
+2024-01-15T10:30:00.200Z ERROR controller.lynqhub  Query execution failed  {"error": "Error 1054 (42S22): Unknown column 'node_id' in 'field list'", "query": "SELECT node_id AS uid..."}
 ```
 :::
 
@@ -468,11 +468,6 @@ args:
 - --hub-concurrency=1     # Reduce Hub reconciliation concurrency
 ```
 
-C. Increase requeue interval:
-```yaml
-args:
-- --requeue-interval=1m
-```
 
 ### 8. Finalizer Stuck
 

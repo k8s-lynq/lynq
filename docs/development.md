@@ -119,18 +119,19 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 # Run all unit tests
 make test
 
-# Run with coverage
-make test-coverage
-
-# View coverage report
+# Run with coverage (generate cover.out, then view)
+go test ./... -coverprofile=cover.out
 go tool cover -html=cover.out
 ```
 
-### Integration Tests
+### Integration / E2E Tests
 
 ```bash
-# Run integration tests (requires cluster)
-make test-integration
+# Run full E2E suite (30-45 minutes, creates Kind cluster)
+make test-e2e
+
+# Run a single focused test (3-5 minutes)
+make test-e2e-focus FOCUS="<test description substring>"
 ```
 
 ::: warning Cluster required

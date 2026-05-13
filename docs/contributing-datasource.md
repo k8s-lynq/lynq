@@ -266,7 +266,7 @@ func NewDatasource(sourceType SourceType, config Config) (Datasource, error) {
     case SourceTypeMySQL:
         return NewMySQLAdapter(config)
     case SourceTypePostgreSQL:
-        return NewPostgreSQLAdapter(config)
+        return nil, fmt.Errorf("postgresql datasource not yet implemented (planned for v1.2)")
     case SourceTypeYours: // Add your case
         return NewYourAdapter(config)
     default:

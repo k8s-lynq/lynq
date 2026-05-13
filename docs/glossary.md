@@ -469,7 +469,7 @@ The control loop process where the operator compares desired state (from templat
 - Create/update/delete LynqNode CRs
 
 **2. LynqForm Reconciliation:**
-- Validate template-registry linkage
+- Validate LynqForm-Hub linkage
 - Ensure template consistency
 
 **3. LynqNode Reconciliation:**

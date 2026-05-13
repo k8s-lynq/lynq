@@ -672,7 +672,7 @@ With `waitForReady=false` on CloudFront, nodes become operational in ~5 minutes 
 kubectl get lynqnode node-alpha -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
 
 # 2. Check all Crossplane resources
-kubectl get database,role,grant,bucket,cloudfront -l lynq.lynq.sh/node-id=node-alpha
+kubectl get database,role,grant,bucket,cloudfront -l lynq.sh/uid=node-alpha
 
 # 3. Check CloudFront distribution status (takes 15-30 min)
 kubectl get distribution node-alpha-cdn -o jsonpath='{.status.atProvider.status}'

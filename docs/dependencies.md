@@ -37,7 +37,7 @@ Open the [Dependency Visualizer](/dependency-visualizer) page in the documentati
 # Option A: Use preset examples from the dropdown
 # Option B: Paste your own LynqForm YAML
 
-apiVersion: lynq.sh/v1
+apiVersion: operator.lynq.sh/v1
 kind: LynqForm
 metadata:
   name: my-app

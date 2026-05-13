@@ -58,12 +58,12 @@ The operator requires:
 
 **Resource Management:**
 - Managed resources (Deployments, Services, etc.): All verbs in target namespaces
-- `namespaces`: Create, list, watch, get (cluster-scoped)
+- `namespaces`: All verbs (cluster-scoped; required for cross-namespace resource tracking)
 
 **Supporting Resources:**
 - `events`: Create, patch
 - `leases`: Get, create, update (for leader election)
-- `secrets`: Get, list, watch (for credentials, namespace-scoped)
+- `secrets`: All verbs (required to create and manage Secret resources on behalf of nodes, in addition to reading credentials)
 
 ### Least Privilege
 

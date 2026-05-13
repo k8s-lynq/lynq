@@ -148,13 +148,14 @@ INSERT INTO customers VALUES
 ### Step 2: LynqHub Configuration
 
 ```yaml
-apiVersion: lynq.sh/v1
+apiVersion: operator.lynq.sh/v1
 kind: LynqHub
 metadata:
   name: customer-hub
   namespace: lynq-system
 spec:
   source:
+    type: mysql
     mysql:
       host: mysql.database.svc.cluster.local
       port: 3306
@@ -163,29 +164,20 @@ spec:
       passwordRef:
         name: mysql-credentials
         key: password
-      query: |
-        SELECT
-          id AS uid,           -- Required: unique identifier
-          domain AS hostOrUrl, -- Maps to .hostOrUrl and .host
-          active AS activate   -- Required: activation flag
-        FROM customers
-        WHERE active = true
+      table: customers
     syncInterval: 30s
   valueMappings:
-    uid: uid
-    hostOrUrl: hostOrUrl
-    activate: activate
+    uid: id           # DB column "id" → template variable .uid
+    activate: active  # DB column "active" → template variable .activate
   extraValueMappings:
-    - column: plan
-      variable: planType
-    - column: name
-      variable: customerName
+    planType: plan          # DB column "plan" → template variable .planType
+    customerName: name      # DB column "name" → template variable .customerName
 ```
 
 ### Step 3: LynqForm Template
 
 ```yaml
-apiVersion: lynq.sh/v1
+apiVersion: operator.lynq.sh/v1
 kind: LynqForm
 metadata:
   name: customer-web-app

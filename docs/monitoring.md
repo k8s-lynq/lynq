@@ -113,7 +113,7 @@ histogram_quantile(0.95, rate(lynqnode_reconcile_duration_seconds_bucket[5m]))
 rate(lynqnode_reconcile_duration_seconds_count[5m])
 
 # Error rate
-rate(lynqnode_reconcile_duration_seconds{result="error"}[5m])
+rate(lynqnode_reconcile_duration_seconds_count{result="error"}[5m])
 ```
 
 **Hub Health:**
@@ -145,8 +145,8 @@ lynqform_rollout_progress
 # Nodes currently updating
 sum(lynqform_rollout_updating_nodes)
 
-# Stalled rollouts (InProgress for too long)
-lynqform_rollout_phase == 1 and time() - lynqform_rollout_start_time > 3600
+# Rollout stuck in InProgress (check alert-runbooks for remediation)
+lynqform_rollout_phase == 1
 ```
 
 ::: tip Complete Query Reference
@@ -561,7 +561,7 @@ Monitor events for:
    kubectl get deployment -n lynq-system lynq-controller-manager -o yaml | grep metrics-bind-address
    ```
 
-   Should see: `--metrics-bind-address=:8443`
+   Should see: `--metrics-bind-address=:8443` (default is `"0"` — disabled. The chart sets this to `:8443` for production use.)
 
 2. **Check if port is exposed:**
    ```bash

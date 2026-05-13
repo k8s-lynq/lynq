@@ -91,7 +91,7 @@ metadata:
   name: lynq-dashboard
 rules:
   # Lynq CRDs
-  - apiGroups: ["lynq.sh"]
+  - apiGroups: ["operator.lynq.sh"]
     resources: ["lynqhubs", "lynqforms", "lynqnodes"]
     verbs: ["get", "list", "watch"]
   # Managed resources (read-only)

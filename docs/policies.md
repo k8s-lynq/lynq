@@ -224,11 +224,11 @@ kubectl get all -A -l lynq.sh/orphaned=true
 
 # Find resources orphaned due to template changes
 kubectl get all -A -l lynq.sh/orphaned=true \
-  -o jsonpath='{range .items[?(@.metadata.annotations.k8s-lynq\.org/orphaned-reason=="RemovedFromTemplate")]}{.kind}/{.metadata.name}{"\n"}{end}'
+  -o jsonpath='{range .items[?(@.metadata.annotations.lynq.sh/orphaned-reason=="RemovedFromTemplate")]}{.kind}/{.metadata.name}{"\n"}{end}'
 
 # Find resources orphaned due to node deletion
 kubectl get all -A -l lynq.sh/orphaned=true \
-  -o jsonpath='{range .items[?(@.metadata.annotations.k8s-lynq\.org/orphaned-reason=="LynqNodeDeleted")]}{.kind}/{.metadata.name}{"\n"}{end}'
+  -o jsonpath='{range .items[?(@.metadata.annotations.lynq.sh/orphaned-reason=="LynqNodeDeleted")]}{.kind}/{.metadata.name}{"\n"}{end}'
 ```
 
 ### Orphan Resource Cleanup
@@ -931,7 +931,7 @@ kubectl apply -f updated-lynqform.yaml
 Before any policy migration:
 
 - [ ] Backup current resource state: `kubectl get <resource> -o yaml > backup.yaml`
-- [ ] Identify all affected LynqNodes: `kubectl get lynqnodes -l lynq.sh/template=<template-name>`
+- [ ] Identify all affected LynqNodes: `kubectl get lynqnodes -l lynq.sh/hub=<hub-name>` or filter by templateRef: `kubectl get lynqnodes -o jsonpath='{range .items[?(@.spec.templateRef=="<form-name>")]}{.metadata.name}{"\n"}{end}'`
 - [ ] Plan for downtime if needed (especially Delete policy changes)
 - [ ] Test in non-production environment first
 - [ ] Monitor events and operator logs during migration

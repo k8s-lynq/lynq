@@ -55,7 +55,7 @@ flowchart TB
     API -->|"Stores"| TT
     API -->|"Stores"| T
 
-    TC -->|"Validates<br/>template-registry linkage"| API
+    TC -->|"Validates<br/>LynqForm-Hub linkage"| API
     TNC -->|"Reconciles<br/>each LynqNode"| SSA
     SSA -->|"Server-Side Apply"| API
 
@@ -163,7 +163,7 @@ status:
 
 ### 2. LynqForm Controller
 
-**Purpose**: Validates template-registry linkage and invariants
+**Purpose**: Validates LynqForm-Hub linkage and invariants
 
 **Responsibilities**:
 
