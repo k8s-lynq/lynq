@@ -183,7 +183,7 @@ spec:
     - id: web-deployment
       nameTemplate: "{{ .uid }}-web"
       spec:
-        replicas: {{ if eq .planType "enterprise" }}3{{ else }}1{{ end }}
+        replicas: {{ ternary 3 1 (eq .planType "enterprise") | int }}
         selector:
           matchLabels:
             app: "{{ .uid }}-web"

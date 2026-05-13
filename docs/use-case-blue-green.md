@@ -125,9 +125,9 @@ spec:
       labelsTemplate:
         app: "{{ .uid }}"
         color: "blue"
-        active: "{{ if eq .activeColor \"blue\" }}true{{ else }}false{{ end }}"
+        active: "{{ ternary \"true\" \"false\" (eq .activeColor \"blue\") }}"
       spec:
-        replicas: "{{ if eq .activeColor \"blue\" }}3{{ else }}1{{ end }}"  # Scale down inactive
+        replicas: {{ ternary 3 1 (eq .activeColor "blue") | int }}  # Scale down inactive
         selector:
           matchLabels:
             app: "{{ .uid }}"
@@ -160,9 +160,9 @@ spec:
       labelsTemplate:
         app: "{{ .uid }}"
         color: "green"
-        active: "{{ if eq .activeColor \"green\" }}true{{ else }}false{{ end }}"
+        active: "{{ ternary \"true\" \"false\" (eq .activeColor \"green\") }}"
       spec:
-        replicas: "{{ if eq .activeColor \"green\" }}3{{ else }}1{{ end }}"
+        replicas: {{ ternary 3 1 (eq .activeColor "green") | int }}
         selector:
           matchLabels:
             app: "{{ .uid }}"

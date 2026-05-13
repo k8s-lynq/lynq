@@ -177,14 +177,23 @@ region: "{{ .region | default \"us-east-1\" }}"
 
 ### Conditionals
 
+Prefer `ternary` for binary switches — it stays on one line and reads left-to-right:
+
 ::: v-pre
 
 ```yaml
+# ternary vTrue vFalse condition
 env:
 - name: DEBUG
-  value: "{{ if eq .planId \"enterprise\" }}true{{ else }}false{{ end }}"
+  value: "{{ ternary \"true\" \"false\" (eq .planId \"enterprise\") }}"
+replicas: {{ ternary 5 2 (eq .planId "enterprise") | int }}
+```
 
-replicas: "{{ ternary \"5\" \"2\" (eq .planId \"enterprise\") | int }}"
+Use `if/else` when constructing strings from multiple variables or when the condition is compound:
+
+```yaml
+- name: HOST
+  value: "{{ if and .customDomain (eq .domainVerified \"true\") }}{{ .customDomain }}{{ else }}{{ .uid }}.default.svc{{ end }}"
 ```
 
 :::

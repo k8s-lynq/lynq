@@ -42,7 +42,14 @@ CREATE TABLE nodes (
   domain_verified BOOLEAN DEFAULT FALSE,
   cname_target VARCHAR(255),                 -- What node should CNAME to
   is_active BOOLEAN DEFAULT TRUE,
-  plan_type VARCHAR(20) DEFAULT 'basic'      -- basic, pro, enterprise
+  plan_type VARCHAR(20) DEFAULT 'basic',     -- basic, pro, enterprise
+
+  -- Pre-computed resource limits; set by application or DB view.
+  -- Avoids multi-tier if/else chains in templates.
+  cpu_request VARCHAR(10) DEFAULT '200m',
+  memory_request VARCHAR(10) DEFAULT '512Mi',
+  cpu_limit VARCHAR(10) DEFAULT '400m',
+  memory_limit VARCHAR(10) DEFAULT '1Gi'
 );
 
 -- Example data
@@ -85,6 +92,10 @@ spec:
     domainVerified: domain_verified
     cnameTarget: cname_target
     planType: plan_type
+    cpuRequest: cpu_request
+    memoryRequest: memory_request
+    cpuLimit: cpu_limit
+    memoryLimit: memory_limit
 ```
 
 ## Prerequisites
@@ -202,11 +213,11 @@ spec:
                       name: http
                   resources:
                     requests:
-                      cpu: "{{ if eq .planType \"enterprise\" }}1000m{{ else if eq .planType \"pro\" }}500m{{ else }}200m{{ end }}"
-                      memory: "{{ if eq .planType \"enterprise\" }}2Gi{{ else if eq .planType \"pro\" }}1Gi{{ else }}512Mi{{ end }}"
+                      cpu: "{{ .cpuRequest | default \"200m\" }}"
+                      memory: "{{ .memoryRequest | default \"512Mi\" }}"
                     limits:
-                      cpu: "{{ if eq .planType \"enterprise\" }}2000m{{ else if eq .planType \"pro\" }}1000m{{ else }}400m{{ end }}"
-                      memory: "{{ if eq .planType \"enterprise\" }}4Gi{{ else if eq .planType \"pro\" }}2Gi{{ else }}1Gi{{ end }}"
+                      cpu: "{{ .cpuLimit | default \"400m\" }}"
+                      memory: "{{ .memoryLimit | default \"1Gi\" }}"
                   livenessProbe:
                     httpGet:
                       path: /healthz

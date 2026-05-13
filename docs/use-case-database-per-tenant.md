@@ -229,8 +229,8 @@ spec:
                     - containerPort: 8080
                   resources:
                     requests:
-                      cpu: "{{ if eq .planType \"enterprise\" }}1000m{{ else }}500m{{ end }}"
-                      memory: "{{ if eq .planType \"enterprise\" }}2Gi{{ else }}1Gi{{ end }}"
+                      cpu: "{{ ternary \"1000m\" \"500m\" (eq .planType \"enterprise\") }}"
+                      memory: "{{ ternary \"2Gi\" \"1Gi\" (eq .planType \"enterprise\") }}"
 ```
 
 ::: tip Connection Secret

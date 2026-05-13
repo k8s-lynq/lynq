@@ -58,8 +58,15 @@ CREATE TABLE nodes (
   api_replicas INT DEFAULT 3,
   worker_replicas INT DEFAULT 2,
 
-  -- Database configuration
+  -- Database tier (drives resource allocation)
   db_size VARCHAR(10) DEFAULT 'small',      -- small, medium, large
+
+  -- Pre-computed resource limits derived from db_size.
+  -- Use a database view or application logic to populate these,
+  -- rather than encoding multi-tier logic in templates.
+  db_cpu_request VARCHAR(10) DEFAULT '500m',   -- '500m' | '1000m' | '2000m'
+  db_memory_request VARCHAR(10) DEFAULT '1Gi', -- '1Gi'  | '2Gi'   | '4Gi'
+  db_storage_size VARCHAR(10) DEFAULT '20Gi',  -- '20Gi' | '50Gi'  | '100Gi'
 
   -- Feature flags
   enable_analytics BOOLEAN DEFAULT FALSE,
@@ -103,6 +110,9 @@ spec:
     apiReplicas: api_replicas
     workerReplicas: worker_replicas
     dbSize: db_size
+    dbCpu: db_cpu_request
+    dbMemory: db_memory_request
+    dbStorage: db_storage_size
     enableAnalytics: enable_analytics
     enableNotifications: enable_notifications
 ```
@@ -182,8 +192,8 @@ spec:
                       mountPath: /var/lib/postgresql/data
                   resources:
                     requests:
-                      cpu: "{{ if eq .dbSize \"large\" }}2000m{{ else if eq .dbSize \"medium\" }}1000m{{ else }}500m{{ end }}"
-                      memory: "{{ if eq .dbSize \"large\" }}4Gi{{ else if eq .dbSize \"medium\" }}2Gi{{ else }}1Gi{{ end }}"
+                      cpu: "{{ .dbCpu | default \"500m\" }}"
+                      memory: "{{ .dbMemory | default \"1Gi\" }}"
           volumeClaimTemplates:
             - metadata:
                 name: data
@@ -191,7 +201,7 @@ spec:
                 accessModes: ["ReadWriteOnce"]
                 resources:
                   requests:
-                    storage: "{{ if eq .dbSize \"large\" }}100Gi{{ else if eq .dbSize \"medium\" }}50Gi{{ else }}20Gi{{ end }}"
+                    storage: "{{ .dbStorage | default \"20Gi\" }}"
 
   # PostgreSQL Service
   services:

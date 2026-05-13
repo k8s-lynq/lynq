@@ -102,10 +102,24 @@ nameTemplate: "{{ .uid | sha1sum | trunc 8 }}-app"
 
 ### Conditional Resource Config
 
+Use `ternary` for binary switches — it keeps template expressions readable inline:
+
 ```yaml
 env:
 - name: DEBUG
-  value: "{{ if eq .planId \"enterprise\" }}true{{ else }}false{{ end }}"
+  value: "{{ ternary \"true\" \"false\" (eq .planId \"enterprise\") }}"
+- name: REPLICAS
+  value: "{{ ternary \"5\" \"2\" (eq .planId \"enterprise\") }}"
+```
+
+For multi-tier values (e.g., `enterprise`/`pro`/`basic` each getting different limits), use `extraValueMappings` to map a pre-computed column and keep the template to a simple lookup:
+
+```yaml
+# LynqHub extraValueMappings:
+#   cpuLimit: cpu_limit_column  # DB stores "1000m", "500m", "200m"
+env:
+- name: CPU_LIMIT
+  value: "{{ .cpuLimit | default \"200m\" }}"
 ```
 
 :::
