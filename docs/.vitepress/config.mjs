@@ -569,7 +569,6 @@ export default withMermaid(
         { name: "twitter:image", content: "https://lynq.sh/og-image.png" },
       ],
       ["meta", { name: "twitter:image:alt", content: "Lynq — Kubernetes operator for database-driven infrastructure" }],
-      ["meta", { name: "twitter:site", content: "@k8slynq" }],
 
       // Robots
       ["meta", { name: "robots", content: "index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" }],
