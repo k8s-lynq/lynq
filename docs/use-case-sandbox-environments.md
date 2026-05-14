@@ -1,61 +1,47 @@
 ---
-description: "Provision isolated API sandbox environments per developer account using Lynq. A new row means a new sandbox; deleting the row cleans up every resource automatically."
+description: "Isolated API sandbox environments per developer account — provisioned automatically when an account is created, updated when the plan changes, torn down when the account closes."
 ---
 
 # Developer Sandbox Environments
 
-Stripe provisions a complete isolated environment for every test-mode API key. Twilio does the same per customer account. Lynq implements that pattern: each developer account row in your database gets a dedicated namespace, mock services, and configuration — provisioned automatically, cleaned up completely.
+Stripe gives every account a test-mode environment that's completely isolated from production. Twilio does the same. The challenge isn't building the first one — it's keeping up as you scale to thousands of accounts, handling plan upgrades that change resource limits, and cleaning up without leaving orphaned resources.
 
-## Why This Fits Lynq
+With Lynq, your accounts table drives the sandboxes. A new row provisions a namespace with an API server and mock webhook sink. Upgrading a plan updates the replica count and rate limits automatically. Closing an account removes everything.
 
-Sandbox environments are data-driven by nature: they map 1:1 to account records that your application already manages. The lifecycle follows account activity — created when an account activates, torn down when it's closed or downgraded.
+::: tip Time to working
+~5 minutes to configure. Each account gets a fully isolated sandbox within ~60 seconds of INSERT.
+:::
 
-| Without Lynq | With Lynq |
-|---|---|
-| Ops team manually provisions sandbox per customer | Account creation triggers sandbox automatically |
-| Shared sandbox causes test data collisions | Each account gets a fully isolated namespace |
-| Cleanup is a runbook that gets skipped | Row deletion tears down every resource |
-| Scaling to 1000 accounts requires automation scripting | Lynq reconciles N accounts in parallel |
+## How It Works
 
-## Architecture
-
-```mermaid
-flowchart LR
-    App["Application\n(Account Service)"]
-    DB[("developer_accounts\ntable")]
-    Hub["LynqHub\nsandbox-hub"]
-    Form["LynqForm\nsandbox-stack"]
-    K8s["Kubernetes\nper-account sandbox"]
-
-    App -->|"INSERT on signup\nUPDATE on plan change\nDELETE on account close"| DB
-    Hub -->|"poll every 1m"| DB
-    Hub -->|"creates/deletes LynqNodes"| Form
-    Form -->|"SSA apply"| K8s
-```
+- Each account row maps to one sandbox: an isolated namespace, API server Deployment, mock webhook sink, and per-account config.
+- When `plan_type` changes, the hub re-reads the pre-computed resource columns and Lynq reconciles the Deployment on the next sync.
+- Setting `is_active = FALSE` or deleting the row removes the namespace and all resources inside it.
 
 ## Database Schema
 
 ```sql
 CREATE TABLE developer_accounts (
-  account_id     VARCHAR(63)  PRIMARY KEY,   -- e.g. 'acct_1234abc'
-  plan_type      VARCHAR(20)  NOT NULL DEFAULT 'free',  -- free, starter, growth, enterprise
-  region         VARCHAR(20)  NOT NULL DEFAULT 'us-east-1',
-  is_active      BOOLEAN      DEFAULT TRUE,
+  account_id     VARCHAR(63)   PRIMARY KEY,   -- e.g. 'acct_1234abc'
+  plan_type      VARCHAR(20)   NOT NULL DEFAULT 'free',  -- free | starter | growth | enterprise
+  region         VARCHAR(20)   NOT NULL DEFAULT 'us-east-1',
+  is_active      BOOLEAN       DEFAULT TRUE,
 
-  -- Pre-computed resource limits derived from plan_type.
-  -- Set by application layer or a DB view when plan_type changes.
-  api_replicas   INT          DEFAULT 1,
-  rate_limit_rps INT          DEFAULT 100,
-  storage_gb     INT          DEFAULT 5,
+  -- Pre-computed resource limits; set by application layer when plan_type changes.
+  -- Avoids multi-tier conditionals in templates.
+  api_replicas   INT           DEFAULT 1,
+  rate_limit_rps INT           DEFAULT 100,
+  storage_gb     INT           DEFAULT 5,
 
   owner_email    VARCHAR(255),
-  created_at     TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
-  closed_at      TIMESTAMP    NULL
+  created_at     TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+  closed_at      TIMESTAMP     NULL
 );
 ```
 
+A database view pre-computes limits from `plan_type` so templates stay simple:
+
 ```sql
--- Example: view that pre-computes limits so templates stay simple
 CREATE VIEW developer_accounts_with_limits AS
 SELECT *,
   CASE plan_type
@@ -68,13 +54,7 @@ SELECT *,
     WHEN 'growth'     THEN 1000
     WHEN 'starter'    THEN 300
     ELSE 100
-  END AS rate_limit_rps,
-  CASE plan_type
-    WHEN 'enterprise' THEN 100
-    WHEN 'growth'     THEN 20
-    WHEN 'starter'    THEN 10
-    ELSE 5
-  END AS storage_gb
+  END AS rate_limit_rps
 FROM developer_accounts
 WHERE is_active = TRUE AND closed_at IS NULL;
 ```
@@ -100,11 +80,9 @@ spec:
       passwordRef:
         name: mysql-credentials
         key: password
-
   valueMappings:
     uid: account_id
     activate: is_active
-
   extraValueMappings:
     planType: plan_type
     region: region
@@ -125,7 +103,6 @@ metadata:
 spec:
   hubId: sandbox-hub
 
-  # 1. Isolated namespace per account
   namespaces:
     - id: ns
       nameTemplate: "sandbox-{{ .uid }}"
@@ -136,9 +113,7 @@ spec:
           labels:
             sandbox-account: "{{ .uid }}"
             plan-type: "{{ .planType }}"
-            region: "{{ .region }}"
 
-  # 2. Account-specific configuration
   configMaps:
     - id: config
       nameTemplate: "{{ .uid }}-config"
@@ -147,9 +122,6 @@ spec:
       spec:
         apiVersion: v1
         kind: ConfigMap
-        metadata:
-          labels:
-            account: "{{ .uid }}"
         data:
           ACCOUNT_ID: "{{ .uid }}"
           PLAN_TYPE: "{{ .planType }}"
@@ -158,7 +130,6 @@ spec:
           OWNER_EMAIL: "{{ .ownerEmail }}"
           SANDBOX_MODE: "true"
 
-  # 3. API server — isolated per account
   deployments:
     - id: api
       nameTemplate: "{{ .uid }}-api"
@@ -173,7 +144,6 @@ spec:
         metadata:
           labels:
             app: "{{ .uid }}-api"
-            account: "{{ .uid }}"
         spec:
           replicas: {{ .apiReplicas | int }}
           selector:
@@ -183,7 +153,6 @@ spec:
             metadata:
               labels:
                 app: "{{ .uid }}-api"
-                account: "{{ .uid }}"
             spec:
               containers:
                 - name: api
@@ -207,8 +176,6 @@ spec:
                     initialDelaySeconds: 5
                     periodSeconds: 10
 
-  # 4. Mock webhook receiver — lets accounts test event delivery without hitting production
-  deployments:
     - id: webhook-sink
       nameTemplate: "{{ .uid }}-webhook-sink"
       targetNamespace: "sandbox-{{ .uid }}"
@@ -220,7 +187,6 @@ spec:
         metadata:
           labels:
             app: "{{ .uid }}-webhook-sink"
-            account: "{{ .uid }}"
         spec:
           replicas: 1
           selector:
@@ -243,11 +209,7 @@ spec:
                     requests:
                       cpu: 50m
                       memory: 64Mi
-                    limits:
-                      cpu: 200m
-                      memory: 128Mi
 
-  # 5. Services
   services:
     - id: api-svc
       nameTemplate: "{{ .uid }}-api"
@@ -257,9 +219,6 @@ spec:
       spec:
         apiVersion: v1
         kind: Service
-        metadata:
-          labels:
-            app: "{{ .uid }}-api"
         spec:
           selector:
             app: "{{ .uid }}-api"
@@ -275,9 +234,6 @@ spec:
       spec:
         apiVersion: v1
         kind: Service
-        metadata:
-          labels:
-            app: "{{ .uid }}-webhook-sink"
         spec:
           selector:
             app: "{{ .uid }}-webhook-sink"
@@ -285,7 +241,6 @@ spec:
             - port: 80
               targetPort: 9000
 
-  # 6. Ingress — exposes sandbox API at a per-account subdomain
   ingresses:
     - id: ingress
       nameTemplate: "{{ .uid }}-ingress"
@@ -318,72 +273,59 @@ spec:
                           number: 80
 ```
 
-## Account Lifecycle via SQL
+## Account Lifecycle
 
 ```sql
--- Account signs up (sandbox provisioned automatically)
+-- New signup → sandbox provisioned automatically
 INSERT INTO developer_accounts (account_id, plan_type, region, owner_email)
 VALUES ('acct_1234abc', 'starter', 'us-east-1', 'dev@example.com');
 
--- Account upgrades plan (api_replicas and rate_limit_rps update on next sync)
+-- Plan upgrade → api_replicas and rate_limit_rps update on next sync
 UPDATE developer_accounts
 SET plan_type = 'growth'
 WHERE account_id = 'acct_1234abc';
 
--- Account closes (Lynq deletes the namespace and all resources inside it)
+-- Account closes → namespace and all resources deleted
 UPDATE developer_accounts
 SET is_active = FALSE, closed_at = NOW()
 WHERE account_id = 'acct_1234abc';
-
--- Hard delete also triggers cleanup
-DELETE FROM developer_accounts WHERE account_id = 'acct_1234abc';
 ```
 
-## Policy Notes
+When `plan_type` changes, the view re-computes `api_replicas` and `rate_limit_rps`. On the next hub sync, Lynq updates the Deployment and ConfigMap. Kubernetes rolls out new pods automatically.
 
-| Policy | Setting | Why |
-|---|---|---|
-| `deletionPolicy` | `Delete` | Test data has no retention value |
-| `waitForReady: true` | on `api` | Ingress should not route before pods are ready |
-| `creationPolicy` | `WhenNeeded` (default) | Re-apply on plan upgrade to pick up new replica count |
-| `syncInterval` | `1m` | Account changes don't need sub-minute propagation |
-
-## Checking Sandbox Status
+## Verify It Works
 
 ```bash
-# List all active sandboxes
+# Sandbox provisioned for a new account
 kubectl get lynqnodes -n lynq-system -l lynq.sh/hub=sandbox-hub
+# NAME                       READY   DESIRED   AGE
+# acct_1234abc-sandbox-stack True    5/5       2m
 
-# Check a specific account's sandbox
+# All resources in the account's namespace
 kubectl get all -n sandbox-acct_1234abc
+# pod/acct_1234abc-api-...           Running
+# pod/acct_1234abc-webhook-sink-...  Running
+# deployment/acct_1234abc-api
+# deployment/acct_1234abc-webhook-sink
+# service/acct_1234abc-api
+# service/acct_1234abc-webhook-sink
+# ingress/acct_1234abc-ingress  → acct_1234abc.sandbox.example.com
 
-# Get the sandbox API URL
-kubectl get ingress -n sandbox-acct_1234abc
-
-# Watch a sandbox provision in real time after account creation
-kubectl get lynqnodes -n lynq-system -w
+# After plan upgrade: replica count updated
+kubectl get deployment acct_1234abc-api -n sandbox-acct_1234abc \
+  -o jsonpath='{.spec.replicas}'
+# 2  ← growth plan = 2 replicas
 ```
 
-## Plan Upgrade Behavior
+## Caveats
 
-When `plan_type` changes, Lynq reconciles the LynqNode on the next sync. Resources using `creationPolicy: WhenNeeded` (the default) are reapplied with the new values from the database view. The Deployment replica count and ConfigMap rate limit update in place — no manual intervention needed.
-
-```sql
--- Upgrade triggers replica scale-up on the next hub sync (default: 1 minute)
-UPDATE developer_accounts
-SET plan_type = 'enterprise'
-WHERE account_id = 'acct_1234abc';
-```
-
-```bash
-# Verify the Deployment scaled up after the next sync
-kubectl get deployment acct_1234abc-api -n sandbox-acct_1234abc
-# READY: 4/4
-```
+- **The database view defines who has a sandbox.** If `closed_at IS NOT NULL` or `is_active = FALSE`, the account is excluded from the view and its sandbox is deleted. Make sure your application writes these fields consistently.
+- **Plan upgrades have a ~1-minute lag** (hub sync interval) before the Deployment reflects new replica counts. This is usually acceptable for plan tier changes, but reduce `syncInterval` if you need faster propagation.
+- **cert-manager must be installed** for TLS to work. Without it, ingresses are created without valid certificates. See [Custom Domain Provisioning](./use-case-custom-domains.md) for cert-manager setup.
 
 ## See Also
 
-- [Per-PR Preview Environments](./use-case-preview-environments.md) — short-lived environments driven by CI
+- [Per-PR Preview Environments](./use-case-preview-environments.md) — short-lived environments driven by CI, same isolation pattern
+- [Feature Flags](./use-case-feature-flags.md) — add per-account feature toggles on top of this pattern
 - [Policies](./policies.md) — `deletionPolicy`, `creationPolicy`, `conflictPolicy`
-- [Datasource Configuration](./datasource.md) — LynqHub connection setup
-- [Templates](./templates.md) — template variables and functions
+- [Datasource Configuration](./datasource.md) — using a database view as the hub source

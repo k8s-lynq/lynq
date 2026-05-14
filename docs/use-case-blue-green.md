@@ -1,78 +1,41 @@
 ---
-description: "Implementing zero-downtime blue-green deployments per node using Lynq and database-driven flags."
+description: "Zero-downtime blue-green deployments per node, controlled by a single database column. One SQL UPDATE switches traffic; another reverts it."
 ---
 
-# Blue-Green Deployment Pattern
+# Blue-Green Deployments
 
-Store the active color (`blue` or `green`) as a database column. Updating that single column switches traffic for a node instantly — no YAML changes, no redeployment. Roll back by reverting the column value.
+A deployment goes wrong at 2am. Your rollback is one SQL statement: `UPDATE nodes SET active_color = 'blue'`. Traffic switches within the next sync interval — no YAML edits, no `helm rollback`, no kubectl involved.
 
-## Architecture
+The `active_color` column in your database determines which environment is live. Lynq keeps both deployments running; the Service selector follows the column value.
 
-```mermaid
-graph TB
-    DB[(Database<br/>deployment_color:<br/>blue/green)]
+::: tip Time to working
+~5 minutes to configure. Traffic switches within 1 minute of a column update.
+:::
 
-    TO[Lynq]
+## How It Works
 
-    BlueTemplate[LynqForm<br/>blue-env]
-    GreenTemplate[LynqForm<br/>green-env]
-
-    BlueDeployment[Deployment<br/>acme-blue]
-    GreenDeployment[Deployment<br/>acme-green]
-
-    Service[Service<br/>acme-app<br/>selector: color=active]
-
-    Ingress[Ingress<br/>acme.example.com]
-
-    Users[End Users]
-
-    DB -->|color=blue| TO
-    TO --> BlueTemplate
-    TO --> GreenTemplate
-
-    BlueTemplate -->|active| BlueDeployment
-    GreenTemplate -->|inactive| GreenDeployment
-
-    BlueDeployment -->|label: color=active| Service
-    GreenDeployment -.->|label: color=inactive| Service
-
-    Service --> Ingress
-    Ingress --> Users
-
-    style BlueDeployment fill:#e3f2fd,stroke:#1976d2,stroke-width:3px
-    style GreenDeployment fill:#e8f5e9,stroke:#388e3c,stroke-width:1px,stroke-dasharray: 5 5
-    style Service fill:#fff3e0,stroke:#f57c00,stroke-width:2px
-```
+- Each node has two Deployments (`blue` and `green`) always running — the active one at full replicas, the inactive one at 1.
+- The Service selector is a template expression: `color: "{{ .activeColor }}"`. When the column changes, Lynq updates the selector and traffic shifts.
+- Rollback is the same operation as a deploy: update `active_color` and the Service re-points to the previous environment.
 
 ## Database Schema
 
 ```sql
 CREATE TABLE nodes (
-  node_id VARCHAR(63) PRIMARY KEY,
-  domain VARCHAR(255) NOT NULL,
-  is_active BOOLEAN DEFAULT TRUE,
+  node_id    VARCHAR(63)  PRIMARY KEY,
+  is_active  BOOLEAN      DEFAULT TRUE,
 
-  -- Blue-Green deployment control
-  active_color VARCHAR(10) DEFAULT 'blue',   -- 'blue' or 'green'
-  blue_version VARCHAR(20) DEFAULT 'v1.0.0',
-  green_version VARCHAR(20) DEFAULT 'v1.0.0',
-
-  -- Deployment status tracking
-  deployment_status VARCHAR(20) DEFAULT 'stable',  -- stable, deploying, testing, rolling-back
-  last_deployment_at TIMESTAMP
+  -- Blue-green control
+  active_color       VARCHAR(10)  DEFAULT 'blue',  -- 'blue' | 'green'
+  blue_version       VARCHAR(20)  DEFAULT 'v1.0.0',
+  green_version      VARCHAR(20)  DEFAULT 'v1.0.0',
+  deployment_status  VARCHAR(20)  DEFAULT 'stable' -- stable | deploying | testing | rolled-back
 );
-
--- Deployment workflow:
--- 1. Update inactive color's version (e.g., green_version = 'v2.0.0')
--- 2. Set deployment_status = 'deploying'
--- 3. Operator creates/updates green deployment
--- 4. Run smoke tests against green
--- 5. Switch active_color from 'blue' to 'green'
--- 6. Set deployment_status = 'stable'
--- 7. Blue environment now becomes next deployment target
 ```
 
-## LynqHub
+## Minimal Setup
+
+The core of the pattern: two Deployments whose replica count follows the active color, and a Service whose selector does the same.
 
 ```yaml
 apiVersion: operator.lynq.sh/v1
@@ -85,29 +48,22 @@ spec:
     type: mysql
     syncInterval: 1m
     mysql:
-      host: mysql.database.svc.cluster.local
+      host: mysql.internal.svc.cluster.local
       port: 3306
       database: nodes_db
-      username: node_reader
+      table: nodes
+      username: lynq_reader
       passwordRef:
         name: mysql-credentials
         key: password
-      table: nodes
-
   valueMappings:
     uid: node_id
-    # DEPRECATED v1.1.11+: Use extraValueMappings instead
-    #     hostOrUrl: domain
     activate: is_active
-
   extraValueMappings:
     activeColor: active_color
     blueVersion: blue_version
     greenVersion: green_version
-    deploymentStatus: deployment_status
 ```
-
-## LynqForm
 
 ```yaml
 apiVersion: operator.lynq.sh/v1
@@ -119,435 +75,349 @@ spec:
   hubId: blue-green-nodes
 
   deployments:
-    # Blue Deployment
-    - id: blue-deployment
+    - id: blue
+      nameTemplate: "{{ .uid }}-blue"
+      spec:
+        apiVersion: apps/v1
+        kind: Deployment
+        spec:
+          replicas: {{ ternary 3 1 (eq .activeColor "blue") | int }}
+          selector:
+            matchLabels:
+              app: "{{ .uid }}"
+              color: blue
+          template:
+            metadata:
+              labels:
+                app: "{{ .uid }}"
+                color: blue
+            spec:
+              containers:
+                - name: app
+                  image: "registry.example.com/app:{{ .blueVersion }}"
+                  ports:
+                    - containerPort: 8080
+
+    - id: green
+      nameTemplate: "{{ .uid }}-green"
+      spec:
+        apiVersion: apps/v1
+        kind: Deployment
+        spec:
+          replicas: {{ ternary 3 1 (eq .activeColor "green") | int }}
+          selector:
+            matchLabels:
+              app: "{{ .uid }}"
+              color: green
+          template:
+            metadata:
+              labels:
+                app: "{{ .uid }}"
+                color: green
+            spec:
+              containers:
+                - name: app
+                  image: "registry.example.com/app:{{ .greenVersion }}"
+                  ports:
+                    - containerPort: 8080
+
+  services:
+    - id: main
+      nameTemplate: "{{ .uid }}-app"
+      dependIds: ["blue", "green"]
+      spec:
+        apiVersion: v1
+        kind: Service
+        spec:
+          selector:
+            app: "{{ .uid }}"
+            color: "{{ .activeColor }}"
+          ports:
+            - port: 80
+              targetPort: 8080
+```
+
+## Full Example
+
+Add per-color test Services and Ingresses for smoke-testing before switching traffic.
+
+```yaml
+apiVersion: operator.lynq.sh/v1
+kind: LynqForm
+metadata:
+  name: blue-green-app
+  namespace: lynq-system
+spec:
+  hubId: blue-green-nodes
+
+  deployments:
+    - id: blue
       nameTemplate: "{{ .uid }}-blue"
       labelsTemplate:
         app: "{{ .uid }}"
-        color: "blue"
+        color: blue
         active: "{{ ternary \"true\" \"false\" (eq .activeColor \"blue\") }}"
       spec:
-        replicas: {{ ternary 3 1 (eq .activeColor "blue") | int }}  # Scale down inactive
-        selector:
-          matchLabels:
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          labels:
             app: "{{ .uid }}"
-            color: "blue"
-        template:
-          metadata:
-            labels:
+            color: blue
+        spec:
+          replicas: {{ ternary 3 1 (eq .activeColor "blue") | int }}
+          selector:
+            matchLabels:
               app: "{{ .uid }}"
-              color: "blue"
-              version: "{{ .blueVersion }}"
-          spec:
-            containers:
-              - name: app
-                image: "registry.example.com/app:{{ .blueVersion }}"
-                env:
-                  - name: ENVIRONMENT_COLOR
-                    value: "blue"
-                  - name: NODE_ID
-                    value: "{{ .uid }}"
-                ports:
-                  - containerPort: 8080
-                resources:
-                  requests:
-                    cpu: 500m
-                    memory: 1Gi
+              color: blue
+          template:
+            metadata:
+              labels:
+                app: "{{ .uid }}"
+                color: blue
+                version: "{{ .blueVersion }}"
+            spec:
+              containers:
+                - name: app
+                  image: "registry.example.com/app:{{ .blueVersion }}"
+                  env:
+                    - name: NODE_ID
+                      value: "{{ .uid }}"
+                    - name: ENVIRONMENT_COLOR
+                      value: blue
+                  ports:
+                    - containerPort: 8080
+                  resources:
+                    requests:
+                      cpu: 500m
+                      memory: 1Gi
 
-    # Green Deployment
-    - id: green-deployment
+    - id: green
       nameTemplate: "{{ .uid }}-green"
       labelsTemplate:
         app: "{{ .uid }}"
-        color: "green"
+        color: green
         active: "{{ ternary \"true\" \"false\" (eq .activeColor \"green\") }}"
       spec:
-        replicas: {{ ternary 3 1 (eq .activeColor "green") | int }}
-        selector:
-          matchLabels:
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          labels:
             app: "{{ .uid }}"
-            color: "green"
-        template:
-          metadata:
-            labels:
+            color: green
+        spec:
+          replicas: {{ ternary 3 1 (eq .activeColor "green") | int }}
+          selector:
+            matchLabels:
               app: "{{ .uid }}"
-              color: "green"
-              version: "{{ .greenVersion }}"
-          spec:
-            containers:
-              - name: app
-                image: "registry.example.com/app:{{ .greenVersion }}"
-                env:
-                  - name: ENVIRONMENT_COLOR
-                    value: "green"
-                  - name: NODE_ID
-                    value: "{{ .uid }}"
-                ports:
-                  - containerPort: 8080
-                resources:
-                  requests:
-                    cpu: 500m
-                    memory: 1Gi
+              color: green
+          template:
+            metadata:
+              labels:
+                app: "{{ .uid }}"
+                color: green
+                version: "{{ .greenVersion }}"
+            spec:
+              containers:
+                - name: app
+                  image: "registry.example.com/app:{{ .greenVersion }}"
+                  env:
+                    - name: NODE_ID
+                      value: "{{ .uid }}"
+                    - name: ENVIRONMENT_COLOR
+                      value: green
+                  ports:
+                    - containerPort: 8080
+                  resources:
+                    requests:
+                      cpu: 500m
+                      memory: 1Gi
 
-  # Service routing to active color
   services:
-    - id: main-service
+    - id: main
       nameTemplate: "{{ .uid }}-app"
-      dependIds: ["blue-deployment", "green-deployment"]
+      dependIds: ["blue", "green"]
       spec:
-        selector:
-          app: "{{ .uid }}"
-          color: "{{ .activeColor }}"  # Dynamic selector based on active color
-        ports:
-          - port: 80
-            targetPort: 8080
+        apiVersion: v1
+        kind: Service
+        spec:
+          selector:
+            app: "{{ .uid }}"
+            color: "{{ .activeColor }}"
+          ports:
+            - port: 80
+              targetPort: 8080
 
-    # Dedicated services for testing inactive environment
-    - id: blue-test-service
+    - id: blue-test
       nameTemplate: "{{ .uid }}-blue-test"
       spec:
-        selector:
-          app: "{{ .uid }}"
-          color: "blue"
-        ports:
-          - port: 80
-            targetPort: 8080
+        apiVersion: v1
+        kind: Service
+        spec:
+          selector:
+            app: "{{ .uid }}"
+            color: blue
+          ports:
+            - port: 80
+              targetPort: 8080
 
-    - id: green-test-service
+    - id: green-test
       nameTemplate: "{{ .uid }}-green-test"
       spec:
-        selector:
-          app: "{{ .uid }}"
-          color: "green"
-        ports:
-          - port: 80
-            targetPort: 8080
+        apiVersion: v1
+        kind: Service
+        spec:
+          selector:
+            app: "{{ .uid }}"
+            color: green
+          ports:
+            - port: 80
+              targetPort: 8080
 
-  # Main ingress (routes to active)
   ingresses:
-    - id: main-ingress
+    - id: main
       nameTemplate: "{{ .uid }}-ingress"
-      dependIds: ["main-service"]
+      dependIds: ["main"]
       spec:
-        ingressClassName: nginx
-        rules:
-          - host: "{{ .host }}"
-            http:
-              paths:
-                - path: /
-                  pathType: Prefix
-                  backend:
-                    service:
-                      name: "{{ .uid }}-app"
-                      port:
-                        number: 80
+        apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        spec:
+          ingressClassName: nginx
+          rules:
+            - host: "{{ .uid }}.example.com"
+              http:
+                paths:
+                  - path: /
+                    pathType: Prefix
+                    backend:
+                      service:
+                        name: "{{ .uid }}-app"
+                        port:
+                          number: 80
 
-    # Test ingresses for pre-production validation
     - id: blue-test-ingress
       nameTemplate: "{{ .uid }}-blue-test"
-      dependIds: ["blue-test-service"]
+      dependIds: ["blue-test"]
       spec:
-        ingressClassName: nginx
-        rules:
-          - host: "{{ .uid }}-blue.test.example.com"
-            http:
-              paths:
-                - path: /
-                  pathType: Prefix
-                  backend:
-                    service:
-                      name: "{{ .uid }}-blue-test"
-                      port:
-                        number: 80
+        apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        spec:
+          ingressClassName: nginx
+          rules:
+            - host: "{{ .uid }}-blue.test.example.com"
+              http:
+                paths:
+                  - path: /
+                    pathType: Prefix
+                    backend:
+                      service:
+                        name: "{{ .uid }}-blue-test"
+                        port:
+                          number: 80
 
     - id: green-test-ingress
       nameTemplate: "{{ .uid }}-green-test"
-      dependIds: ["green-test-service"]
+      dependIds: ["green-test"]
       spec:
-        ingressClassName: nginx
-        rules:
-          - host: "{{ .uid }}-green.test.example.com"
-            http:
-              paths:
-                - path: /
-                  pathType: Prefix
-                  backend:
-                    service:
-                      name: "{{ .uid }}-green-test"
-                      port:
-                        number: 80
+        apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        spec:
+          ingressClassName: nginx
+          rules:
+            - host: "{{ .uid }}-green.test.example.com"
+              http:
+                paths:
+                  - path: /
+                    pathType: Prefix
+                    backend:
+                      service:
+                        name: "{{ .uid }}-green-test"
+                        port:
+                          number: 80
 ```
 
 ## Deployment Workflow
 
-### Step 1: Deploy to Inactive Environment
+### 1. Stage the new version on the inactive environment
 
 ```sql
--- Current state: blue is active with v1.0.0
--- Deploy v2.0.0 to green (inactive)
-
+-- Blue is active. Deploy v2.0.0 to green without affecting production.
 UPDATE nodes
 SET green_version = 'v2.0.0',
-    deployment_status = 'deploying',
-    last_deployment_at = NOW()
+    deployment_status = 'deploying'
 WHERE node_id = 'acme-corp';
 ```
 
-Lynq automatically updates green deployment with new version.
+Lynq updates the green Deployment image. The blue Service selector is unchanged — production traffic is unaffected.
 
-### Step 2: Test Inactive Environment
+### 2. Test against the inactive environment
 
 ```bash
-# Smoke test against green environment
+# Green is accessible via its dedicated test Service/Ingress
 curl https://acme-corp-green.test.example.com/healthz
-curl https://acme-corp-green.test.example.com/api/test
-
-# Run integration tests
-kubectl run test-runner --rm -it --image=curlimages/curl -- \
-  curl -f https://acme-corp-green.test.example.com/api/comprehensive-test
+# {"status":"healthy","version":"v2.0.0"}
 ```
 
-### Step 3: Switch Traffic (Blue → Green)
+### 3. Switch traffic
 
 ```sql
--- Switch active environment
 UPDATE nodes
 SET active_color = 'green',
     deployment_status = 'stable'
 WHERE node_id = 'acme-corp';
 ```
 
-Lynq updates Service selector from `color: blue` to `color: green`. Traffic instantly switches.
+Lynq updates the Service selector. Green scales to 3 replicas; blue scales to 1.
 
-### Step 4: Rollback (if needed)
+### 4. Roll back
 
 ```sql
--- Instant rollback by switching back
 UPDATE nodes
 SET active_color = 'blue',
     deployment_status = 'rolled-back'
 WHERE node_id = 'acme-corp';
 ```
 
-### Step 5: Cleanup Old Version
+### Deployment timeline
 
-```sql
--- After confirming green is stable, update blue to match
-UPDATE nodes
-SET blue_version = 'v2.0.0'
-WHERE node_id = 'acme-corp';
-```
+| Time | Action | Traffic |
+|------|--------|---------|
+| T+0 | `green_version = 'v2.0.0'` | Blue (v1.0.0) |
+| T+1m | Lynq updates green Deployment | Blue (v1.0.0) |
+| T+5m | Green pods ready, smoke tests | Blue (v1.0.0) |
+| T+15m | `active_color = 'green'` | **Green (v2.0.0)** |
+| T+20m | Issue detected | Green (v2.0.0) |
+| T+21m | `active_color = 'blue'` | **Blue (v1.0.0)** |
+| T+22m | Traffic restored | Blue (v1.0.0) |
 
-## Step-by-Step Verification
+**Total rollback time: ~1–2 minutes.**
 
-Verify each step of the deployment process:
-
-### Verify Initial State
-
-```bash
-# 1. Check current active color in database
-mysql -e "SELECT node_id, active_color, blue_version, green_version FROM nodes WHERE node_id='acme-corp'"
-# Expected output:
-# +-----------+--------------+--------------+---------------+
-# | node_id   | active_color | blue_version | green_version |
-# +-----------+--------------+--------------+---------------+
-# | acme-corp | blue         | v1.0.0       | v1.0.0        |
-# +-----------+--------------+--------------+---------------+
-
-# 2. Check deployments in Kubernetes
-kubectl get deployment -l app=acme-corp
-
-# Expected output:
-# NAME              READY   UP-TO-DATE   AVAILABLE   REPLICAS   AGE
-# acme-corp-blue    3/3     3            3           3          5h
-# acme-corp-green   1/1     1            1           1          5h
-
-# 3. Verify service selector
-kubectl get svc acme-corp-app -o jsonpath='{.spec.selector}' | jq
-# Expected: {"app":"acme-corp","color":"blue"}
-
-# 4. Verify traffic is going to blue
-curl -s https://acme.example.com/version
-# Expected: v1.0.0 (blue version)
-```
-
-### Verify After Step 1 (Deploy to Inactive)
+## Verify It Works
 
 ```bash
-# After: UPDATE nodes SET green_version = 'v2.0.0' WHERE node_id = 'acme-corp';
-
-# 1. Check green deployment updated with new image
-kubectl get deployment acme-corp-green -o jsonpath='{.spec.template.spec.containers[0].image}'
-# Expected: registry.example.com/app:v2.0.0
-
-# 2. Verify green pods are running
-kubectl get pods -l app=acme-corp,color=green
-# Expected: Running with new version
-
-# 3. Verify blue still active (service selector unchanged)
+# Service selector follows active_color
 kubectl get svc acme-corp-app -o jsonpath='{.spec.selector.color}'
-# Expected: blue (unchanged)
-
-# 4. Production traffic still on v1.0.0
-curl -s https://acme.example.com/version
-# Expected: v1.0.0
-```
-
-### Verify After Step 2 (Test Inactive)
-
-```bash
-# Test green environment directly
-curl -s https://acme-corp-green.test.example.com/version
-# Expected: v2.0.0 (new version)
-
-curl -s https://acme-corp-green.test.example.com/healthz
-# Expected: {"status":"healthy"}
-
-# Run comprehensive test suite
-kubectl run test-runner --rm -it --image=curlimages/curl --restart=Never -- \
-  sh -c 'curl -f https://acme-corp-green.test.example.com/api/v1/healthz && echo "PASS" || echo "FAIL"'
-# Expected: PASS
-```
-
-### Verify After Step 3 (Traffic Switch)
-
-```bash
-# After: UPDATE nodes SET active_color = 'green' WHERE node_id = 'acme-corp';
-
-# 1. Verify service selector changed
-kubectl get svc acme-corp-app -o jsonpath='{.spec.selector.color}'
-# Expected: green (CHANGED!)
-
-# 2. Verify production traffic now on v2.0.0
-curl -s https://acme.example.com/version
-# Expected: v2.0.0 (new version)
-
-# 3. Check green deployment scaled up
-kubectl get deployment acme-corp-green -o jsonpath='{.spec.replicas}'
-# Expected: 3 (scaled up)
-
-# 4. Check blue deployment scaled down
-kubectl get deployment acme-corp-blue -o jsonpath='{.spec.replicas}'
-# Expected: 1 (scaled down)
-```
-
-## Complete Rollback Procedure
-
-If issues are detected after the switch, follow this rollback procedure:
-
-```mermaid
-flowchart TD
-    A[Issue Detected] --> B{Severity?}
-    B -->|Critical| C[Immediate Rollback]
-    B -->|Non-Critical| D[Investigate]
-    D --> E{Can Fix Forward?}
-    E -->|Yes| F[Deploy Hotfix to Green]
-    E -->|No| C
-    C --> G[Execute Rollback SQL]
-    G --> H[Verify Service Selector]
-    H --> I[Verify Traffic on Blue]
-    I --> J[Monitor & Confirm]
-    J --> K{Stable?}
-    K -->|Yes| L[Document Incident]
-    K -->|No| M[Escalate]
-```
-
-### Rollback Checklist
-
-```bash
-# ⚠️ ROLLBACK PROCEDURE
-
-# Step 1: Execute rollback SQL
-mysql -e "UPDATE nodes SET active_color = 'blue', deployment_status = 'rolled-back' WHERE node_id = 'acme-corp'"
-
-# Step 2: Wait for Lynq to sync (default: 1 minute)
-# Or force immediate reconciliation:
-kubectl annotate lynqnode acme-corp-blue-green-app force-sync=$(date +%s) --overwrite
-
-# Step 3: Verify rollback completed
-echo "=== Service Selector ===" && \
-kubectl get svc acme-corp-app -o jsonpath='{.spec.selector.color}' && \
-echo "" && \
-echo "=== Production Version ===" && \
-curl -s https://acme.example.com/version && \
-echo "" && \
-echo "=== Blue Replicas ===" && \
-kubectl get deployment acme-corp-blue -o jsonpath='{.spec.replicas}'
-
-# Expected output:
-# === Service Selector ===
 # blue
-# === Production Version ===
-# v1.0.0
-# === Blue Replicas ===
-# 3
 
-# Step 4: Verify blue pods are healthy
-kubectl get pods -l app=acme-corp,color=blue
-# All pods should be Running/Ready
+# After switching active_color to green:
+kubectl get svc acme-corp-app -o jsonpath='{.spec.selector.color}'
+# green
 
-# Step 5: Monitor error rates
-# (Check your monitoring dashboard for 5 minutes)
+# Replica counts reflect active/inactive
+kubectl get deployment -l app=acme-corp
+# NAME              READY   REPLICAS
+# acme-corp-blue    1/1     1        ← inactive (scaled down)
+# acme-corp-green   3/3     3        ← active (scaled up)
 ```
 
-### Deployment Timeline
+## Caveats
 
-| Time | Action | Database State | Traffic |
-|------|--------|----------------|---------|
-| T+0 | Start deployment | `active_color=blue, green_version=v1.0.0` | Blue (v1.0.0) |
-| T+1m | Update green version | `active_color=blue, green_version=v2.0.0` | Blue (v1.0.0) |
-| T+5m | Green deployment ready | Same | Blue (v1.0.0) |
-| T+10m | Smoke tests pass | Same | Blue (v1.0.0) |
-| T+15m | Switch traffic | `active_color=green` | **Green (v2.0.0)** |
-| T+20m | Issue detected! | Same | Green (v2.0.0) |
-| T+21m | Rollback executed | `active_color=blue` | **Blue (v1.0.0)** |
-| T+22m | Traffic restored | Same | Blue (v1.0.0) |
+- **Schema changes must be backward compatible** during the transition window — both colors run simultaneously and share the same database.
+- **Stateful applications** (session affinity, in-flight requests) need additional handling; the Service selector switch is instant but in-flight connections to the old pods drain naturally.
+- **Double resource usage** during deployments. The inactive environment runs at 1 replica to minimize cost, not 0 — scaling to 0 would add pod start latency to the deploy.
 
-**Total rollback time: ~1-2 minutes** (database update + Lynq sync interval)
+## See Also
 
-## Monitoring
-
-```promql
-# Track active deployment color per node
-lynqnode_deployment_color{lynqnode="acme-corp"} == 1  # 1=blue, 2=green
-
-# Monitor deployment status
-lynqnode_deployment_status{status="deploying"}
-
-# Alert on prolonged deployment
-ALERT DeploymentStuck
-  FOR 30m
-  WHERE lynqnode_deployment_status{status="deploying"} == 1
-  ANNOTATIONS {
-    summary = "Deployment stuck for node {{ $labels.lynqnode }}"
-  }
-```
-
-## Benefits
-
-1. **Zero Downtime**: Instant traffic switch between environments
-2. **Safe Testing**: Validate new version before exposing to users
-3. **Instant Rollback**: Switch back to previous version in seconds
-4. **Resource Efficiency**: Inactive environment can run with minimal replicas
-5. **Database-Driven**: All orchestration via database updates
-
-## Limitations
-
-1. **Resource Cost**: Requires running two environments (though inactive can be scaled down)
-2. **Database Compatibility**: Schema changes must be backward compatible during transition
-3. **State Management**: Stateful applications require careful session handling
-4. **Cost**: Double resource usage during active deployment periods
-
-## Related Documentation
-
-- [Templates Guide](/templates) - Template syntax and conditionals
-- [Policies](/policies) - Resource lifecycle management
-- [Monitoring](/monitoring) - Metrics and alerting
-- [Advanced Use Cases](/advanced-use-cases) - Other deployment patterns
-
-## Next Steps
-
-- Implement automated smoke tests
-- Set up deployment pipeline
-- Configure monitoring and alerts
-- Test rollback procedures
+- [Feature Flags](./use-case-feature-flags.md) — use the same column-as-switch pattern for application-level feature toggles
+- [Policies](./policies.md) — `deletionPolicy`, `creationPolicy` for controlling resource lifecycle
+- [Templates](./templates.md) — `ternary` and conditional template expressions

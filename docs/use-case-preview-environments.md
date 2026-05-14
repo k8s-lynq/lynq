@@ -1,60 +1,45 @@
 ---
-description: "Automatically provision and tear down per-PR preview environments using Lynq. CI inserts a row, Lynq creates the environment; PR closes, Lynq cleans up."
+description: "Per-PR preview environments provisioned from CI with a single SQL INSERT. The row exists while the PR is open; deleting it cleans up every resource."
 ---
 
 # Per-PR Preview Environments
 
-Your CI pipeline inserts one row per open pull request. Lynq provisions a full preview environment — Namespace, Deployment, Ingress, and TLS — within a minute. When the PR closes, the row is deleted and every resource is cleaned up automatically.
+Every team that has tried per-PR preview environments has hit the same wall: cleanup. The `helm install` on PR open is easy. The teardown CI job fails silently, gets skipped when someone force-merges, or simply doesn't run when a branch is deleted. Stale environments pile up. Someone has to clean them manually.
 
-## Why This Fits Lynq
+With Lynq, the cleanup problem doesn't exist. Deleting the row is the teardown. The CI job that runs `DELETE FROM preview_environments` is the only cleanup you need — and if it fails, the environment stays provisioned rather than getting orphaned.
 
-Preview environments are inherently data-driven: each environment maps 1:1 to a PR row. The lifecycle is short, high-churn, and repetitive — exactly the pattern Lynq is designed for.
+::: tip Time to working
+~5 minutes to configure. Each PR gets a namespace, Deployment, Service, and TLS Ingress within ~60 seconds of the INSERT.
+:::
 
-| Without Lynq | With Lynq |
-|---|---|
-| CI runs `helm install` per PR | CI runs `INSERT INTO preview_envs ...` |
-| Cleanup requires a separate CI job | Row deletion triggers automatic cleanup |
-| Drift accumulates when jobs fail | Lynq reconciles continuously |
-| Scaling to 100+ open PRs degrades CI | Lynq handles N environments in parallel |
+## How It Works
 
-## Architecture
-
-```mermaid
-flowchart LR
-    CI["CI Pipeline\n(GitHub Actions / GitLab CI)"]
-    DB[("preview_envs\ntable")]
-    Hub["LynqHub\npreview-hub"]
-    Form["LynqForm\npreview-stack"]
-    K8s["Kubernetes\nper-PR resources"]
-
-    CI -->|"INSERT on PR open\nUPDATE on push\nDELETE on PR close"| DB
-    Hub -->|"poll every 30s"| DB
-    Hub -->|"creates/deletes LynqNodes"| Form
-    Form -->|"SSA apply"| K8s
-```
+- CI inserts one row per open PR. Lynq provisions a full isolated environment — Namespace, Deployment, Service, and Ingress with TLS.
+- Each environment is reachable at `pr-<number>.<base_domain>` within ~60 seconds of the INSERT.
+- When the PR closes, CI runs `DELETE`. Lynq removes the namespace and all resources inside it on the next sync.
 
 ## Database Schema
 
 ```sql
 CREATE TABLE preview_environments (
-  env_id       VARCHAR(63) PRIMARY KEY,   -- e.g. 'pr-1234'
-  repo         VARCHAR(255) NOT NULL,
-  branch       VARCHAR(255) NOT NULL,
-  commit_sha   VARCHAR(40)  NOT NULL,
-  image_tag    VARCHAR(255) NOT NULL,     -- fully-qualified Docker image
-  base_domain  VARCHAR(255) NOT NULL,     -- e.g. 'preview.company.com'
-  ttl_hours    INT          DEFAULT 48,
+  env_id       VARCHAR(63)   PRIMARY KEY,    -- e.g. 'pr-1234'
+  repo         VARCHAR(255)  NOT NULL,
+  branch       VARCHAR(255)  NOT NULL,
+  commit_sha   VARCHAR(40)   NOT NULL,
+  image_tag    VARCHAR(255)  NOT NULL,        -- fully-qualified Docker image
+  base_domain  VARCHAR(255)  NOT NULL,        -- e.g. 'preview.company.com'
+  ttl_hours    INT           DEFAULT 48,
   opened_by    VARCHAR(100),
-  is_active    BOOLEAN      DEFAULT TRUE,
-  created_at   TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
-  updated_at   TIMESTAMP    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  is_active    BOOLEAN       DEFAULT TRUE,
+  created_at   TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+  updated_at   TIMESTAMP     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 ```
 
 ## CI Integration
 
 ```bash
-# On PR open / commit push
+# On PR open / commit push — upsert so pushes update the running environment
 mysql -e "
   INSERT INTO preview_environments
     (env_id, repo, branch, commit_sha, image_tag, base_domain, opened_by)
@@ -81,7 +66,7 @@ metadata:
 spec:
   source:
     type: mysql
-    syncInterval: 30s    # fast polling — new PRs should appear quickly
+    syncInterval: 30s    # fast polling — new PRs should get environments quickly
     mysql:
       host: mysql.internal.svc.cluster.local
       port: 3306
@@ -91,11 +76,9 @@ spec:
       passwordRef:
         name: mysql-credentials
         key: password
-
   valueMappings:
     uid: env_id
     activate: is_active
-
   extraValueMappings:
     imageTag: image_tag
     branch: branch
@@ -115,7 +98,6 @@ metadata:
 spec:
   hubId: preview-hub
 
-  # 1. Isolated namespace per PR
   namespaces:
     - id: ns
       nameTemplate: "preview-{{ .uid }}"
@@ -127,7 +109,6 @@ spec:
             preview-env: "{{ .uid }}"
             opened-by: "{{ .openedBy }}"
 
-  # 2. Application deployment — redeploys on each commit push
   deployments:
     - id: app
       nameTemplate: "{{ .uid }}-app"
@@ -172,7 +153,6 @@ spec:
                       cpu: 500m
                       memory: 512Mi
 
-  # 3. ClusterIP service
   services:
     - id: svc
       nameTemplate: "{{ .uid }}-svc"
@@ -182,9 +162,6 @@ spec:
       spec:
         apiVersion: v1
         kind: Service
-        metadata:
-          labels:
-            app: "{{ .uid }}"
         spec:
           selector:
             app: "{{ .uid }}"
@@ -192,7 +169,6 @@ spec:
             - port: 80
               targetPort: 8080
 
-  # 4. Ingress with TLS (cert-manager ClusterIssuer required)
   ingresses:
     - id: ingress
       nameTemplate: "{{ .uid }}-ingress"
@@ -225,47 +201,48 @@ spec:
                           number: 80
 ```
 
-## Policy Notes
-
-| Policy | Setting | Why |
-|---|---|---|
-| `deletionPolicy` | `Delete` | Environments are ephemeral — always clean up |
-| `waitForReady: true` | on `app` | Ingress shouldn't point to a pod that hasn't started |
-| `syncInterval: 30s` | on hub | New PRs should have an environment within ~30 seconds |
-| `maxSkew` | optional | Set to `5` if 100+ PRs open simultaneously causes too much churn |
-
-## Checking Environment Status
-
-```bash
-# List all active preview environments
-kubectl get lynqnodes -n lynq-system -l lynq.sh/hub=preview-hub
-
-# Get the URL for PR 1234
-kubectl get ingress -n preview-pr-1234
-
-# Watch creation in real time after a PR opens
-kubectl get lynqnodes -n lynq-system -w
-```
-
 ## Automatic TTL Cleanup
 
-Add a scheduled job or database trigger to expire stale environments:
+CI deletes the row when a PR closes, but PRs can stay open for days. Add a scheduled job to expire environments that have outlived their TTL:
 
 ```sql
--- Deactivate environments older than their TTL
+-- Deactivate (Lynq removes resources but preserves the row)
 UPDATE preview_environments
 SET is_active = FALSE
 WHERE is_active = TRUE
   AND created_at < NOW() - INTERVAL ttl_hours HOUR;
 
--- Or hard-delete them (Lynq will clean up the resources)
+-- Or hard-delete (Lynq removes resources and the row is gone)
 DELETE FROM preview_environments
-WHERE is_active = TRUE
-  AND created_at < NOW() - INTERVAL ttl_hours HOUR;
+WHERE created_at < NOW() - INTERVAL ttl_hours HOUR;
 ```
+
+## Verify It Works
+
+```bash
+# List all active preview environments
+kubectl get lynqnodes -n lynq-system -l lynq.sh/hub=preview-hub
+# NAME                    READY   DESIRED   AGE
+# pr-1234-preview-stack   True    3/3       2m
+# pr-1235-preview-stack   True    3/3       5m
+
+# Get the URL for PR 1234
+kubectl get ingress -n preview-pr-1234
+# NAME              CLASS   HOSTS                          ADDRESS      PORTS
+# pr-1234-ingress   nginx   pr-1234.preview.company.com    10.0.0.50    80, 443
+
+# Watch a new environment appear after CI inserts a row
+kubectl get lynqnodes -n lynq-system -w
+```
+
+## Caveats
+
+- **cert-manager must be installed** for TLS to work. Without it, the Ingress will be created but the certificate will never issue. For non-TLS previews, remove the `tls:` block and the cert-manager annotation.
+- **Image must be pushed before the INSERT** — Lynq will attempt to start the pod immediately. If the image doesn't exist yet, the pod will fail with `ImagePullBackOff` until it appears.
+- **`syncInterval: 30s` increases database query frequency** compared to the default 1 minute. For 100+ open PRs this is negligible, but factor it in if your database connection pool is small.
 
 ## See Also
 
-- [Custom Domain Provisioning](./use-case-custom-domains.md) — add per-PR subdomains with ExternalDNS
+- [Developer Sandbox Environments](./use-case-sandbox-environments.md) — longer-lived isolated environments per developer account
+- [Custom Domains](./use-case-custom-domains.md) — add per-PR subdomains via ExternalDNS
 - [Policies](./policies.md) — `deletionPolicy`, `creationPolicy`, `maxSkew`
-- [Datasource Configuration](./datasource.md) — LynqHub connection setup

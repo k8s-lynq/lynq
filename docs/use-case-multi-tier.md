@@ -1,79 +1,43 @@
 ---
-description: "Provisioning multi-tier application stacks (frontend, backend, database) per node with Lynq dependency ordering."
+description: "Full-stack application stacks (web, API, worker, database) provisioned per node from a single database row, with dependency-ordered startup."
 ---
 
 # Multi-Tier Application Stack
 
-Use multiple LynqForms referencing the same hub to provision separate tiers (web, API, worker, data) per node. Each form manages its own resources independently; dependency ordering ensures the data tier is ready before the API tier starts.
+Provisioning an isolated full-stack environment per customer — web frontend, API backend, background worker, and database — used to mean writing orchestration scripts or Helm umbrella charts that someone has to maintain. With Lynq, each tier is a separate LynqForm. One database row activates all of them.
 
-## Architecture
+Add a row to your `nodes` table and four LynqNodes come to life: data tier first (PostgreSQL + Redis), then API and worker (both depend on data), then web frontend (depends on API). Remove the row and all four are cleaned up.
 
-```mermaid
-graph TB
-    Hub["LynqHub<br/>production-nodes"]
+::: tip Time to working
+~10 minutes to configure. Full stack provisions in ~2–3 minutes per node.
+:::
 
-    WebTemplate["LynqForm<br/>web-tier"]
-    ApiTemplate["LynqForm<br/>api-tier"]
-    WorkerTemplate["LynqForm<br/>worker-tier"]
-    DataTemplate["LynqForm<br/>data-tier"]
+## How It Works
 
-    WebNode["LynqNode<br/>acme-web-tier"]
-    ApiNode["LynqNode<br/>acme-api-tier"]
-    WorkerNode["LynqNode<br/>acme-worker-tier"]
-    DataNode["LynqNode<br/>acme-data-tier"]
-
-    Hub --> WebTemplate
-    Hub --> ApiTemplate
-    Hub --> WorkerTemplate
-    Hub --> DataTemplate
-
-    WebTemplate --> WebNode
-    ApiTemplate --> ApiNode
-    WorkerTemplate --> WorkerNode
-    DataTemplate --> DataNode
-
-    WebNode -->|Ingress| Users[End Users]
-    WebNode -->|API Calls| ApiNode
-    ApiNode -->|Queue| WorkerNode
-    ApiNode -->|Read/Write| DataNode
-    WorkerNode -->|Read/Write| DataNode
-
-    style Hub fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
-    style WebTemplate fill:#fff3e0,stroke:#f57c00,stroke-width:2px
-    style ApiTemplate fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
-    style WorkerTemplate fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
-    style DataTemplate fill:#fce4ec,stroke:#c2185b,stroke-width:2px
-```
+- One LynqHub, four LynqForms. Each form manages one tier independently — different resource configs, policies, and scaling rules.
+- `dependIds` within each LynqForm enforce resource ordering inside a tier. Cross-tier ordering is handled by Kubernetes-native service discovery (the API tier connects to PostgreSQL via DNS once it's running).
+- The data tier uses `creationPolicy: Once` and `deletionPolicy: Retain` on the PostgreSQL StatefulSet — the database survives node deletion.
 
 ## Database Schema
 
 ```sql
 CREATE TABLE nodes (
-  node_id VARCHAR(63) PRIMARY KEY,
-  domain VARCHAR(255) NOT NULL,
-  is_active BOOLEAN DEFAULT TRUE,
+  node_id          VARCHAR(63)  PRIMARY KEY,
+  is_active        BOOLEAN      DEFAULT TRUE,
 
-  -- Resource allocation per tier
-  web_replicas INT DEFAULT 2,
-  api_replicas INT DEFAULT 3,
-  worker_replicas INT DEFAULT 2,
+  -- Per-tier replica counts
+  web_replicas     INT          DEFAULT 2,
+  api_replicas     INT          DEFAULT 3,
+  worker_replicas  INT          DEFAULT 2,
 
-  -- Database tier (drives resource allocation)
-  db_size VARCHAR(10) DEFAULT 'small',      -- small, medium, large
+  -- Database tier sizing (pre-computed by application layer or DB view)
+  db_cpu_request   VARCHAR(10)  DEFAULT '500m',   -- '500m' | '1000m' | '2000m'
+  db_memory_request VARCHAR(10) DEFAULT '1Gi',    -- '1Gi'  | '2Gi'   | '4Gi'
+  db_storage_size  VARCHAR(10)  DEFAULT '20Gi',   -- '20Gi' | '50Gi'  | '100Gi'
 
-  -- Pre-computed resource limits derived from db_size.
-  -- Use a database view or application logic to populate these,
-  -- rather than encoding multi-tier logic in templates.
-  db_cpu_request VARCHAR(10) DEFAULT '500m',   -- '500m' | '1000m' | '2000m'
-  db_memory_request VARCHAR(10) DEFAULT '1Gi', -- '1Gi'  | '2Gi'   | '4Gi'
-  db_storage_size VARCHAR(10) DEFAULT '20Gi',  -- '20Gi' | '50Gi'  | '100Gi'
-
-  -- Feature flags
-  enable_analytics BOOLEAN DEFAULT FALSE,
-  enable_notifications BOOLEAN DEFAULT TRUE,
-
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  -- Feature flags consumed by API tier
+  enable_analytics      BOOLEAN DEFAULT FALSE,
+  enable_notifications  BOOLEAN DEFAULT TRUE
 );
 ```
 
@@ -90,26 +54,21 @@ spec:
     type: mysql
     syncInterval: 1m
     mysql:
-      host: mysql.database.svc.cluster.local
+      host: mysql.internal.svc.cluster.local
       port: 3306
       database: nodes_db
-      username: node_reader
+      table: nodes
+      username: lynq_reader
       passwordRef:
         name: mysql-credentials
         key: password
-      table: nodes
-
   valueMappings:
     uid: node_id
-    # DEPRECATED v1.1.11+: Use extraValueMappings instead
-    #     hostOrUrl: domain
     activate: is_active
-
   extraValueMappings:
     webReplicas: web_replicas
     apiReplicas: api_replicas
     workerReplicas: worker_replicas
-    dbSize: db_size
     dbCpu: db_cpu_request
     dbMemory: db_memory_request
     dbStorage: db_storage_size
@@ -117,9 +76,12 @@ spec:
     enableNotifications: enable_notifications
 ```
 
-## Template 1: Data Tier
+## Minimal Setup
+
+Two tiers (data + API) to demonstrate the cross-tier dependency pattern before adding the full stack.
 
 ```yaml
+# LynqForm: data-tier — PostgreSQL + headless Service
 apiVersion: operator.lynq.sh/v1
 kind: LynqForm
 metadata:
@@ -128,9 +90,8 @@ metadata:
 spec:
   hubId: multi-tier-nodes
 
-  # Create node namespace
   namespaces:
-    - id: node-namespace
+    - id: ns
       nameTemplate: "node-{{ .uid }}"
       spec:
         apiVersion: v1
@@ -138,25 +99,19 @@ spec:
         metadata:
           labels:
             node-id: "{{ .uid }}"
-            tier: data
 
-  # PostgreSQL StatefulSet
   statefulSets:
     - id: postgres
       nameTemplate: "{{ .uid }}-postgres"
       targetNamespace: "node-{{ .uid }}"
-      dependIds: ["node-namespace"]
-      creationPolicy: Once  # Database should be created once
-      deletionPolicy: Retain  # Keep data even if node deleted
+      dependIds: ["ns"]
+      creationPolicy: Once
+      deletionPolicy: Retain
       waitForReady: true
       timeoutSeconds: 600
       spec:
         apiVersion: apps/v1
         kind: StatefulSet
-        metadata:
-          labels:
-            app: "{{ .uid }}-postgres"
-            tier: data
         spec:
           serviceName: "{{ .uid }}-postgres"
           replicas: 1
@@ -167,7 +122,146 @@ spec:
             metadata:
               labels:
                 app: "{{ .uid }}-postgres"
-                tier: data
+            spec:
+              containers:
+                - name: postgres
+                  image: postgres:15-alpine
+                  env:
+                    - name: POSTGRES_DB
+                      value: "{{ .uid }}"
+                    - name: POSTGRES_USER
+                      value: "{{ .uid }}"
+                    - name: POSTGRES_PASSWORD
+                      valueFrom:
+                        secretKeyRef:
+                          name: "{{ .uid }}-db-credentials"
+                          key: password
+                  ports:
+                    - containerPort: 5432
+                      name: postgres
+
+  services:
+    - id: postgres-svc
+      nameTemplate: "{{ .uid }}-postgres"
+      targetNamespace: "node-{{ .uid }}"
+      dependIds: ["postgres"]
+      spec:
+        apiVersion: v1
+        kind: Service
+        spec:
+          clusterIP: None  # headless for StatefulSet
+          selector:
+            app: "{{ .uid }}-postgres"
+          ports:
+            - port: 5432
+              targetPort: postgres
+```
+
+```yaml
+# LynqForm: api-tier — connects to PostgreSQL via service discovery
+apiVersion: operator.lynq.sh/v1
+kind: LynqForm
+metadata:
+  name: api-tier
+  namespace: lynq-system
+spec:
+  hubId: multi-tier-nodes
+
+  deployments:
+    - id: api
+      nameTemplate: "{{ .uid }}-api"
+      targetNamespace: "node-{{ .uid }}"
+      waitForReady: true
+      spec:
+        apiVersion: apps/v1
+        kind: Deployment
+        spec:
+          replicas: {{ .apiReplicas | int }}
+          selector:
+            matchLabels:
+              app: "{{ .uid }}-api"
+          template:
+            metadata:
+              labels:
+                app: "{{ .uid }}-api"
+            spec:
+              containers:
+                - name: api
+                  image: registry.example.com/node-api:v2.0.0
+                  env:
+                    - name: DATABASE_URL
+                      valueFrom:
+                        secretKeyRef:
+                          name: "{{ .uid }}-db-credentials"
+                          key: connection-string
+                  ports:
+                    - containerPort: 8080
+                      name: http
+```
+
+## Full Example
+
+All four tiers with complete resource configurations.
+
+### Data Tier
+
+```yaml
+apiVersion: operator.lynq.sh/v1
+kind: LynqForm
+metadata:
+  name: data-tier
+  namespace: lynq-system
+spec:
+  hubId: multi-tier-nodes
+
+  namespaces:
+    - id: ns
+      nameTemplate: "node-{{ .uid }}"
+      spec:
+        apiVersion: v1
+        kind: Namespace
+        metadata:
+          labels:
+            node-id: "{{ .uid }}"
+
+  secrets:
+    - id: db-credentials
+      nameTemplate: "{{ .uid }}-db-credentials"
+      targetNamespace: "node-{{ .uid }}"
+      dependIds: ["ns"]
+      creationPolicy: Once
+      spec:
+        apiVersion: v1
+        kind: Secret
+        stringData:
+          password: "{{ randAlphaNum 32 }}"
+          connection-string: "postgresql://{{ .uid }}:REPLACE_WITH_PASSWORD@{{ .uid }}-postgres:5432/{{ .uid }}"
+
+  statefulSets:
+    - id: postgres
+      nameTemplate: "{{ .uid }}-postgres"
+      targetNamespace: "node-{{ .uid }}"
+      dependIds: ["ns", "db-credentials"]
+      creationPolicy: Once
+      deletionPolicy: Retain
+      waitForReady: true
+      timeoutSeconds: 600
+      spec:
+        apiVersion: apps/v1
+        kind: StatefulSet
+        metadata:
+          labels:
+            app: "{{ .uid }}-postgres"
+        spec:
+          serviceName: "{{ .uid }}-postgres"
+          replicas: 1
+          selector:
+            matchLabels:
+              app: "{{ .uid }}-postgres"
+          template:
+            metadata:
+              labels:
+                app: "{{ .uid }}-postgres"
             spec:
               containers:
                 - name: postgres
@@ -187,13 +281,13 @@ spec:
                   ports:
                     - containerPort: 5432
                       name: postgres
-                  volumeMounts:
-                    - name: data
-                      mountPath: /var/lib/postgresql/data
                   resources:
                     requests:
                       cpu: "{{ .dbCpu | default \"500m\" }}"
                       memory: "{{ .dbMemory | default \"1Gi\" }}"
+                  volumeMounts:
+                    - name: data
+                      mountPath: /var/lib/postgresql/data
           volumeClaimTemplates:
             - metadata:
                 name: data
@@ -203,33 +297,11 @@ spec:
                   requests:
                     storage: "{{ .dbStorage | default \"20Gi\" }}"
 
-  # PostgreSQL Service
-  services:
-    - id: postgres-svc
-      nameTemplate: "{{ .uid }}-postgres"
-      targetNamespace: "node-{{ .uid }}"
-      dependIds: ["postgres"]
-      spec:
-        apiVersion: v1
-        kind: Service
-        metadata:
-          labels:
-            app: "{{ .uid }}-postgres"
-            tier: data
-        spec:
-          clusterIP: None  # Headless service for StatefulSet
-          selector:
-            app: "{{ .uid }}-postgres"
-          ports:
-            - port: 5432
-              targetPort: postgres
-
-  # Redis cache deployment
   deployments:
     - id: redis
       nameTemplate: "{{ .uid }}-redis"
       targetNamespace: "node-{{ .uid }}"
-      dependIds: ["node-namespace"]
+      dependIds: ["ns"]
       waitForReady: true
       spec:
         apiVersion: apps/v1
@@ -237,7 +309,6 @@ spec:
         metadata:
           labels:
             app: "{{ .uid }}-redis"
-            tier: cache
         spec:
           replicas: 1
           selector:
@@ -247,7 +318,6 @@ spec:
             metadata:
               labels:
                 app: "{{ .uid }}-redis"
-                tier: cache
             spec:
               containers:
                 - name: redis
@@ -263,8 +333,22 @@ spec:
                       cpu: 400m
                       memory: 1Gi
 
-  # Redis Service
   services:
+    - id: postgres-svc
+      nameTemplate: "{{ .uid }}-postgres"
+      targetNamespace: "node-{{ .uid }}"
+      dependIds: ["postgres"]
+      spec:
+        apiVersion: v1
+        kind: Service
+        spec:
+          clusterIP: None
+          selector:
+            app: "{{ .uid }}-postgres"
+          ports:
+            - port: 5432
+              targetPort: postgres
+
     - id: redis-svc
       nameTemplate: "{{ .uid }}-redis"
       targetNamespace: "node-{{ .uid }}"
@@ -272,41 +356,19 @@ spec:
       spec:
         apiVersion: v1
         kind: Service
-        metadata:
-          labels:
-            app: "{{ .uid }}-redis"
-            tier: cache
         spec:
           selector:
             app: "{{ .uid }}-redis"
           ports:
             - port: 6379
               targetPort: redis
-
-  # Database credentials secret
-  secrets:
-    - id: db-credentials
-      nameTemplate: "{{ .uid }}-db-credentials"
-      targetNamespace: "node-{{ .uid }}"
-      dependIds: ["node-namespace"]
-      creationPolicy: Once  # Generate password once
-      spec:
-        apiVersion: v1
-        kind: Secret
-        metadata:
-          labels:
-            app: "{{ .uid }}-postgres"
-            tier: data
-        stringData:
-          password: "{{ randAlphaNum 32 }}"
-          connection-string: "postgresql://{{ .uid }}:REPLACE_WITH_PASSWORD@{{ .uid }}-postgres:5432/{{ .uid }}"
 ```
 
-::: tip Secret Generation
-The `randAlphaNum` function generates a random password. In production, consider using External Secrets Operator to fetch secrets from a vault.
+::: tip Secret generation
+`randAlphaNum 32` generates a random password at first creation. Use `creationPolicy: Once` so it's generated once and never overwritten. In production, consider [External Secrets Operator](https://external-secrets.io) to pull credentials from a vault.
 :::
 
-## Template 2: API Tier
+### API Tier
 
 ```yaml
 apiVersion: operator.lynq.sh/v1
@@ -322,30 +384,22 @@ spec:
       nameTemplate: "{{ .uid }}-api"
       targetNamespace: "node-{{ .uid }}"
       waitForReady: true
-      timeoutSeconds: 600
+      timeoutSeconds: 300
       spec:
         apiVersion: apps/v1
         kind: Deployment
         metadata:
           labels:
             app: "{{ .uid }}-api"
-            tier: api
         spec:
-          replicas: {{ .apiReplicas }}
-          strategy:
-            type: RollingUpdate
-            rollingUpdate:
-              maxSurge: 1
-              maxUnavailable: 0
+          replicas: {{ .apiReplicas | int }}
           selector:
             matchLabels:
               app: "{{ .uid }}-api"
-              tier: api
           template:
             metadata:
               labels:
                 app: "{{ .uid }}-api"
-                tier: api
             spec:
               containers:
                 - name: api
@@ -372,12 +426,6 @@ spec:
                     limits:
                       cpu: 1000m
                       memory: 2Gi
-                  livenessProbe:
-                    httpGet:
-                      path: /healthz
-                      port: http
-                    initialDelaySeconds: 30
-                    periodSeconds: 10
                   readinessProbe:
                     httpGet:
                       path: /ready
@@ -393,10 +441,6 @@ spec:
       spec:
         apiVersion: v1
         kind: Service
-        metadata:
-          labels:
-            app: "{{ .uid }}-api"
-            tier: api
         spec:
           selector:
             app: "{{ .uid }}-api"
@@ -405,7 +449,7 @@ spec:
               targetPort: http
 ```
 
-## Template 3: Web Tier
+### Web Tier
 
 ```yaml
 apiVersion: operator.lynq.sh/v1
@@ -427,18 +471,15 @@ spec:
         metadata:
           labels:
             app: "{{ .uid }}-web"
-            tier: web
         spec:
-          replicas: {{ .webReplicas }}
+          replicas: {{ .webReplicas | int }}
           selector:
             matchLabels:
               app: "{{ .uid }}-web"
-              tier: web
           template:
             metadata:
               labels:
                 app: "{{ .uid }}-web"
-                tier: web
             spec:
               containers:
                 - name: web
@@ -464,10 +505,6 @@ spec:
       spec:
         apiVersion: v1
         kind: Service
-        metadata:
-          labels:
-            app: "{{ .uid }}-web"
-            tier: web
         spec:
           selector:
             app: "{{ .uid }}-web"
@@ -476,17 +513,13 @@ spec:
               targetPort: http
 
   ingresses:
-    - id: web-ingress
+    - id: ingress
       nameTemplate: "{{ .uid }}-ingress"
       targetNamespace: "node-{{ .uid }}"
       dependIds: ["web-svc"]
       spec:
         apiVersion: networking.k8s.io/v1
         kind: Ingress
-        metadata:
-          labels:
-            app: "{{ .uid }}-web"
-            tier: web
         spec:
           ingressClassName: nginx
           rules:
@@ -502,7 +535,7 @@ spec:
                           number: 80
 ```
 
-## Template 4: Worker Tier
+### Worker Tier
 
 ```yaml
 apiVersion: operator.lynq.sh/v1
@@ -524,18 +557,15 @@ spec:
         metadata:
           labels:
             app: "{{ .uid }}-worker"
-            tier: worker
         spec:
-          replicas: {{ .workerReplicas }}
+          replicas: {{ .workerReplicas | int }}
           selector:
             matchLabels:
               app: "{{ .uid }}-worker"
-              tier: worker
           template:
             metadata:
               labels:
                 app: "{{ .uid }}-worker"
-                tier: worker
             spec:
               containers:
                 - name: worker
@@ -550,249 +580,52 @@ spec:
                           key: connection-string
                     - name: REDIS_URL
                       value: "redis://{{ .uid }}-redis:6379"
-                    - name: QUEUE_URL
-                      value: "redis://{{ .uid }}-redis:6379"
                     - name: ENABLE_NOTIFICATIONS
                       value: "{{ .enableNotifications }}"
                   resources:
                     requests:
                       cpu: 300m
                       memory: 768Mi
-                  livenessProbe:
-                    exec:
-                      command: ["pgrep", "-f", "worker"]
-                    initialDelaySeconds: 30
-                    periodSeconds: 30
 ```
 
-## Resource Dependency Graph
+## Startup Timeline
 
-Each tier deploys resources in a specific order based on dependencies. Here's the complete dependency graph:
+| Time | Data Tier | API + Worker | Web |
+|------|-----------|--------------|-----|
+| T+0 | Creating namespace, secrets... | Waiting | Waiting |
+| T+30s | PostgreSQL starting, Redis starting... | Waiting | Waiting |
+| T+60s | All ready | Starting... | Waiting |
+| T+90s | Ready | Ready | Starting... |
+| T+120s | Ready | Ready | Ready + Ingress live |
 
-```mermaid
-flowchart TD
-    subgraph DataTier["Data Tier (LynqNode: acme-corp-data-tier)"]
-        direction TB
-        NS[Namespace<br/>node-acme-corp]
-        SEC[Secret<br/>db-credentials]
-        PG[StatefulSet<br/>postgres]
-        PG_SVC[Service<br/>postgres]
-        REDIS[Deployment<br/>redis]
-        REDIS_SVC[Service<br/>redis]
+**Total: ~2–3 minutes per node.** Cross-tier ordering is managed by Kubernetes service discovery — the API Deployment starts when it's created and will retry the database connection until PostgreSQL is ready.
 
-        NS --> SEC
-        NS --> PG
-        NS --> REDIS
-        PG --> PG_SVC
-        REDIS --> REDIS_SVC
-    end
-
-    subgraph ApiTier["API Tier (LynqNode: acme-corp-api-tier)"]
-        direction TB
-        API[Deployment<br/>api]
-        API_SVC[Service<br/>api]
-
-        API --> API_SVC
-    end
-
-    subgraph WebTier["Web Tier (LynqNode: acme-corp-web-tier)"]
-        direction TB
-        WEB[Deployment<br/>web]
-        WEB_SVC[Service<br/>web]
-        ING[Ingress<br/>ingress]
-
-        WEB --> WEB_SVC --> ING
-    end
-
-    subgraph WorkerTier["Worker Tier (LynqNode: acme-corp-worker-tier)"]
-        direction TB
-        WORKER[Deployment<br/>worker]
-    end
-
-    %% Cross-tier dependencies (via service discovery)
-    PG_SVC -.->|DATABASE_URL| API
-    REDIS_SVC -.->|REDIS_URL| API
-    PG_SVC -.->|DATABASE_URL| WORKER
-    REDIS_SVC -.->|QUEUE_URL| WORKER
-    API_SVC -.->|API_URL| WEB
-
-    style NS fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
-    style PG fill:#fce4ec,stroke:#c2185b,stroke-width:2px
-    style API fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
-    style WEB fill:#fff3e0,stroke:#f57c00,stroke-width:2px
-    style WORKER fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
-```
-
-### Apply Order Within Each Tier
-
-**Data Tier** (applies first, others depend on it):
-1. `node-namespace` - Creates isolated namespace
-2. `db-credentials` (depends on namespace) - Generates database password
-3. `postgres` (depends on namespace) - PostgreSQL StatefulSet
-4. `redis` (depends on namespace) - Redis deployment
-5. `postgres-svc` (depends on postgres) - PostgreSQL service
-6. `redis-svc` (depends on redis) - Redis service
-
-**API Tier** (requires data tier services):
-1. `api` - API deployment (uses `DATABASE_URL`, `REDIS_URL` from data tier)
-2. `api-svc` (depends on api) - API service
-
-**Web Tier** (requires API service):
-1. `web` - Web deployment (uses `API_URL` from api tier)
-2. `web-svc` (depends on web) - Web service
-3. `web-ingress` (depends on web-svc) - Ingress for external access
-
-**Worker Tier** (requires data tier services):
-1. `worker` - Worker deployment (uses `DATABASE_URL`, `QUEUE_URL` from data tier)
-
-### Startup Timeline
-
-| Time | Data Tier | API Tier | Web Tier | Worker Tier |
-|------|-----------|----------|----------|-------------|
-| T+0 | Creating namespace... | Waiting | Waiting | Waiting |
-| T+10s | Creating secrets, StatefulSet... | Waiting | Waiting | Waiting |
-| T+30s | PostgreSQL starting... | Waiting | Waiting | Waiting |
-| T+60s | PostgreSQL ready, Redis ready | Starting API... | Waiting | Starting worker... |
-| T+90s | All ready | API ready | Starting web... | Worker ready |
-| T+120s | All ready | All ready | Web + Ingress ready | All ready |
-
-**Total provisioning time**: ~2-3 minutes per node
-
-## Deployment Verification
+## Verify It Works
 
 ```bash
-# Check all tiers for a node
+# All 4 LynqNodes ready
 kubectl get lynqnodes -n lynq-system | grep acme-corp
+# acme-corp-data-tier      True    5/5   0   10m
+# acme-corp-api-tier       True    2/2   0   10m
+# acme-corp-web-tier       True    3/3   0   10m
+# acme-corp-worker-tier    True    2/2   0   10m
 
-# Expected output:
-# acme-corp-data-tier     True    5/5     0       10m
-# acme-corp-api-tier      True    3/3     0       10m
-# acme-corp-web-tier      True    2/2     0       10m
-# acme-corp-worker-tier   True    2/2     0       10m
-
-# Verify resources in node namespace
+# All resources in node namespace
 kubectl get all -n node-acme-corp
+# Deployments: acme-corp-redis, acme-corp-api, acme-corp-web, acme-corp-worker
+# StatefulSets: acme-corp-postgres
+# Services: acme-corp-postgres, acme-corp-redis, acme-corp-api, acme-corp-web
+# Ingress: acme-corp-ingress → acme-corp.example.com
 ```
 
-### Complete Multi-Tier Verification Script
+## Caveats
 
-```bash
-#!/bin/bash
-# verify-multi-tier.sh <node-id>
+- **Cross-tier dependencies aren't expressed in Lynq** — each LynqForm is independent. The API tier Deployment will start and retry connecting to PostgreSQL. If your app has no retry logic and crashes on startup, add an `initContainer` that waits for the DB port.
+- **Scaling a specific tier** is a database column update: `UPDATE nodes SET api_replicas = 5 WHERE node_id = 'acme-corp'`. Lynq updates the Deployment replicas on the next sync.
+- **The PostgreSQL Secret uses `randAlphaNum`**, which means the `connection-string` value stores a placeholder — not the actual password. For production, use External Secrets Operator or manage credentials separately.
 
-NODE_ID=$1
-NAMESPACE="node-${NODE_ID}"
+## See Also
 
-echo "=== Multi-Tier Stack Verification for ${NODE_ID} ==="
-echo ""
-
-# Check all LynqNodes for this node
-echo "1. LynqNode Status (all tiers):"
-kubectl get lynqnode -n lynq-system | grep ${NODE_ID}
-echo ""
-
-# Data Tier
-echo "2. Data Tier:"
-echo "   PostgreSQL:"
-kubectl get statefulset ${NODE_ID}-postgres -n ${NAMESPACE} -o jsonpath='   Replicas: {.status.readyReplicas}/{.spec.replicas}'
-echo ""
-echo "   Redis:"
-kubectl get deployment ${NODE_ID}-redis -n ${NAMESPACE} -o jsonpath='   Replicas: {.status.readyReplicas}/{.spec.replicas}'
-echo ""
-
-# API Tier
-echo "3. API Tier:"
-kubectl get deployment ${NODE_ID}-api -n ${NAMESPACE} -o jsonpath='   Replicas: {.status.readyReplicas}/{.spec.replicas}'
-echo ""
-
-# Web Tier
-echo "4. Web Tier:"
-kubectl get deployment ${NODE_ID}-web -n ${NAMESPACE} -o jsonpath='   Replicas: {.status.readyReplicas}/{.spec.replicas}'
-echo ""
-echo "   Ingress:"
-kubectl get ingress ${NODE_ID}-ingress -n ${NAMESPACE} -o jsonpath='   Host: {.spec.rules[0].host}'
-echo ""
-
-# Worker Tier
-echo "5. Worker Tier:"
-kubectl get deployment ${NODE_ID}-worker -n ${NAMESPACE} -o jsonpath='   Replicas: {.status.readyReplicas}/{.spec.replicas}'
-echo ""
-
-# Service connectivity
-echo "6. Service Connectivity:"
-echo "   PostgreSQL: $(kubectl get svc ${NODE_ID}-postgres -n ${NAMESPACE} -o jsonpath='{.spec.clusterIP}'):5432"
-echo "   Redis: $(kubectl get svc ${NODE_ID}-redis -n ${NAMESPACE} -o jsonpath='{.spec.clusterIP}'):6379"
-echo "   API: $(kubectl get svc ${NODE_ID}-api -n ${NAMESPACE} -o jsonpath='{.spec.clusterIP}'):8080"
-echo "   Web: $(kubectl get svc ${NODE_ID}-web -n ${NAMESPACE} -o jsonpath='{.spec.clusterIP}'):80"
-
-# Health check
-echo ""
-echo "7. Health Checks:"
-echo "   API: $(kubectl exec deployment/${NODE_ID}-api -n ${NAMESPACE} -- curl -s localhost:8080/healthz 2>/dev/null || echo "N/A")"
-echo "   Web: $(kubectl exec deployment/${NODE_ID}-web -n ${NAMESPACE} -- curl -s localhost:3000/healthz 2>/dev/null || echo "N/A")"
-
-echo ""
-echo "=== Verification Complete ==="
-```
-
-Example output:
-```
-=== Multi-Tier Stack Verification for acme-corp ===
-
-1. LynqNode Status (all tiers):
-acme-corp-data-tier     True    5/5     0       15m
-acme-corp-api-tier      True    2/2     0       15m
-acme-corp-web-tier      True    3/3     0       15m
-acme-corp-worker-tier   True    1/1     0       15m
-
-2. Data Tier:
-   PostgreSQL:
-   Replicas: 1/1
-   Redis:
-   Replicas: 1/1
-
-3. API Tier:
-   Replicas: 3/3
-
-4. Web Tier:
-   Replicas: 2/2
-   Ingress:
-   Host: acme-corp.example.com
-
-5. Worker Tier:
-   Replicas: 2/2
-
-6. Service Connectivity:
-   PostgreSQL: 10.96.123.45:5432
-   Redis: 10.96.123.46:6379
-   API: 10.96.123.47:8080
-   Web: 10.96.123.48:80
-
-7. Health Checks:
-   API: {"status":"healthy","database":"connected","redis":"connected"}
-   Web: {"status":"healthy"}
-
-=== Verification Complete ===
-```
-
-## Benefits
-
-1. **Separation of Concerns**: Each tier managed independently
-2. **Flexible Scaling**: Scale web, API, workers independently per node
-3. **Gradual Updates**: Update one tier at a time
-4. **Resource Policies**: Different creation/deletion policies per tier
-5. **Dependency Management**: Implicit via service discovery, explicit via health checks
-
-## Related Documentation
-
-- [Architecture](/architecture) - System design overview
-- [Dependencies](/dependencies) - Resource ordering and dependencies
-- [Policies](/policies) - Lifecycle management
-- [Advanced Use Cases](/advanced-use-cases) - Other patterns
-
-## Next Steps
-
-- Implement health checks for all tiers
-- Set up monitoring per tier
-- Configure auto-scaling for web and API tiers
-- Implement backup strategy for data tier
+- [Database per Node with Crossplane](./use-case-database-per-tenant.md) — managed RDS instead of in-cluster PostgreSQL
+- [Feature Flags](./use-case-feature-flags.md) — use the `enable_analytics` / `enable_notifications` columns as infrastructure switches for optional tiers
+- [Dependencies](./dependencies.md) — `dependIds` and `waitForReady` within a single LynqForm

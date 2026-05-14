@@ -1,75 +1,52 @@
 ---
-description: "Provisioning a dedicated database per node using Crossplane and Lynq, driven by MySQL records."
+description: "Provision a dedicated cloud database (RDS, Cloud SQL) per node using Lynq and Crossplane, driven by a database row."
 ---
 
 # Database per Node with Crossplane
 
-Combine Lynq and Crossplane to provision a dedicated cloud database (RDS, Cloud SQL) for each active row. Lynq handles the Kubernetes workload; Crossplane manages the cloud resource. Activating a node creates both.
+Some compliance requirements, data isolation needs, or enterprise contracts mean every customer must have their own database instance — not a schema, not a tenant prefix, a full RDS instance. Provisioning and decommissioning these manually is error-prone and time-consuming.
+
+Add a row to your `nodes` table and Lynq creates the Kubernetes workload; Crossplane provisions the RDS instance. When the row is deleted, the app is torn down and the database is preserved with a final snapshot.
+
+::: tip Time to working
+~15 minutes to configure. RDS instance provisioning takes 15–30 minutes after the row is inserted (AWS limitation, not Lynq).
+:::
+
+## How It Works
+
+- Each active row triggers a Crossplane `RDSInstance` resource alongside the application Deployment.
+- The application Deployment has `dependIds: ["rds-instance"]` — it won't start until RDS is `READY`.
+- `creationPolicy: Once` on the RDS resource means the database is created once and never replaced, even if the node spec changes. `deletionPolicy: Retain` preserves it when the node is deleted.
 
 ## Prerequisites
 
-This pattern assumes **Crossplane** is already installed in your cluster.
-
-::: tip
-For Crossplane installation, see [Crossplane Integration](/integration-crossplane) documentation.
-:::
-
-### Install AWS Provider
+Crossplane must be installed with the AWS provider configured. See [Crossplane Integration](./integration-crossplane.md) for a complete setup guide.
 
 ```bash
-# Install AWS provider
-kubectl apply -f - <<EOF
-apiVersion: pkg.crossplane.io/v1
-kind: Provider
-metadata:
-  name: provider-aws
-spec:
-  package: xpkg.upbound.io/upbound/provider-aws:v0.40.0
-EOF
-
-# Configure AWS credentials
-kubectl create secret generic aws-creds -n crossplane-system \
-  --from-file=credentials=$HOME/.aws/credentials
-
-# Create ProviderConfig
-kubectl apply -f - <<EOF
-apiVersion: aws.upbound.io/v1beta1
-kind: ProviderConfig
-metadata:
-  name: default
-spec:
-  credentials:
-    source: Secret
-    secretRef:
-      namespace: crossplane-system
-      name: aws-creds
-      key: credentials
-EOF
+# Verify Crossplane and AWS provider are ready
+kubectl get providers
+# NAME           INSTALLED   HEALTHY   PACKAGE                                    AGE
+# provider-aws   True        True      xpkg.upbound.io/upbound/provider-aws:...   5m
 ```
 
 ## Database Schema
 
 ```sql
 CREATE TABLE nodes (
-  node_id VARCHAR(63) PRIMARY KEY,
-  domain VARCHAR(255) NOT NULL,
-  is_active BOOLEAN DEFAULT TRUE,
+  node_id           VARCHAR(63)   PRIMARY KEY,
+  is_active         BOOLEAN       DEFAULT TRUE,
 
-  -- Database provisioning
-  db_type VARCHAR(20) DEFAULT 'postgres',           -- postgres, mysql
-  db_instance_class VARCHAR(30) DEFAULT 'db.t3.micro',
-  db_storage_gb INT DEFAULT 20,
-  db_multi_az BOOLEAN DEFAULT FALSE,
-
-  -- RDS identifier (populated after provisioning)
-  rds_instance_id VARCHAR(255),
-  rds_endpoint VARCHAR(255),
-
-  plan_type VARCHAR(20) DEFAULT 'basic'             -- basic, pro, enterprise
+  -- RDS configuration; set once when the node is onboarded
+  db_instance_class VARCHAR(30)   DEFAULT 'db.t3.micro',  -- db.t3.micro | db.t3.small | db.m5.large
+  db_storage_gb     INT           DEFAULT 20,
+  db_multi_az       BOOLEAN       DEFAULT FALSE,
+  plan_type         VARCHAR(20)   DEFAULT 'basic'          -- basic | pro | enterprise
 );
 ```
 
-## LynqHub
+## Minimal Setup
+
+The core pattern: Crossplane `RDSInstance` + application Deployment with dependency ordering.
 
 ```yaml
 apiVersion: operator.lynq.sh/v1
@@ -82,29 +59,23 @@ spec:
     type: mysql
     syncInterval: 1m
     mysql:
-      host: mysql.database.svc.cluster.local
+      host: mysql.internal.svc.cluster.local
       port: 3306
       database: nodes_db
-      username: node_reader
+      table: nodes
+      username: lynq_reader
       passwordRef:
         name: mysql-credentials
         key: password
-      table: nodes
-
   valueMappings:
     uid: node_id
-    # DEPRECATED v1.1.11+: Use extraValueMappings instead
-    #     hostOrUrl: domain
     activate: is_active
-
   extraValueMappings:
     dbInstanceClass: db_instance_class
     dbStorageGb: db_storage_gb
     dbMultiAz: db_multi_az
     planType: plan_type
 ```
-
-## LynqForm with Crossplane Resources
 
 ```yaml
 apiVersion: operator.lynq.sh/v1
@@ -115,9 +86,8 @@ metadata:
 spec:
   hubId: database-per-node
 
-  # Create node namespace
   namespaces:
-    - id: node-namespace
+    - id: ns
       nameTemplate: "node-{{ .uid }}"
       spec:
         apiVersion: v1
@@ -126,16 +96,15 @@ spec:
           labels:
             node-id: "{{ .uid }}"
 
-  # Provision RDS instance via Crossplane
   manifests:
     - id: rds-instance
       nameTemplate: "{{ .uid }}-postgres"
       targetNamespace: "node-{{ .uid }}"
-      dependIds: ["node-namespace"]
-      creationPolicy: Once  # Create database only once
-      deletionPolicy: Retain  # Retain database even if node deleted (backup first!)
+      dependIds: ["ns"]
+      creationPolicy: Once    # create once, never replace
+      deletionPolicy: Retain  # keep the database when the node is deleted
       waitForReady: true
-      timeoutSeconds: 1800  # RDS can take 15-30 minutes
+      timeoutSeconds: 1800    # RDS provisioning takes 15-30 minutes
       spec:
         apiVersion: database.aws.crossplane.io/v1beta1
         kind: RDSInstance
@@ -149,30 +118,86 @@ spec:
             engine: postgres
             engineVersion: "15.3"
             masterUsername: "{{ .uid }}"
-            allocatedStorage: {{ .dbStorageGb }}
+            allocatedStorage: {{ .dbStorageGb | int }}
+            storageEncrypted: true
+            multiAZ: {{ .dbMultiAz }}
+            publiclyAccessible: false
+            skipFinalSnapshot: false
+            finalDBSnapshotIdentifier: "{{ .uid }}-final-{{ now | date \"20060102150405\" }}"
+          writeConnectionSecretToRef:
+            name: "{{ .uid }}-db-conn"
+            namespace: "node-{{ .uid }}"
+          providerConfigRef:
+            name: default
+```
+
+## Full Example
+
+Adds the application Deployment that waits for the RDS instance to be ready and reads credentials from the Crossplane-managed Secret.
+
+```yaml
+apiVersion: operator.lynq.sh/v1
+kind: LynqForm
+metadata:
+  name: database-provisioning
+  namespace: lynq-system
+spec:
+  hubId: database-per-node
+
+  namespaces:
+    - id: ns
+      nameTemplate: "node-{{ .uid }}"
+      spec:
+        apiVersion: v1
+        kind: Namespace
+        metadata:
+          labels:
+            node-id: "{{ .uid }}"
+
+  manifests:
+    - id: rds-instance
+      nameTemplate: "{{ .uid }}-postgres"
+      targetNamespace: "node-{{ .uid }}"
+      dependIds: ["ns"]
+      creationPolicy: Once
+      deletionPolicy: Retain
+      waitForReady: true
+      timeoutSeconds: 1800
+      spec:
+        apiVersion: database.aws.crossplane.io/v1beta1
+        kind: RDSInstance
+        metadata:
+          labels:
+            node-id: "{{ .uid }}"
+            plan-type: "{{ .planType }}"
+        spec:
+          forProvider:
+            region: us-west-2
+            dbInstanceClass: "{{ .dbInstanceClass }}"
+            engine: postgres
+            engineVersion: "15.3"
+            masterUsername: "{{ .uid }}"
+            allocatedStorage: {{ .dbStorageGb | int }}
             storageType: gp3
             storageEncrypted: true
             multiAZ: {{ .dbMultiAz }}
             publiclyAccessible: false
             vpcSecurityGroupIds:
-              - sg-0123456789abcdef0  # Your VPC security group
+              - sg-0123456789abcdef0
             dbSubnetGroupName: node-db-subnet-group
             skipFinalSnapshot: false
-            finalDBSnapshotIdentifier: "{{ .uid }}-final-snapshot-{{ now | date \"20060102150405\" }}"
+            finalDBSnapshotIdentifier: "{{ .uid }}-final-{{ now | date \"20060102150405\" }}"
             tags:
               - key: node-id
                 value: "{{ .uid }}"
-              - key: plan-type
-                value: "{{ .planType }}"
               - key: managed-by
                 value: lynq
           writeConnectionSecretToRef:
             name: "{{ .uid }}-db-conn"
             namespace: "node-{{ .uid }}"
           providerConfigRef:
-            name: aws-provider-config
+            name: default
 
-  # Application deployment (waits for database)
   deployments:
     - id: app
       nameTemplate: "{{ .uid }}-app"
@@ -185,9 +210,8 @@ spec:
         metadata:
           labels:
             app: "{{ .uid }}"
-            node-id: "{{ .uid }}"
         spec:
-          replicas: 2
+          replicas: {{ ternary 2 1 (eq .planType "enterprise") | int }}
           selector:
             matchLabels:
               app: "{{ .uid }}"
@@ -202,7 +226,6 @@ spec:
                   env:
                     - name: NODE_ID
                       value: "{{ .uid }}"
-                    # Crossplane automatically creates connection secret
                     - name: DATABASE_HOST
                       valueFrom:
                         secretKeyRef:
@@ -213,8 +236,6 @@ spec:
                         secretKeyRef:
                           name: "{{ .uid }}-db-conn"
                           key: port
-                    - name: DATABASE_NAME
-                      value: "{{ .uid }}"
                     - name: DATABASE_USER
                       valueFrom:
                         secretKeyRef:
@@ -225,6 +246,8 @@ spec:
                         secretKeyRef:
                           name: "{{ .uid }}-db-conn"
                           key: password
+                    - name: DATABASE_NAME
+                      value: "{{ .uid }}"
                   ports:
                     - containerPort: 8080
                   resources:
@@ -233,209 +256,73 @@ spec:
                       memory: "{{ ternary \"2Gi\" \"1Gi\" (eq .planType \"enterprise\") }}"
 ```
 
-::: tip Connection Secret
-Crossplane automatically creates a Secret with connection details (endpoint, port, username, password) that your application can consume.
+::: tip Crossplane connection secret
+Crossplane writes `endpoint`, `port`, `username`, and `password` into the Secret specified by `writeConnectionSecretToRef`. The app reads credentials directly from that Secret — no manual secret management needed.
 :::
 
-## Database Connection Secret
+## Provisioning Workflow
 
-Crossplane automatically creates a Secret with connection details:
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: acme-corp-db-conn
-  namespace: node-acme-corp
-type: connection.crossplane.io/v1alpha1
-data:
-  endpoint: <base64-encoded-rds-endpoint>
-  port: NTQzMg==  # 5432
-  username: <base64-encoded-username>
-  password: <base64-encoded-password>
-```
-
-## Monitoring Provisioning
-
-```bash
-# Check RDS provisioning status
-kubectl get rdsinstance -l node-id=acme-corp
-
-# Expected output:
-# NAME              READY   SYNCED   EXTERNAL-NAME                    AGE
-# acme-corp-db      True    True     acme-corp-db-20231105123456      25m
-
-# Check connection secret
-kubectl get secret acme-corp-db-conn -n node-acme-corp -o yaml
-
-# Verify application can connect
-kubectl logs -n node-acme-corp deployment/acme-corp-app
-```
-
-## Complete Verification Flow
-
-Verify the complete database provisioning workflow:
-
-### Step 1: Database Record Created
+### 1. Insert a node record
 
 ```sql
--- Insert new node with database requirements
-INSERT INTO nodes (node_id, domain, is_active, db_instance_class, db_storage_gb, plan_type)
-VALUES ('acme-corp', 'acme.example.com', TRUE, 'db.t3.small', 50, 'pro');
+INSERT INTO nodes (node_id, is_active, db_instance_class, db_storage_gb, plan_type)
+VALUES ('acme-corp', TRUE, 'db.t3.small', 50, 'pro');
 ```
 
-### Step 2: Verify LynqNode Created
+### 2. Lynq creates the LynqNode and starts provisioning
 
 ```bash
-# Wait for Lynq to sync (default: 1 minute)
+# After ~1 minute (hub sync interval):
 kubectl get lynqnode -n lynq-system | grep acme-corp
+# NAME                               READY   DESIRED   FAILED   AGE
+# acme-corp-database-provisioning    False   2/3       0        1m
+# ↑ RDS is pending, app is waiting (dependIds)
 
-# Expected output:
-# NAME                          READY   DESIRED   FAILED   AGE
-# acme-corp-database-provisioning   0/4     4         0        30s
-
-# Check LynqNode status
-kubectl describe lynqnode acme-corp-database-provisioning -n lynq-system | tail -20
-# Look for: "Waiting for rds-instance to become ready"
-```
-
-### Step 3: Monitor Crossplane RDS Provisioning
-
-```bash
-# Watch RDS instance status (takes 15-30 minutes)
+# Watch RDS provisioning (takes 15-30 minutes)
 kubectl get rdsinstance -l node-id=acme-corp -w
-
-# Example output over time:
-# NAME               READY   SYNCED   STATE        AGE
-# acme-corp-postgres False   True     creating     1m
-# acme-corp-postgres False   True     creating     5m
-# acme-corp-postgres False   True     backing-up   10m
-# acme-corp-postgres True    True     available    15m
-
-# Check detailed status
-kubectl describe rdsinstance acme-corp-postgres | grep -A 10 "Status:"
+# NAME               READY   SYNCED   STATE       AGE
+# acme-corp-postgres False   True     creating    1m
+# acme-corp-postgres False   True     backing-up  10m
+# acme-corp-postgres True    True     available   20m
 ```
 
-### Step 4: Verify Connection Secret Created
-
-```bash
-# Check Crossplane created the connection secret
-kubectl get secret acme-corp-db-conn -n node-acme-corp
-
-# Expected output:
-# NAME                  TYPE                              DATA   AGE
-# acme-corp-db-conn     connection.crossplane.io/v1alpha1 4      15m
-
-# Verify secret keys
-kubectl get secret acme-corp-db-conn -n node-acme-corp -o jsonpath='{.data}' | jq 'keys'
-# Expected: ["endpoint", "password", "port", "username"]
-```
-
-### Step 5: Verify Application Can Connect
-
-```bash
-# Check deployment is running
-kubectl get deployment acme-corp-app -n node-acme-corp
-
-# Expected:
-# NAME              READY   UP-TO-DATE   AVAILABLE   AGE
-# acme-corp-app     2/2     2            2           10m
-
-# Check application logs for database connection
-kubectl logs -n node-acme-corp deployment/acme-corp-app --tail=20 | grep -i database
-# Expected: "Connected to database successfully" or similar
-
-# Test database connectivity from pod
-kubectl exec -n node-acme-corp deployment/acme-corp-app -- \
-  env | grep DATABASE
-# Expected: DATABASE_HOST=acme-corp-postgres-xxxxx.rds.amazonaws.com
-```
-
-### Complete Health Check Script
-
-```bash
-#!/bin/bash
-# verify-database-per-node.sh <node-id>
-
-NODE_ID=$1
-NAMESPACE="node-${NODE_ID}"
-
-echo "=== Database-per-Node Verification for ${NODE_ID} ==="
-echo ""
-
-# 1. LynqNode status
-echo "1. LynqNode Status:"
-kubectl get lynqnode ${NODE_ID}-database-provisioning -n lynq-system -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
-echo ""
-
-# 2. RDS Instance status
-echo "2. RDS Instance Status:"
-kubectl get rdsinstance ${NODE_ID}-postgres -o jsonpath='{.status.atProvider.dbInstanceStatus}' 2>/dev/null || echo "Not found"
-echo ""
-
-# 3. Connection secret
-echo "3. Connection Secret:"
-kubectl get secret ${NODE_ID}-db-conn -n ${NAMESPACE} -o jsonpath='{.data.endpoint}' | base64 -d 2>/dev/null || echo "Not found"
-echo ""
-
-# 4. Application deployment
-echo "4. Application Status:"
-kubectl get deployment ${NODE_ID}-app -n ${NAMESPACE} -o jsonpath='{.status.readyReplicas}/{.spec.replicas}' 2>/dev/null || echo "Not found"
-echo ""
-
-# 5. Database connectivity test
-echo "5. Database Connectivity:"
-kubectl exec -n ${NAMESPACE} deployment/${NODE_ID}-app -- \
-  sh -c 'pg_isready -h $DATABASE_HOST -p 5432' 2>/dev/null || echo "Cannot test"
-
-echo ""
-echo "=== Verification Complete ==="
-```
-
-## Cost Optimization
-
-Define tiered database offerings:
-
-```yaml
-# Different instance classes per plan
-db.t3.micro   # Basic plan: $15/month
-db.t3.small   # Pro plan: $30/month
-db.m5.large   # Enterprise plan: $150/month
-```
-
-Use database views to filter nodes by plan:
+### 3. Decommission a node
 
 ```sql
-CREATE VIEW enterprise_nodes AS
-SELECT * FROM nodes WHERE plan_type = 'enterprise' AND is_active = TRUE;
+-- Soft delete: preserves RDS instance (deletionPolicy: Retain)
+UPDATE nodes SET is_active = FALSE WHERE node_id = 'acme-corp';
+-- Or hard delete:
+DELETE FROM nodes WHERE node_id = 'acme-corp';
 ```
 
-Then create separate registries and templates per plan tier.
+The app Deployment is removed. The RDS instance is retained with a final snapshot.
 
-## Benefits
+## Verify It Works
 
-1. **True Isolation**: Each node gets dedicated database instance
-2. **Cloud-Native**: Leverage managed database services (RDS, Cloud SQL)
-3. **Automatic Credentials**: Crossplane manages connection secrets
-4. **Declarative**: Database provisioning as code
-5. **Retention Policy**: Keep data even after node deletion
+```bash
+# LynqNode ready after RDS is available
+kubectl get lynqnode acme-corp-database-provisioning -n lynq-system
+# NAME                               READY   DESIRED   FAILED
+# acme-corp-database-provisioning    True    3/3       0
 
-## Limitations
+# Connection secret populated by Crossplane
+kubectl get secret acme-corp-db-conn -n node-acme-corp -o jsonpath='{.data}' | jq 'keys'
+# ["endpoint","password","port","username"]
 
-1. **Cost**: More expensive than shared database
-2. **Provisioning Time**: RDS takes 15-30 minutes to provision
-3. **Management Overhead**: More databases to backup and maintain
-4. **Resource Limits**: AWS account limits on RDS instances
+# App is running and connected
+kubectl get deployment acme-corp-app -n node-acme-corp
+# NAME            READY   UP-TO-DATE   AVAILABLE
+# acme-corp-app   1/1     1            1
+```
 
-## Related Documentation
+## Caveats
 
-- [Crossplane Integration](/integration-crossplane) - Detailed Crossplane setup
-- [Policies](/policies) - CreationPolicy and DeletionPolicy for databases
-- [Advanced Use Cases](/advanced-use-cases) - Other infrastructure patterns
+- **RDS provisioning takes 15–30 minutes.** Set `timeoutSeconds: 1800` on the `rds-instance` resource or the node will be marked failed before RDS is ready.
+- **`creationPolicy: Once` means the RDS instance is never replaced by Lynq** even if `db_instance_class` changes. To resize an RDS instance, update it directly in AWS Console or via Crossplane.
+- **AWS account limits** cap how many RDS instances you can have per region. Check your limit before scaling to many nodes.
 
-## Next Steps
+## See Also
 
-- Set up Crossplane provider
-- Configure VPC and security groups
-- Implement backup strategy
-- Set up cost monitoring
+- [Crossplane Integration](./integration-crossplane.md) — provider setup, ProviderConfig, VPC configuration
+- [Policies](./policies.md) — `creationPolicy: Once` and `deletionPolicy: Retain` explained
+- [Multi-Tier Stack](./use-case-multi-tier.md) — in-cluster PostgreSQL StatefulSet if you don't need managed RDS
