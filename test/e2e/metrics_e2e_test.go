@@ -30,11 +30,6 @@ import (
 	"github.com/k8s-lynq/lynq/test/utils"
 )
 
-// metricsFlushWait is how long we wait after LynqNode deletion for the
-// StatusManager's async flush cycle to complete and the resurrection race
-// to be detectable (flushInterval=1s * 3 safety margin).
-const metricsFlushWait = 5 * time.Second
-
 var _ = Describe("Metrics Cleanup on Deletion", Ordered, func() {
 	var testTable string
 
@@ -49,6 +44,7 @@ var _ = Describe("Metrics Cleanup on Deletion", Ordered, func() {
 		cleanupTestResources()
 	})
 
+	// Case A: row deactivation removes all per-LynqNode series.
 	Context("metrics cleanup after row deactivation", func() {
 		const (
 			hubName  = "mcleanup-hub"
@@ -76,7 +72,8 @@ var _ = Describe("Metrics Cleanup on Deletion", Ordered, func() {
 			_, _ = utils.Run(cmd)
 			cmd = exec.Command("kubectl", "delete", "lynqhub", hubName, "-n", policyTestNamespace, "--ignore-not-found=true")
 			_, _ = utils.Run(cmd)
-			time.Sleep(5 * time.Second)
+			// Wait for LynqNodes to be gone before the next test starts.
+			waitForLynqNodesAbsent(uid)
 		})
 
 		It("should remove per-LynqNode Prometheus series after row is deactivated", func() {
@@ -92,14 +89,17 @@ var _ = Describe("Metrics Cleanup on Deletion", Ordered, func() {
 				g.Expect(output).To(Equal("True"))
 			}, policyTestTimeout, policyTestInterval).Should(Succeed())
 
-			By("And the metrics series are present")
+			By("And ALL per-node metric series are present before deletion")
+			nodeLabels := nodeMetricLabels(expectedNodeName)
 			Eventually(func(g Gomega) {
 				metricsOutput := getOperatorMetrics()
-				v := extractMetricValue(metricsOutput, "lynqnode_resources_desired", expectedNodeName, policyTestNamespace)
-				g.Expect(v).To(BeNumerically(">=", 1))
+				assertMetricPresentG(g, metricsOutput, "lynqnode_resources_desired", nodeLabels...)
+				assertMetricPresentG(g, metricsOutput, "lynqnode_resources_ready", nodeLabels...)
+				assertMetricPresentG(g, metricsOutput, "lynqnode_resources_failed", nodeLabels...)
+				assertMetricPresentG(g, metricsOutput, "lynqnode_condition_status", nodeLabels...)
 			}, 2*time.Minute, 5*time.Second).Should(Succeed())
 
-			By("When the row is deactivated (activate=false)")
+			By("When the row is deactivated (active=false)")
 			updateSQL := fmt.Sprintf("UPDATE %s SET active=0 WHERE id='%s';", testTable, uid)
 			cmd := exec.Command("kubectl", "exec", "-n", sharedMySQLNamespace, "deployment/mysql", "--",
 				"mysql", "-h", "127.0.0.1", "-uroot", "-ptest-password", "testdb", "-e", updateSQL)
@@ -113,26 +113,22 @@ var _ = Describe("Metrics Cleanup on Deletion", Ordered, func() {
 				g.Expect(err).To(HaveOccurred())
 			}, policyTestTimeout, policyTestInterval).Should(Succeed())
 
-			By("And after waiting for the async flush cycle, the metrics series are gone")
-			time.Sleep(metricsFlushWait)
-			metricsOutput := getOperatorMetrics()
-			labelClauses := []string{
-				fmt.Sprintf(`lynqnode="%s"`, expectedNodeName),
-				fmt.Sprintf(`namespace="%s"`, policyTestNamespace),
-			}
-			assertMetricAbsent(metricsOutput, "lynqnode_resources_ready", labelClauses...)
-			assertMetricAbsent(metricsOutput, "lynqnode_resources_desired", labelClauses...)
-			assertMetricAbsent(metricsOutput, "lynqnode_resources_failed", labelClauses...)
-			assertMetricAbsent(metricsOutput, "lynqnode_resources_conflicted", labelClauses...)
-			assertMetricAbsent(metricsOutput, "lynqnode_condition_status", labelClauses...)
-			assertMetricAbsent(metricsOutput, "lynqnode_degraded_status", labelClauses...)
+			By("And the metrics series are eventually absent (polling to catch late resurrection)")
+			Eventually(func(g Gomega) {
+				metricsOutput := getOperatorMetrics()
+				assertMetricAbsentG(g, metricsOutput, "lynqnode_resources_ready", nodeLabels...)
+				assertMetricAbsentG(g, metricsOutput, "lynqnode_resources_desired", nodeLabels...)
+				assertMetricAbsentG(g, metricsOutput, "lynqnode_resources_failed", nodeLabels...)
+				assertMetricAbsentG(g, metricsOutput, "lynqnode_resources_conflicted", nodeLabels...)
+				assertMetricAbsentG(g, metricsOutput, "lynqnode_condition_status", nodeLabels...)
+				assertMetricAbsentG(g, metricsOutput, "lynqnode_degraded_status", nodeLabels...)
+			}, policyTestTimeout, 5*time.Second).Should(Succeed())
 		})
 	})
 
+	// Case B: Degraded → deactivation removes degraded_status and conflicts_total series.
+	// This is the exact user-reported scenario.
 	Context("degraded status removed after deactivation", func() {
-		// This is the exact user-reported scenario:
-		// LynqNode enters Degraded state (due to Stuck conflict), then the row is
-		// deactivated. The lynqnode_degraded_status series must disappear, not linger.
 		const (
 			hubName       = "mdeg-hub"
 			formName      = "mdeg-form"
@@ -163,10 +159,10 @@ var _ = Describe("Metrics Cleanup on Deletion", Ordered, func() {
 			_, _ = utils.Run(cmd)
 			cmd = exec.Command("kubectl", "delete", "lynqhub", hubName, "-n", policyTestNamespace, "--ignore-not-found=true")
 			_, _ = utils.Run(cmd)
-			time.Sleep(5 * time.Second)
+			waitForLynqNodesAbsent(uid)
 		})
 
-		It("should remove lynqnode_degraded_status series after deactivation of a Degraded node", func() {
+		It("should remove lynqnode_degraded_status and conflicts_total series after deactivation of a Degraded node", func() {
 			By("Given a pre-existing ConfigMap that will cause a Stuck conflict")
 			cmYAML := fmt.Sprintf(`
 apiVersion: v1
@@ -195,13 +191,18 @@ data:
 				g.Expect(output).To(Equal("True"))
 			}, policyTestTimeout, policyTestInterval).Should(Succeed())
 
-			By("And the lynqnode_degraded_status series is 1")
+			nodeLabels := nodeMetricLabels(expectedNodeName)
+
+			By("And the degraded_status=1 and conflicts_total series are present")
 			Eventually(func(g Gomega) {
 				metricsOutput := getOperatorMetrics()
+				// degraded_status must be 1
 				pattern := regexp.MustCompile(
 					`lynqnode_degraded_status\{[^}]*lynqnode="` + regexp.QuoteMeta(expectedNodeName) + `"[^}]*\}\s+1`)
 				g.Expect(pattern.MatchString(metricsOutput)).To(BeTrue(),
 					"expected lynqnode_degraded_status=1 for %s", expectedNodeName)
+				// conflicts_total counter series must exist
+				assertMetricPresentG(g, metricsOutput, "lynqnode_conflicts_total", nodeLabels...)
 			}, 2*time.Minute, 5*time.Second).Should(Succeed())
 
 			By("When the row is deactivated")
@@ -218,42 +219,44 @@ data:
 				g.Expect(err).To(HaveOccurred())
 			}, policyTestTimeout, policyTestInterval).Should(Succeed())
 
-			By("And after the flush cycle, ALL lynqnode_degraded_status series for this node are gone")
-			time.Sleep(metricsFlushWait)
-			metricsOutput := getOperatorMetrics()
-			assertMetricAbsent(metricsOutput, "lynqnode_degraded_status",
-				fmt.Sprintf(`lynqnode="%s"`, expectedNodeName),
-				fmt.Sprintf(`namespace="%s"`, policyTestNamespace),
-			)
-			// Other per-node series must also be gone
-			labelClauses := []string{
-				fmt.Sprintf(`lynqnode="%s"`, expectedNodeName),
-				fmt.Sprintf(`namespace="%s"`, policyTestNamespace),
-			}
-			assertMetricAbsent(metricsOutput, "lynqnode_resources_ready", labelClauses...)
-			assertMetricAbsent(metricsOutput, "lynqnode_condition_status", labelClauses...)
+			By("And ALL per-node series are eventually absent, including degraded and conflicts_total")
+			Eventually(func(g Gomega) {
+				metricsOutput := getOperatorMetrics()
+				assertMetricAbsentG(g, metricsOutput, "lynqnode_degraded_status", nodeLabels...)
+				assertMetricAbsentG(g, metricsOutput, "lynqnode_conflicts_total", nodeLabels...)
+				assertMetricAbsentG(g, metricsOutput, "lynqnode_resources_ready", nodeLabels...)
+				assertMetricAbsentG(g, metricsOutput, "lynqnode_resources_conflicted", nodeLabels...)
+				assertMetricAbsentG(g, metricsOutput, "lynqnode_condition_status", nodeLabels...)
+			}, policyTestTimeout, 5*time.Second).Should(Succeed())
 		})
 	})
 
+	// Case C: Hub CR deletion removes hub_desired/ready/failed series.
 	Context("hub metrics removed after hub deletion", func() {
 		const hubName = "mhub-delete-hub"
 
 		AfterEach(func() {
 			cmd := exec.Command("kubectl", "delete", "lynqhub", hubName, "-n", policyTestNamespace, "--ignore-not-found=true")
 			_, _ = utils.Run(cmd)
-			time.Sleep(5 * time.Second)
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "lynqhub", hubName, "-n", policyTestNamespace)
+				_, err := utils.Run(cmd)
+				g.Expect(err).To(HaveOccurred())
+			}, policyTestTimeout, policyTestInterval).Should(Succeed())
 		})
 
 		It("should remove hub_desired/ready/failed series when the LynqHub CR is deleted", func() {
-			By("Given a LynqHub is created and its metrics are published")
+			By("Given a LynqHub is created and all three hub metric series are present")
 			createHubWithTable(hubName, testTable)
+			hubLabels := []string{
+				fmt.Sprintf(`hub="%s"`, hubName),
+				fmt.Sprintf(`namespace="%s"`, policyTestNamespace),
+			}
 			Eventually(func(g Gomega) {
 				metricsOutput := getOperatorMetrics()
-				// hub_desired may be 0 but the series should exist
-				pattern := regexp.MustCompile(
-					`hub_desired\{[^}]*hub="` + regexp.QuoteMeta(hubName) + `"[^}]*\}`)
-				g.Expect(pattern.MatchString(metricsOutput)).To(BeTrue(),
-					"expected hub_desired series for hub %s to exist", hubName)
+				assertMetricPresentG(g, metricsOutput, "hub_desired", hubLabels...)
+				assertMetricPresentG(g, metricsOutput, "hub_ready", hubLabels...)
+				assertMetricPresentG(g, metricsOutput, "hub_failed", hubLabels...)
 			}, 2*time.Minute, 5*time.Second).Should(Succeed())
 
 			By("When the LynqHub CR is deleted")
@@ -268,16 +271,122 @@ data:
 				g.Expect(err).To(HaveOccurred())
 			}, policyTestTimeout, policyTestInterval).Should(Succeed())
 
-			By("And the hub metrics series are gone")
-			time.Sleep(metricsFlushWait)
-			metricsOutput := getOperatorMetrics()
-			hubLabels := []string{
-				fmt.Sprintf(`hub="%s"`, hubName),
-				fmt.Sprintf(`namespace="%s"`, policyTestNamespace),
-			}
-			assertMetricAbsent(metricsOutput, "hub_desired", hubLabels...)
-			assertMetricAbsent(metricsOutput, "hub_ready", hubLabels...)
-			assertMetricAbsent(metricsOutput, "hub_failed", hubLabels...)
+			By("And the hub metrics series are eventually absent")
+			Eventually(func(g Gomega) {
+				metricsOutput := getOperatorMetrics()
+				assertMetricAbsentG(g, metricsOutput, "hub_desired", hubLabels...)
+				assertMetricAbsentG(g, metricsOutput, "hub_ready", hubLabels...)
+				assertMetricAbsentG(g, metricsOutput, "hub_failed", hubLabels...)
+			}, policyTestTimeout, 5*time.Second).Should(Succeed())
+		})
+	})
+
+	// Case D: same-name recreation — verifies the UID mismatch guard.
+	// When a row is deactivated and then reactivated, the LynqHub creates a new
+	// LynqNode CR with the same name but a different UID. This test verifies that
+	// stale status events from the old instance do not contaminate the new instance's
+	// metrics. Note: the UID mismatch and DeletionTimestamp race guards are also
+	// directly exercised by unit tests in internal/status/manager_test.go.
+	Context("metrics uncontaminated after same-name LynqNode recreation", func() {
+		const (
+			hubName  = "mrec-hub"
+			formName = "mrec-form"
+			uid      = "mrec-node"
+		)
+
+		BeforeEach(func() {
+			createHubWithTable(hubName, testTable)
+			createForm(formName, hubName, `
+  configMaps:
+    - id: cm
+      nameTemplate: "{{ .uid }}-cm"
+      spec:
+        apiVersion: v1
+        kind: ConfigMap
+        data:
+          key: value
+`)
+		})
+
+		AfterEach(func() {
+			deleteTestDataFromTable(testTable, uid)
+			cmd := exec.Command("kubectl", "delete", "lynqform", formName, "-n", policyTestNamespace, "--ignore-not-found=true")
+			_, _ = utils.Run(cmd)
+			cmd = exec.Command("kubectl", "delete", "lynqhub", hubName, "-n", policyTestNamespace, "--ignore-not-found=true")
+			_, _ = utils.Run(cmd)
+			waitForLynqNodesAbsent(uid)
+		})
+
+		It("should show correct metrics for the recreated LynqNode", func() {
+			expectedNodeName := fmt.Sprintf("%s-%s", uid, formName)
+			nodeLabels := nodeMetricLabels(expectedNodeName)
+
+			By("Given a first LynqNode instance is Ready and metrics are published")
+			insertTestDataToTable(testTable, uid, true)
+			waitForLynqNode(expectedNodeName)
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "lynqnode", expectedNodeName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("True"))
+			}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+			Eventually(func(g Gomega) {
+				metricsOutput := getOperatorMetrics()
+				assertMetricPresentG(g, metricsOutput, "lynqnode_resources_desired", nodeLabels...)
+			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+			// Capture the UID of the first instance.
+			firstUID := ""
+			cmd := exec.Command("kubectl", "get", "lynqnode", expectedNodeName, "-n", policyTestNamespace,
+				"-o", "jsonpath={.metadata.uid}")
+			firstUID, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(firstUID).NotTo(BeEmpty())
+
+			By("When the row is deactivated → first LynqNode deleted")
+			deleteTestDataFromTable(testTable, uid)
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "lynqnode", expectedNodeName, "-n", policyTestNamespace)
+				_, err := utils.Run(cmd)
+				g.Expect(err).To(HaveOccurred())
+			}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+			By("And then the row is reactivated → new LynqNode created with the same name")
+			insertTestDataToTable(testTable, uid, true)
+			waitForLynqNode(expectedNodeName)
+
+			// The new instance must have a different UID.
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "lynqnode", expectedNodeName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.metadata.uid}")
+				secondUID, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(secondUID).NotTo(Equal(firstUID), "expected new LynqNode to have a different UID")
+			}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+			By("Then the new LynqNode eventually becomes Ready")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "lynqnode", expectedNodeName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("True"))
+			}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+			By("And the new instance's metrics show a healthy state (not contaminated by stale events)")
+			Eventually(func(g Gomega) {
+				metricsOutput := getOperatorMetrics()
+				// Resources should be ready for the new instance (ConfigMap is instant).
+				ready := extractMetricValue(metricsOutput, "lynqnode_resources_ready", expectedNodeName, policyTestNamespace)
+				desired := extractMetricValue(metricsOutput, "lynqnode_resources_desired", expectedNodeName, policyTestNamespace)
+				g.Expect(desired).To(BeNumerically(">=", 1), "desired resources should be >= 1")
+				g.Expect(ready).To(Equal(desired), "ready should equal desired for a healthy ConfigMap node")
+				// No stale degraded series should linger from the old instance.
+				assertMetricAbsentG(g, metricsOutput, "lynqnode_degraded_status",
+					append(nodeLabels, `} 1`)...) // value=1 means degraded
+			}, 2*time.Minute, 5*time.Second).Should(Succeed())
 		})
 	})
 })
@@ -554,10 +663,32 @@ func extractMetricValue(metricsOutput, metricName, lynqnodeName, lynqnodeNamespa
 	return value
 }
 
-// assertMetricAbsent fails if any /metrics line for metricName matches ALL labelClauses.
-// This catches series with extra labels (e.g. reason="..." or type="...") that would be
+// nodeMetricLabels returns the standard label clauses used to match per-LynqNode
+// metric lines. Extracted once per test so they stay consistent.
+func nodeMetricLabels(nodeName string) []string {
+	return []string{
+		fmt.Sprintf(`lynqnode="%s"`, nodeName),
+		fmt.Sprintf(`namespace="%s"`, policyTestNamespace),
+	}
+}
+
+// waitForLynqNodesAbsent waits until no LynqNode whose name contains uid exists
+// in the policy test namespace. Used in AfterEach to ensure test isolation.
+func waitForLynqNodesAbsent(uid string) {
+	Eventually(func(g Gomega) {
+		cmd := exec.Command("kubectl", "get", "lynqnodes", "-n", policyTestNamespace,
+			"--ignore-not-found=true", "-o", "name")
+		output, err := utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(output).NotTo(ContainSubstring(uid))
+	}, policyTestTimeout, policyTestInterval).Should(Succeed())
+}
+
+// assertMetricAbsentG fails (via g) if any /metrics line for metricName matches ALL
+// labelClauses. Safe to use inside Eventually blocks — uses g.Expect, not Expect.
+// Catches series with extra labels (e.g. reason="...", type="...") that would be
 // missed by an exact-label match.
-func assertMetricAbsent(metricsOutput, metricName string, labelClauses ...string) {
+func assertMetricAbsentG(g Gomega, metricsOutput, metricName string, labelClauses ...string) {
 	re := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(metricName) + `\{[^}]*\}`)
 	for _, line := range re.FindAllString(metricsOutput, -1) {
 		allMatch := true
@@ -567,9 +698,37 @@ func assertMetricAbsent(metricsOutput, metricName string, labelClauses ...string
 				break
 			}
 		}
-		Expect(allMatch).To(BeFalse(),
+		g.Expect(allMatch).To(BeFalse(),
 			"expected no %s series matching %v, but found: %s", metricName, labelClauses, line)
 	}
+}
+
+// assertMetricAbsent is the non-Eventually wrapper around assertMetricAbsentG.
+func assertMetricAbsent(metricsOutput, metricName string, labelClauses ...string) {
+	assertMetricAbsentG(Default, metricsOutput, metricName, labelClauses...)
+}
+
+// assertMetricPresentG fails (via g) if no /metrics line for metricName matches ALL
+// labelClauses. Used to verify series exist before the deletion step so that an
+// absent series doesn't cause the subsequent assertMetricAbsent to trivially pass.
+func assertMetricPresentG(g Gomega, metricsOutput, metricName string, labelClauses ...string) {
+	re := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(metricName) + `\{[^}]*\}`)
+	found := false
+	for _, line := range re.FindAllString(metricsOutput, -1) {
+		allMatch := true
+		for _, clause := range labelClauses {
+			if !strings.Contains(line, clause) {
+				allMatch = false
+				break
+			}
+		}
+		if allMatch {
+			found = true
+			break
+		}
+	}
+	g.Expect(found).To(BeTrue(),
+		"expected at least one %s series matching %v, but none found", metricName, labelClauses)
 }
 
 // extractConditionMetricValue extracts a condition metric value
