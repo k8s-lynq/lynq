@@ -160,6 +160,7 @@ export default withMermaid(
             { text: "Security", link: "/security" },
             { text: "Multi-Tenant Isolation", link: "/multi-tenant-isolation" },
             { text: "Performance", link: "/performance" },
+            { text: "Resource Sizing", link: "/resource-sizing" },
             { text: "Troubleshooting", link: "/troubleshooting" },
           ],
         },

@@ -57,7 +57,7 @@ resources:
     memory: 1Gi
 ```
 
-Increase limits for clusters with many LynqNodes (100+) or complex templates. See [Performance](performance.md).
+These defaults suit clusters up to ~200 LynqNodes. For observed benchmarks, a sizing table, and a CPU/memory model, see [Resource Sizing](resource-sizing.md).
 
 ## Configuration by Topic
 

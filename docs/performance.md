@@ -151,24 +151,17 @@ spec:
 
 ### Resource Limits
 
-Adjust operator resource limits based on node count:
+Quick reference based on real benchmark data (5 nodes: 0–5 m CPU / 10–60 MB RAM; 220 nodes: 500–600 m CPU / 100–140 MB RAM):
 
-```yaml
-# values.yaml for Helm
-resources:
-  limits:
-    cpu: 2000m      # For 1000+ nodes
-    memory: 2Gi     # For 1000+ nodes
-  requests:
-    cpu: 500m       # Minimum for stable operation
-    memory: 512Mi   # Minimum for stable operation
-```
+| Node count | CPU request | CPU limit | Memory request | Memory limit |
+|-----------|------------|-----------|----------------|--------------|
+| < 50 | `50m` | `200m` | `64Mi` | `128Mi` |
+| 50–200 | `200m` | `500m` | `128Mi` | `256Mi` |
+| 200–500 | `500m` | `1000m` | `256Mi` | `512Mi` |
+| 500–1000 | `1000m` | `2000m` | `512Mi` | `1Gi` |
+| 1000+ | `2000m` | `4000m` | `1Gi` | `2Gi` |
 
-**Guidelines:**
-- **< 100 nodes**: Default limits (500m CPU, 512Mi RAM)
-- **100-500 nodes**: 1 CPU, 1Gi RAM
-- **500-1000 nodes**: 2 CPU, 2Gi RAM
-- **1000+ nodes**: Consider horizontal scaling (coming in v1.3)
+For the explanation of *why* resources scale this way (cache model, reconciliation burst pattern, concurrency trade-offs), see [Resource Sizing](resource-sizing.md).
 
 ### Database Optimization
 
