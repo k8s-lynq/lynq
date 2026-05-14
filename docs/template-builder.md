@@ -114,15 +114,9 @@ For each resource, configure:
 2. Add all other resources depending on node-ns
 ```
 
-## Next Steps
+## See Also
 
-- [Dependencies Guide](./dependencies.md) - Learn about dependency management
-- [🔍 Dependency Visualizer](./dependency-visualizer.md) - Visualize your form's dependency graph
-- [Templates Guide](./templates.md) - Complete template documentation
-- [Quick Start](./quickstart.md) - Deploy your first form
-
----
-
-::: tip Need Help?
-If you encounter issues, check the [Troubleshooting Guide](./troubleshooting.md) or refer to the [API Reference](./api.md).
-:::
+- [Templates](./templates.md) — Complete template syntax and variables.
+- [Dependency Visualizer](./dependency-visualizer.md) — Visualize dependency graphs interactively.
+- [Dependencies](./dependencies.md) — `dependIds` and `waitForReady` reference.
+- [API Reference](./api.md) — LynqForm CRD schema.

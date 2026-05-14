@@ -6,7 +6,7 @@ description: "Production-ready Prometheus query examples for Lynq: health, perfo
 
 Ready-to-use PromQL queries for Lynq — node health, reconciliation performance, conflict detection, rollout progress, and hub-level aggregates.
 
-
+All metrics are exposed at `:8443/metrics`. See [Monitoring](monitoring.md) for setup and the full metrics catalog.
 
 ## Node Health
 

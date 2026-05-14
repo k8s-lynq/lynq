@@ -10,15 +10,15 @@ Diagnosis and resolution steps for every Lynq Prometheus alert. Each runbook ide
 
 ## Overview
 
-This page provides detailed runbooks for all Lynq alerts, organized by severity:
+Runbooks for all Lynq alerts, organized by severity. Each runbook includes diagnosis commands, resolution steps, and a verification check to confirm the alert has cleared.
 
-- **Critical Alerts**: Require immediate action - production impact
-- **Warning Alerts**: Require investigation - potential issues
-- **Info Alerts**: Informational - awareness only
+Alert names match `config/prometheus/alerts.yaml`.
 
-::: tip Quick Navigation
-Use the table of contents (right sidebar) to jump directly to a specific alert.
-:::
+| Severity | Alerts |
+|----------|--------|
+| Critical | `LynqNodeDegraded`, `LynqNodeResourcesFailed`, `LynqNodeNotReady`, `LynqNodeStatusUnknown`, `HubManyNodesFailure` |
+| Warning | `LynqNodeResourcesMismatch`, `LynqNodeResourcesConflicted`, `LynqNodeHighConflictRate`, `HubNodesFailure`, `HubDesiredCountMismatch`, `LynqNodeReconciliationErrors`, `LynqNodeReconciliationSlow`, `HighApplyFailureRate` |
+| Info | `LynqNodeNewConflictsDetected` |
 
 ---
 
@@ -59,7 +59,7 @@ kubectl get lynqnode <lynqnode-name> -n <namespace> -o yaml
 kubectl describe lynqnode <lynqnode-name> -n <namespace>
 
 # Check operator logs
-kubectl logs node-name>
+kubectl logs -n lynq-system -l control-plane=controller-manager --tail=100
 
 # Validate template variables
 kubectl get lynqnode <lynqnode-name> -n <namespace> -o jsonpath='{.metadata.annotations}'
@@ -95,6 +95,15 @@ kubectl delete <resource-type> <resource-name>
 
 # Option 2: Change ConflictPolicy to Force
 kubectl edit lynqform <template-name>
+```
+
+#### Verification
+
+```bash
+kubectl get lynqnode <lynqnode-name> -o jsonpath='{.status.conditions[?(@.type=="Degraded")].status}'
+# Should return: False
+kubectl get lynqnode <lynqnode-name> -o jsonpath='{.status.readyResources}/{.status.desiredResources}'
+# Should return equal values
 ```
 
 ---
@@ -149,6 +158,13 @@ kubectl edit lynqform <template-name>
 # Set: waitForReady: false
 ```
 
+#### Verification
+
+```bash
+kubectl get lynqnode <lynqnode-name> -o jsonpath='{.status.failedResources}'
+# Should return: 0
+```
+
 ---
 
 ### LynqNodeNotReady
@@ -193,6 +209,13 @@ kubectl get pod <pod-name> -o yaml | grep -A 10 readinessProbe
 kubectl get lynqnode <lynqnode-name> -o jsonpath='{.spec.*.dependIds}'
 ```
 
+#### Verification
+
+```bash
+kubectl get lynqnode <lynqnode-name> -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+# Should return: True
+```
+
 ---
 
 ### LynqNodeStatusUnknown
@@ -235,6 +258,15 @@ kubectl top pods -n lynq-system
 
 # Review recent changes
 kubectl rollout history deployment -n lynq-system lynq-controller-manager
+```
+
+#### Verification
+
+```bash
+kubectl get lynqnode <lynqnode-name> -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+# Should return: True (not Unknown)
+kubectl get pods -n lynq-system
+# All pods should be Running/Ready
 ```
 
 ---
@@ -294,6 +326,15 @@ kubectl get lynqform <template-name> -o yaml
 
 # Validate template rendering
 kubectl describe lynqnode <any-failed-node>
+```
+
+#### Verification
+
+```bash
+kubectl get lynqhub <hub-name> -o jsonpath='{.status.failed}'
+# Should return: 0
+kubectl get lynqhub <hub-name> -o jsonpath='{.status.ready}/{.status.desired}'
+# Should return equal values
 ```
 
 ---
@@ -634,54 +675,9 @@ kubectl describe lynqnode <lynqnode-name> | grep -A 5 Conflict
 
 If conflicts persist, escalate to LynqNodeResourcesConflicted or LynqNodeHighConflictRate resolution procedures.
 
----
-
-## General Troubleshooting Tips
-
-### Quick Diagnostic Commands
-
-```bash
-# Overall operator health
-kubectl get pods -n lynq-system
-kubectl top pods -n lynq-system
-
-# All node statuses
-kubectl get lynqnodes -A
-
-# Recent events
-kubectl get events -A --sort-by='.lastTimestamp' | tail -50
-
-# Operator logs (last 1 hour)
-kubectl logs -n lynq-system -l control-plane=controller-manager --since=1h
-```
-
-### Common Fixes
-
-1. **Force Reconciliation:**
-   ```bash
-   kubectl annotate lynqnode <name> operator.lynq.sh/reconcile="$(date +%s)" --overwrite
-   ```
-
-2. **Restart Controller:**
-   ```bash
-   kubectl rollout restart deployment -n lynq-system lynq-controller-manager
-   ```
-
-3. **Validate Configuration:**
-   ```bash
-   kubectl get lynqhub,lynqform -A -o wide
-   ```
-
-### When to Escalate
-
-- Multiple critical alerts firing simultaneously
-- Repeated failures after following runbook procedures
-- Suspected operator bug or API server issues
-- Database connectivity or performance problems
-
 ## See Also
 
-- [Monitoring & Observability Guide](monitoring.md)
-- [Troubleshooting Guide](troubleshooting.md)
-- [Performance Tuning](performance.md)
-- [Prometheus Alerts Configuration](https://github.com/k8s-lynq/lynq/blob/main/config/prometheus/alerts.yaml)
+- [Monitoring](monitoring.md) — metrics catalog, events reference, alert overview
+- [Troubleshooting](troubleshooting.md) — symptom-based diagnosis (non-alert issues)
+- [Performance](performance.md) — scaling and tuning
+- [Prometheus alerts config](https://github.com/k8s-lynq/lynq/blob/main/config/prometheus/alerts.yaml)

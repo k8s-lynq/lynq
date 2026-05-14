@@ -4,7 +4,9 @@ description: "Guide for implementing a new datasource adapter for Lynq. Covers t
 
 # Contributing a New Datasource
 
-This guide walks you through implementing a new datasource adapter for Lynq. The operator uses a pluggable adapter pattern — each datasource implements a common interface and registers with the factory.
+Lynq currently supports MySQL. If your team uses PostgreSQL, SQLite, or another data store, contributions are welcome — the adapter pattern makes adding a new datasource straightforward.
+
+This guide walks through implementing a new datasource adapter. Each datasource implements a common interface and registers with the factory.
 
 
 

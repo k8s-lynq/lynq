@@ -50,14 +50,8 @@ Shows what happens when you have circular dependencies (invalid configuration)
 - Avoid creating dependency cycles - they will cause reconciliation to fail
 - Keep dependency chains shallow for better performance
 
-## Related Documentation
+## See Also
 
-- [Dependencies Guide](./dependencies) - Complete guide on defining dependencies
-- [Templates Guide](./templates) - Learn about LynqForm structure
-- [Policies Guide](./policies) - Resource lifecycle policies
-
----
-
-::: tip Need Help?
-If you encounter issues with your form, check the [Troubleshooting Guide](./troubleshooting) or review the error message shown by the visualizer.
-:::
+- [Dependencies](./dependencies.md) — Complete guide on defining dependencies, readiness gates, and failure handling.
+- [Templates](./templates.md) — LynqForm structure and template syntax.
+- [Template Builder](./template-builder.md) — Build LynqForm YAML interactively before deploying.

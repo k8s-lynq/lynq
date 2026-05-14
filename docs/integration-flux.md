@@ -208,9 +208,45 @@ spec:
 5. Flux monitors health checks and reports readiness
 6. When node is deleted, Flux resources are cleaned up automatically
 
-::: tip More Examples
-Additional examples including Helm charts, OCI artifacts, and multi-source deployments are provided throughout this guide below.
-:::
+## How It Works
+
+### Workflow
+
+1. **Node Created**: LynqHub creates LynqNode CR from database
+2. **Flux Sources Created**: LynqNode controller creates GitRepository/HelmRepository/OCIRepository CRs
+3. **Flux Controllers Process**: Source controllers fetch artifacts, Kustomize/Helm controllers apply
+4. **Applications Deployed**: Kubernetes resources created from Git/Helm/OCI sources
+5. **Continuous Sync**: Flux polls sources at `interval` and reconciles drift
+6. **Health Monitoring**: Flux health checks ensure resources are ready
+7. **Node Deleted**: Flux resources deleted (if `deletionPolicy=Delete`)
+
+### Reconciliation Loop
+
+```mermaid
+sequenceDiagram
+    participant DB as Database
+    participant Hub as LynqHub
+    participant Node as LynqNode
+    participant Flux as Flux Controllers
+    participant Git as Git Repository
+    participant K8s as Kubernetes
+
+    DB->>Hub: Sync (every interval)
+    Hub->>Node: Create/Update LynqNode
+    Node->>Flux: Create GitRepository CR
+    Flux->>Git: Poll for changes
+    Git->>Flux: Return manifests
+    Flux->>K8s: Apply manifests
+    K8s->>Flux: Report status
+    Flux->>Node: Update readiness
+    Node->>Hub: Aggregate status
+```
+
+### State Management
+
+- **Git as Source of Truth**: All configuration stored in Git
+- **Flux State**: Stored in Kubernetes CRs (GitRepository, Kustomization status)
+- **No Local State**: Flux is stateless, can be redeployed without data loss
 
 ## Advanced Examples
 
@@ -342,184 +378,6 @@ spec:
           target:
             kind: Deployment
 ```
-
-### Example 3: OCI Artifact Deployment
-
-Deploy from OCI registry (container registry as artifact storage):
-
-```yaml
-apiVersion: operator.lynq.sh/v1
-kind: LynqForm
-metadata:
-  name: node-with-oci
-  namespace: default
-spec:
-  hubId: my-hub
-
-  manifests:
-  - id: oci-source
-    nameTemplate: "{{ .uid }}-oci-repo"
-    spec:
-      apiVersion: source.toolkit.fluxcd.io/v1beta2
-      kind: OCIRepository
-      spec:
-        interval: 5m
-        url: oci://ghcr.io/myorg/manifests
-        ref:
-          tag: latest
-        secretRef:
-          name: oci-credentials
-
-  - id: oci-kustomization
-    nameTemplate: "{{ .uid }}-oci-kustomization"
-    dependIds: ["oci-source"]
-    spec:
-      apiVersion: kustomize.toolkit.fluxcd.io/v1
-      kind: Kustomization
-      spec:
-        interval: 5m
-        path: "./deploy"
-        sourceRef:
-          kind: OCIRepository
-          name: "{{ .uid }}-oci-repo"
-        postBuild:
-          substitute:
-            NODE_ID: "{{ .uid }}"
-```
-
-### Example 4: Image Automation
-
-Automatically update images when new versions are pushed:
-
-```yaml
-apiVersion: operator.lynq.sh/v1
-kind: LynqForm
-metadata:
-  name: node-with-image-automation
-  namespace: default
-spec:
-  hubId: my-hub
-
-  manifests:
-  # Git source with write access
-  - id: git-source
-    nameTemplate: "{{ .uid }}-gitrepo"
-    spec:
-      apiVersion: source.toolkit.fluxcd.io/v1
-      kind: GitRepository
-      spec:
-        interval: 1m
-        url: https://github.com/myorg/my-fleet
-        ref:
-          branch: "nodes/{{ .uid }}"
-        secretRef:
-          name: git-write-credentials
-
-  # Image repository to scan
-  - id: image-repo
-    nameTemplate: "{{ .uid }}-imagerepo"
-    spec:
-      apiVersion: image.toolkit.fluxcd.io/v1beta2
-      kind: ImageRepository
-      spec:
-        interval: 1m
-        image: ghcr.io/myorg/myapp
-        secretRef:
-          name: registry-credentials
-
-  # Image policy (semver, alphabetical, etc.)
-  - id: image-policy
-    nameTemplate: "{{ .uid }}-imagepolicy"
-    dependIds: ["image-repo"]
-    spec:
-      apiVersion: image.toolkit.fluxcd.io/v1beta2
-      kind: ImagePolicy
-      spec:
-        imageRepositoryRef:
-          name: "{{ .uid }}-imagerepo"
-        policy:
-          semver:
-            range: ">=1.0.0 <2.0.0"
-
-  # Image update automation
-  - id: image-update
-    nameTemplate: "{{ .uid }}-imageupdate"
-    dependIds: ["git-source", "image-policy"]
-    spec:
-      apiVersion: image.toolkit.fluxcd.io/v1beta1
-      kind: ImageUpdateAutomation
-      spec:
-        interval: 1m
-        sourceRef:
-          kind: GitRepository
-          name: "{{ .uid }}-gitrepo"
-        git:
-          checkout:
-            ref:
-              branch: "nodes/{{ .uid }}"
-          commit:
-            author:
-              email: fluxcdbot@users.noreply.github.com
-              name: fluxcdbot
-            messageTemplate: "[{{ .uid }}] Update image"
-        update:
-          path: "./deploy"
-          strategy: Setters
-
-  # Kustomization to deploy
-  - id: kustomization
-    nameTemplate: "{{ .uid }}-kustomization"
-    dependIds: ["git-source"]
-    spec:
-      apiVersion: kustomize.toolkit.fluxcd.io/v1
-      kind: Kustomization
-      spec:
-        interval: 5m
-        path: "./deploy"
-        sourceRef:
-          kind: GitRepository
-          name: "{{ .uid }}-gitrepo"
-```
-
-## How It Works
-
-### Workflow
-
-1. **Node Created**: LynqHub creates LynqNode CR from database
-2. **Flux Sources Created**: LynqNode controller creates GitRepository/HelmRepository/OCIRepository CRs
-3. **Flux Controllers Process**: Source controllers fetch artifacts, Kustomize/Helm controllers apply
-4. **Applications Deployed**: Kubernetes resources created from Git/Helm/OCI sources
-5. **Continuous Sync**: Flux polls sources at `interval` and reconciles drift
-6. **Health Monitoring**: Flux health checks ensure resources are ready
-7. **Node Deleted**: Flux resources deleted (if `deletionPolicy=Delete`)
-
-### Reconciliation Loop
-
-```mermaid
-sequenceDiagram
-    participant DB as Database
-    participant Hub as LynqHub
-    participant Node as LynqNode
-    participant Flux as Flux Controllers
-    participant Git as Git Repository
-    participant K8s as Kubernetes
-
-    DB->>Hub: Sync (every interval)
-    Hub->>Node: Create/Update LynqNode
-    Node->>Flux: Create GitRepository CR
-    Flux->>Git: Poll for changes
-    Git->>Flux: Return manifests
-    Flux->>K8s: Apply manifests
-    K8s->>Flux: Report status
-    Flux->>Node: Update readiness
-    Node->>Hub: Aggregate status
-```
-
-### State Management
-
-- **Git as Source of Truth**: All configuration stored in Git
-- **Flux State**: Stored in Kubernetes CRs (GitRepository, Kustomization status)
-- **No Local State**: Flux is stateless, can be redeployed without data loss
 
 ## Best Practices
 
@@ -990,9 +848,8 @@ kustomize-controller:
 
 ## See Also
 
-- [Flux Documentation](https://fluxcd.io/docs/)
-- [Flux GitOps Toolkit](https://toolkit.fluxcd.io/)
-- [Kustomize Documentation](https://kustomize.io/)
-- [Helm Documentation](https://helm.sh/docs/)
-- [Lynq Templates Guide](templates.md)
-- [ExternalDNS Integration](integration-external-dns.md)
+- [Templates](templates.md) — Template variables and functions for Flux resource names.
+- [Policies](policies.md) — DeletionPolicy Retain to keep Flux resources after node deletion.
+- [ExternalDNS Integration](integration-external-dns.md) — DNS automation alongside Flux deployments.
+- [Flux OCI Sources](https://fluxcd.io/docs/components/source/ocirepositories/) — Deploy from OCI registries (OCIRepository + Kustomization).
+- [Flux Image Automation](https://fluxcd.io/docs/components/image/) — Auto-update image tags in Git when new versions are pushed.

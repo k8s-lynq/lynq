@@ -6,7 +6,15 @@ description: "Install and configure the Lynq Dashboard web UI. Visualize Hub, Fo
 
 Lynq Dashboard is a web UI that shows the Hub → Form → Node topology and resource status. Use it to inspect reconciliation state, identify degraded nodes, and drill into individual resources.
 
+::: tip Time to working
+~2 minutes with Docker. ~10 minutes for an in-cluster Kubernetes deployment.
+:::
 
+## How It Works
+
+- The Dashboard reads LynqHub, LynqForm, and LynqNode CRs via the Kubernetes API.
+- It renders the Hub → Form → Node hierarchy and shows resource status (Ready, Degraded, Failed counts) per node.
+- No data is persisted — it's a read-only view of cluster state.
 
 ## Choose Installation Method
 
@@ -384,8 +392,8 @@ kubectl config current-context
 kubectl cluster-info
 ```
 
-## Next Steps
+## See Also
 
-- [Quick Start](/quickstart) - Getting started with Lynq Operator
-- [Architecture](/architecture) - Understanding the architecture
-- [Monitoring](/monitoring) - Prometheus/Grafana integration
+- [Quickstart](quickstart.md) — Getting started with Lynq Operator.
+- [Monitoring](monitoring.md) — Prometheus/Grafana integration alongside the Dashboard.
+- [Architecture](architecture.md) — Hub → Form → Node data model the Dashboard visualizes.

@@ -37,6 +37,35 @@ flowchart LR
 - **Multiple domains**: Different nodes on different domains or subdomains
 - **SSL/TLS automation**: Combined with cert-manager for automatic certificate provisioning
 
+## How It Works
+
+1. **Node Created**: LynqHub creates LynqNode CR from database row.
+2. **Resources Applied**: LynqNode controller creates Ingress/Service with `external-dns.alpha.kubernetes.io/hostname` annotation.
+3. **IP Assignment**: Kubernetes assigns LoadBalancer IP or Ingress IP.
+4. **DNS Sync**: ExternalDNS detects the annotated resource and creates the DNS record.
+5. **Propagation**: DNS record propagates through the provider (seconds to minutes).
+6. **Node Deleted**: LynqNode resources deleted → ExternalDNS removes the DNS record.
+
+```mermaid
+sequenceDiagram
+    participant Lynq as Lynq
+    participant K8s as Kubernetes API
+    participant ED as ExternalDNS
+    participant DNS as DNS Provider
+
+    Lynq->>K8s: Create Ingress with hostname annotation
+    K8s->>K8s: Assign LoadBalancer IP
+    ED->>K8s: Watch Ingresses
+    ED->>DNS: Create DNS A record
+    DNS-->>ED: Record created
+
+    Note over Lynq,DNS: Node Active
+
+    Lynq->>K8s: Delete Ingress
+    ED->>K8s: Detect deletion
+    ED->>DNS: Delete DNS record
+```
+
 ## Prerequisites
 
 ::: info Requirements
@@ -199,41 +228,6 @@ services:
       ports:
       - port: 80
         targetPort: 80
-```
-
-## How It Works
-
-### Workflow
-
-1. **Node Created**: LynqHub creates LynqNode CR from database
-2. **Resources Applied**: LynqNode controller creates Ingress/Service with ExternalDNS annotations
-3. **IP Assignment**: Kubernetes assigns LoadBalancer IP or Ingress IP
-4. **DNS Sync**: ExternalDNS detects annotated resource and creates DNS record
-5. **Propagation**: DNS record propagates through provider (seconds to minutes)
-6. **Node Deleted**: LynqNode resources deleted → ExternalDNS removes DNS record
-
-### DNS Record Lifecycle
-
-```mermaid
-sequenceDiagram
-    participant TO as Lynq
-    participant K8s as Kubernetes API
-    participant ED as ExternalDNS
-    participant DNS as DNS Provider
-
-    TO->>K8s: Create Ingress with annotations
-    K8s->>K8s: Assign LoadBalancer IP
-    ED->>K8s: Watch Ingresses
-    ED->>ED: Detect external-dns annotation
-    ED->>DNS: Create DNS A record
-    DNS-->>ED: Record created
-
-    Note over TO,DNS: Node Active
-
-    TO->>K8s: Delete Ingress
-    ED->>K8s: Detect deletion
-    ED->>DNS: Delete DNS record
-    DNS-->>ED: Record deleted
 ```
 
 ## Common Annotations

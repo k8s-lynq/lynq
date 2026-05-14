@@ -8,88 +8,6 @@ Lynq applies resources within a LynqNode in topological order. Use `dependIds` t
 
 
 
-## Overview
-
-Lynq uses a DAG (Directed Acyclic Graph) to order resource creation and ensure dependencies are satisfied before applying resources.
-
-## Dependency Visualizer
-
-The Lynq includes an interactive dependency graph visualizer tool that helps you:
-
-- **Visualize Dependencies**: See the complete dependency graph of your LynqForm
-- **Detect Cycles**: Automatically identify circular dependencies that would cause failures
-- **Understand Execution Order**: View numbered badges showing the order resources will be applied
-- **Test Your Templates**: Paste your YAML and analyze dependencies before deployment
-
-::: tip Interactive Tool Available
-Visit the **[🔍 Dependency Visualizer](./dependency-visualizer.md)** page to analyze your LynqForm dependencies interactively. Load preset examples or paste your own YAML to visualize the dependency graph in real-time.
-:::
-
-### How to Use the Visualizer
-
-**Step 1: Navigate to the Visualizer**
-
-Open the [Dependency Visualizer](/dependency-visualizer) page in the documentation.
-
-**Step 2: Load or Paste Your LynqForm**
-
-```yaml
-# Option A: Use preset examples from the dropdown
-# Option B: Paste your own LynqForm YAML
-
-apiVersion: operator.lynq.sh/v1
-kind: LynqForm
-metadata:
-  name: my-app
-spec:
-  hubId: customer-hub
-  secrets:
-    - id: db-creds
-  deployments:
-    - id: db
-      dependIds: ["db-creds"]
-    - id: app
-      dependIds: ["db"]
-  services:
-    - id: app-svc
-      dependIds: ["app"]
-```
-
-**Step 3: Analyze the Graph**
-
-The visualizer will show:
-
-```
-+-------------+
-| db-creds    |  ← Order: 1 (no dependencies)
-+-------------+
-      |
-      v
-+-------------+
-| db          |  ← Order: 2 (after db-creds)
-+-------------+
-      |
-      v
-+-------------+
-| app         |  ← Order: 3 (after db)
-+-------------+
-      |
-      v
-+-------------+
-| app-svc     |  ← Order: 4 (after app)
-+-------------+
-```
-
-**Step 4: Identify Issues**
-
-- **Red nodes/edges**: Cycle detected - must be fixed before deployment
-- **Yellow warning**: Missing dependency reference
-- **Numbers on nodes**: Execution order
-
-**Step 5: Export or Copy**
-
-Copy the corrected YAML back to your LynqForm manifest.
-
 ## Defining Dependencies
 
 Use the `dependIds` field to specify dependencies:
@@ -271,6 +189,28 @@ persistentVolumeClaims:
 statefulSets:
   - id: stateful-app
     dependIds: ["data-pvc"]  # Wait for PVC
+```
+
+## Readiness Gates
+
+Use `waitForReady` to wait for resource readiness:
+
+<DependencyAnimationWaitForReady />
+
+::: tip Combine readiness and dependencies
+`dependIds` only guarantees creation order. Enable `waitForReady` to ensure *ready* status before dependent workloads roll out.
+:::
+
+```yaml
+deployments:
+  - id: db
+    waitForReady: true
+    timeoutSeconds: 300
+
+deployments:
+  - id: app
+    dependIds: ["db"]  # Wait for db to exist AND be ready
+    waitForReady: true
 ```
 
 ## Dependency Failure Behavior
@@ -552,28 +492,6 @@ deployments:
     skipOnDependencyFailure: false  # Monitor even if app fails
 ```
 
-## Readiness Gates
-
-Use `waitForReady` to wait for resource readiness:
-
-<DependencyAnimationWaitForReady />
-
-::: tip Combine readiness and dependencies
-`dependIds` only guarantees creation order. Enable `waitForReady` to ensure *ready* status before dependent workloads roll out.
-:::
-
-```yaml
-deployments:
-  - id: db
-    waitForReady: true
-    timeoutSeconds: 300
-
-deployments:
-  - id: app
-    dependIds: ["db"]  # Wait for db to exist AND be ready
-    waitForReady: true
-```
-
 ## Best Practices
 
 ### 1. Shallow Dependencies
@@ -673,9 +591,21 @@ DependencyFailedButProceeding: Creating resource 'cleanup' despite dependency 'a
 **Note:** Resource is being created as configured. Ensure it can handle missing dependency.
 :::
 
+## Dependency Visualizer
+
+An interactive tool for visualizing your LynqForm dependency graph before deploying.
+
+Open the [Dependency Visualizer](dependency-visualizer.md), paste your LynqForm YAML, and see:
+
+- **Numbered nodes** showing the exact apply order
+- **Red nodes/edges** flagging detected cycles
+- **Yellow warnings** for missing dependency references
+
+Useful for validating complex graphs and debugging cycle errors without deploying to a cluster.
+
 ## See Also
 
-- [🔍 Dependency Visualizer](dependency-visualizer.md) - Interactive tool for analyzing dependencies
-- [Template Guide](templates.md)
-- [Policies Guide](policies.md)
-- [Troubleshooting Guide](troubleshooting.md)
+- [Dependency Visualizer](dependency-visualizer.md) — Interactive graph analysis tool.
+- [Templates](templates.md) — Template variables available in `nameTemplate` and resource specs.
+- [Policies](policies.md) — CreationPolicy and DeletionPolicy interact with dependency ordering.
+- [Troubleshooting](troubleshooting.md) — Diagnosing stuck finalizers and dependency failures.

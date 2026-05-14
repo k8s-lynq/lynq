@@ -14,7 +14,7 @@ Lynq can render Argo CD `Application` manifests for every active node row. Each 
 
 ```mermaid
 flowchart LR
-    Registry["LynqHub<br/>DB rows"]
+    Hub["LynqHub<br/>DB rows"]
     Template["LynqForm<br/>Argo CD manifest"]
     Node["LynqNode CR"]
     ArgoApp["Argo CD Application"]
@@ -91,7 +91,7 @@ spec:
 ```mermaid
 sequenceDiagram
     participant DB as MySQL (Node Data)
-    participant Registry as LynqHub Controller
+    participant Hub as LynqHub Controller
     participant Node as LynqNode CR
     participant Operator as LynqNode Controller
     participant Argo as Argo CD Controller
@@ -102,7 +102,7 @@ sequenceDiagram
     Operator->>Node: Render Argo CD manifest
     Operator->>Argo: Apply Application (SSA)
     Argo->>Argo: Sync Git repo
-    Argo->>Cluster: Deploy node workloads
+    Argo->>Argo: Deploy node workloads
 ```
 
 ## Advanced Sync Patterns
@@ -202,15 +202,49 @@ kubectl get application acme-corp-app -n argocd -o jsonpath='{.status.sync.statu
 # Expected: True (LynqNode Ready) + Synced/Healthy (Argo CD)
 ```
 
-## Operational Tips
+## Troubleshooting
 
-- Label Applications with node metadata for quick filtering (`lynq.sh/uid`).
-- Grant the operator service account access to `argoproj.io` API group via ClusterRole.
-- Monitor Argo CD sync status alongside LynqNode status; both must be healthy for end-to-end readiness.
-- Use the `Retain` deletion policy when you need to keep Applications for post-mortem analysis.
+**Application not created after LynqNode is Ready**
 
-## What to Read Next
+The operator may lack permission to create `Application` objects in the `argocd` namespace.
 
-- [Templates Guide](templates.md) – Advanced templating and function usage.
-- [Policies Guide](policies.md) – Control resource lifecycle (Retain vs. Delete).
-- [Monitoring Guide](monitoring.md) – Capture Argo CD and Lynq metrics together.
+```bash
+# Check operator RBAC
+kubectl auth can-i create applications.argoproj.io -n argocd \
+  --as=system:serviceaccount:lynq-system:lynq-controller-manager
+# Should return: yes
+
+# Check for apply errors in operator logs
+kubectl logs -n lynq-system deployment/lynq-controller-manager | grep "argocd"
+```
+
+**Application created but not syncing**
+
+```bash
+# Check Argo CD project allows the destination namespace
+kubectl get appproject nodes -n argocd -o jsonpath='{.spec.destinations}'
+
+# Check source repo is accessible
+argocd repo list
+```
+
+**Application deleted but workloads remain**
+
+Argo CD's `prune: true` only removes resources it manages in Git. Resources created outside the Git path persist. Use `argocd app sync --prune` to force cleanup.
+
+**LynqNode Ready but Application Degraded**
+
+Lynq only manages the `Application` object lifecycle. Argo CD sync failures (wrong Git path, missing manifests) are outside Lynq's scope — check `argocd app get <name>` for details.
+
+## Caveats
+
+- **RBAC is cross-namespace**: The Argo CD `Application` CR lives in the `argocd` namespace, not the LynqNode namespace. The operator ClusterRole must include `argoproj.io` API group with verbs `create`, `update`, `patch`, `delete`, `get`, `list`, `watch`.
+- **Deletion cascade**: When a LynqNode is deleted, Lynq deletes the `Application` CR. Argo CD then prunes the downstream workloads (only if `prune: true`). Use `deletionPolicy: Retain` on the `argocd-app` manifest entry to keep the Application for post-mortem inspection.
+- **Application name length**: Argo CD Application names must be ≤ 63 characters. Always use `trunc63` in `nameTemplate`.
+- **Cross-namespace tracking**: Because the `Application` lives in `argocd` (not the LynqNode namespace), Lynq uses label-based tracking (`lynq.sh/node`, `lynq.sh/node-namespace`) rather than ownerReferences.
+
+## See Also
+
+- [Templates](templates.md) – Advanced templating and function usage.
+- [Policies](policies.md) – Control resource lifecycle (Retain vs. Delete).
+- [Monitoring](monitoring.md) – Capture Argo CD and Lynq metrics together.

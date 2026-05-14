@@ -1,234 +1,91 @@
 ---
-description: "Advanced Lynq patterns: custom domains, blue-green deployments, multi-tier stacks, database-per-node, and feature flags."
+description: "Advanced Lynq patterns: custom domains, blue-green deployments, multi-tier stacks, database-per-node, feature flags, preview environments, and sandbox environments."
 ---
 
 # Advanced Use Cases
 
-Lynq's template and policy system enables patterns beyond basic resource provisioning. This guide maps common requirements to specific patterns and links to detailed walkthroughs.
+Seven production-proven patterns. Each has a full guide with working YAML.
 
-## Available Patterns
+## Which Pattern Do I Need?
 
-### 1. Custom Domain Provisioning
+| My requirement | Pattern |
+|----------------|---------|
+| Per-PR isolated environments, automatic cleanup | [Preview Environments](#preview-environments) |
+| Developer/test sandboxes per account | [Sandbox Environments](#sandbox-environments) |
+| Zero-downtime deploys, one-SQL-statement rollback | [Blue-Green Deployments](#blue-green-deployments) |
+| Customers bring their own domain + TLS | [Custom Domain Provisioning](#custom-domain-provisioning) |
+| Web, API, worker, data tiers independently scaled | [Multi-Tier Application Stack](#multi-tier-application-stack) |
+| Complete data isolation per node (compliance) | [Database-per-Node](#database-per-node) |
+| Enable/disable features per plan without redeployment | [Dynamic Feature Flags](#dynamic-feature-flags) |
 
-**Use when:** Each node needs their own custom domain with automatic DNS and SSL.
+## Preview Environments
 
-**Key features:**
-- Automatic DNS record creation via External DNS
-- Domain verification workflows
-- Let's Encrypt SSL certificates
-- CNAME delegation support
+**Per-PR environments provisioned from CI with a single SQL INSERT. Deleting the row cleans up every resource.**
 
-**Best for:** SaaS platforms where customers bring their own domains.
+CI inserts one row per open PR — Lynq provisions a namespace, Deployment, Service, and TLS Ingress within ~60 seconds. When the PR closes, CI runs `DELETE`. No orphan environments, no stale namespaces.
 
-**[Read full guide →](/use-case-custom-domains)**
+**[Full guide →](use-case-preview-environments.md)**
 
----
+## Sandbox Environments
 
-### 2. Multi-Tier Application Stack
+**Isolated API sandbox environments per developer account — provisioned automatically, updated on plan change, torn down on account close.**
 
-**Use when:** Your application has multiple services (web, API, workers, data) that need coordinated deployment.
+Each account row maps to one sandbox: isolated namespace, API server, mock webhook sink, and per-account config. Plan upgrades reconcile resource limits automatically.
 
-**Key features:**
-- Separate templates per tier
-- Independent scaling per tier
-- Different policies per tier
-- Coordinated lifecycle management
+**[Full guide →](use-case-sandbox-environments.md)**
 
-**Best for:** Complex applications with multiple service tiers.
+## Blue-Green Deployments
 
-**[Read full guide →](/use-case-multi-tier)**
+**Zero-downtime deploys controlled by a single database column. Roll back with one SQL UPDATE.**
 
----
+An `active_color` column determines which environment is live. Lynq keeps both running; the Service selector follows the column value.
 
-### 3. Blue-Green Deployments
+**[Full guide →](use-case-blue-green.md)**
 
-**Use when:** You need zero-downtime deployments with instant rollback capability.
+## Custom Domain Provisioning
 
-**Key features:**
-- Two complete environments (blue and green)
-- Traffic switch via Service selector
-- Test new versions before going live
-- Instant rollback by switching back
+**Each node gets its own domain with automatic DNS and TLS — driven by a URL column in your database.**
 
-**Best for:** Production systems requiring zero-downtime updates.
+A `custom_domain` column triggers ExternalDNS record creation and cert-manager certificate provisioning. The domain goes live without any manual configuration.
 
-**[Read full guide →](/use-case-blue-green)**
+**[Full guide →](use-case-custom-domains.md)**
 
----
+## Multi-Tier Application Stack
 
-### 4. Database-per-Node
+**Separate templates for web, API, worker, and data tiers — each independently scaled and lifecycled.**
 
-**Use when:** Each node needs complete data isolation with dedicated database instances.
+Multiple LynqForms reference the same hub. Each tier gets its own LynqNode and can be updated, scaled, or replaced without touching the others.
 
-**Key features:**
-- Automatic RDS/Cloud SQL provisioning via Crossplane
-- Connection secret management
-- Plan-based database sizing
-- Retention policies for data safety
+**[Full guide →](use-case-multi-tier.md)**
 
-**Best for:** Compliance-heavy industries requiring complete data isolation.
+## Database-per-Node
 
-**[Read full guide →](/use-case-database-per-tenant)**
+**A dedicated cloud database per node, provisioned via Crossplane. Required for compliance isolation.**
 
----
+Each node row triggers an RDS/Cloud SQL instance (or isolated schema/database on a shared instance). Credentials are written to Kubernetes Secrets automatically.
 
-### 5. Dynamic Feature Flags
+**[Full guide →](use-case-database-per-tenant.md)**
 
-**Use when:** You want to enable/disable features per node without redeployment.
+## Dynamic Feature Flags
 
-**Key features:**
-- Application-level flags via environment variables
-- Infrastructure-level flags via database views
-- A/B testing support
-- Plan-based feature gating
+**Enable or disable features per node via database columns — no redeployment needed.**
 
-**Best for:** SaaS platforms with multiple subscription tiers or gradual feature rollouts.
+A boolean column in your database maps to a Kubernetes resource. Set the column to `false`; Lynq removes the resource on the next sync. Works for infrastructure features (dedicated queues, extra replicas) and application flags (env vars).
 
-**[Read full guide →](/use-case-feature-flags)**
-
-## Pattern Selection Guide
-
-### By Deployment Strategy
-
-| Requirement | Recommended Pattern |
-|-------------|---------------------|
-| Zero-downtime updates | [Blue-Green Deployments](/use-case-blue-green) |
-| Multiple service tiers | [Multi-Tier Stack](/use-case-multi-tier) |
-
-### By Infrastructure Needs
-
-| Requirement | Recommended Pattern |
-|-------------|---------------------|
-| Custom domains per node | [Custom Domain Provisioning](/use-case-custom-domains) |
-| Dedicated databases | [Database-per-Node](/use-case-database-per-tenant) |
-| Optional expensive features | [Feature Flags](/use-case-feature-flags) (Pattern 2) |
-
-### By Business Model
-
-| Business Model | Recommended Patterns |
-|----------------|----------------------|
-| SaaS with subscription tiers | [Feature Flags](/use-case-feature-flags) + [Custom Domains](/use-case-custom-domains) |
-| Enterprise B2B | [Database-per-Node](/use-case-database-per-tenant) + [Multi-Tier](/use-case-multi-tier) |
-| High-traffic consumer app | [Blue-Green Deployments](/use-case-blue-green) + [Feature Flags](/use-case-feature-flags) |
+**[Full guide →](use-case-feature-flags.md)**
 
 ## Combining Patterns
 
-Many use cases benefit from combining multiple patterns:
+| Scenario | Recommended combination |
+|----------|------------------------|
+| SaaS platform | Multi-Tier + Custom Domains + Feature Flags + Blue-Green |
+| Enterprise B2B | Database-per-Node + Multi-Tier + Blue-Green |
+| Developer platform | Sandbox Environments + Feature Flags |
+| Startup / early growth | Feature Flags + Custom Domains + Blue-Green |
 
-### SaaS Platform (Recommended Stack)
-1. **Multi-Tier Stack** - Separate web, API, worker, data tiers
-2. **Custom Domains** - Each customer gets their own domain
-3. **Feature Flags** - Different features per subscription plan
-4. **Blue-Green Deployments** - Safe deployment of new versions
+## See Also
 
-### Enterprise Platform
-1. **Database-per-Node** - Complete data isolation
-2. **Multi-Tier Stack** - Complex application architecture
-3. **Blue-Green** - Zero-downtime updates for mission-critical systems
-
-### Startup/Growth Stage
-1. **Feature Flags** - Rapid iteration and A/B testing
-2. **Custom Domains** - Professional branding for customers
-3. **Blue-Green Deployments** - Safe scaling as you grow
-
-## Implementation Best Practices
-
-### 1. Start Simple
-Begin with a single pattern that addresses your most critical need, then add more as requirements grow.
-
-### 2. Use Database Views
-For complex filtering logic, create database views rather than trying to implement logic in templates.
-
-```sql
--- Example: Filter nodes by plan and feature
-CREATE OR REPLACE VIEW enterprise_with_ai AS
-SELECT * FROM nodes
-WHERE plan_type = 'enterprise'
-  AND feature_ai_enabled = TRUE
-  AND is_active = TRUE;
-```
-
-### 3. Leverage Cross-Namespace Resources
-Use `targetNamespace` to organize resources across namespaces for better isolation.
-
-```yaml
-deployments:
-  - id: app
-    nameTemplate: "{{ .uid }}-app"
-    targetNamespace: "node-{{ .uid }}"  # Creates in node's namespace
-```
-
-### 4. Set Appropriate Policies
-Choose policies based on resource type:
-
-- **Databases**: `creationPolicy: Once`, `deletionPolicy: Retain`
-- **Configurations**: `creationPolicy: WhenNeeded`, `deletionPolicy: Delete`
-- **Temporary resources**: `creationPolicy: WhenNeeded`, `deletionPolicy: Delete`
-
-### 5. Monitor Everything
-Set up comprehensive monitoring for:
-- Resource provisioning status
-- Feature usage per node
-- Deployment progression
-- Cost per node
-
-## Common Pitfalls
-
-### ❌ Don't: Use YAML-level conditionals
-Templates are for **values**, not for conditional YAML structure.
-
-```yaml
-# ❌ This doesn't work
-{{- if .featureEnabled }}
-deployments:
-  - id: feature-deployment
-{{- end }}
-```
-
-### ✅ Do: Use database views and separate templates
-```sql
--- Database view
-CREATE VIEW nodes_with_feature AS
-SELECT * FROM nodes WHERE feature_enabled = TRUE;
-```
-
-```yaml
-# Separate LynqHub and Template
-apiVersion: operator.lynq.sh/v1
-kind: LynqHub
-metadata:
-  name: feature-enabled-nodes
-spec:
-  source:
-    mysql:
-      table: nodes_with_feature  # Use the view
-```
-
-### ❌ Don't: Store complex logic in LynqHub
-The hub should only read and map data, not transform it.
-
-### ✅ Do: Use database views for complex queries
-Move JOIN operations and complex filtering to database views.
-
-## Getting Help
-
-- **Documentation Issues**: [Report on GitHub](https://github.com/k8s-lynq/lynq/issues)
-- **Architecture Questions**: Review [Architecture Guide](/architecture)
-- **Template Help**: See [Templates Guide](/templates)
-- **Policy Questions**: Check [Policies Documentation](/policies)
-
-## Next Steps
-
-1. Review the pattern that best matches your needs
-2. Study the full guide for that pattern
-3. Adapt the example to your requirements
-4. Start with a single node for testing
-5. Gradually roll out to more nodes
-
-## Contributing
-
-Have a use case not covered here? Open an issue or submit a guide:
-
-- **Open an Issue**: [GitHub Issues](https://github.com/k8s-lynq/lynq/issues)
-- **Contribute a Guide**: Submit a pull request with your use case
-- **Discussions**: Share patterns and experiences with the community
+- [Templates](templates.md) — All template variables and functions.
+- [Policies](policies.md) — DeletionPolicy for safe teardown, CreationPolicy for one-time resources.
+- [Dependencies](dependencies.md) — Ordered provisioning for multi-resource patterns.
+- [Multi-Tenant Isolation](multi-tenant-isolation.md) — Namespace-per-node and NetworkPolicy.

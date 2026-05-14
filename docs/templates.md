@@ -28,6 +28,16 @@ flowchart LR
     class K8s data;
 ```
 
+::: tip Time to working
+Add your first variable substitution in 2 minutes. No new syntax to learn if you know Go templates.
+:::
+
+## How It Works
+
+- Every `nameTemplate`, `spec`, `labelsTemplate`, and `annotationsTemplate` field in a LynqForm is a Go `text/template` string.
+- Variables come from the LynqHub row (`uid`, `activate`, plus anything in `extraValueMappings`).
+- 200+ [Sprig functions](https://masterminds.github.io/sprig/) plus Lynq-specific helpers (`trunc63`, `toHost`, `sha1sum`) are available.
+
 ## Template Syntax
 
 ::: v-pre
@@ -136,16 +146,13 @@ env:
 
 :::
 
-## In This Guide
+## See Also
 
 | Page | Contents |
 |------|----------|
 | [Syntax Reference](templates-syntax.md) | Variables, custom functions, Sprig library, advanced techniques |
 | [Type Conversion](templates-typed-values.md) | `int`, `float`, `bool` for Kubernetes fields |
-| [Debugging & Migration](templates-troubleshooting.md) | Common errors, debugging tools, template evolution |
-
-## See Also
-
-- [Policies Guide](policies.md) — `creationPolicy`, `deletionPolicy`, `conflictPolicy`
-- [Dependencies Guide](dependencies.md) — Resource ordering with `dependIds`
-- [API Reference](api.md) — Complete LynqForm CRD schema
+| [Debugging & Migration](templates-troubleshooting.md) | Common errors, debugging tools |
+| [Resource Lifecycle](api-lifecycle.md) | Adding, removing, and re-adopting resources at runtime |
+| [Policies](policies.md) | `creationPolicy`, `deletionPolicy`, `conflictPolicy` |
+| [Dependencies](dependencies.md) | Resource ordering with `dependIds` |

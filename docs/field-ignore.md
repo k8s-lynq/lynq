@@ -21,7 +21,7 @@ Standard `CreationPolicy` options are too coarse-grained:
 
 **Real-world scenario**: You want HPA to dynamically control `spec.replicas`, but still want the operator to manage container images, environment variables, and other configuration.
 
-## How It Works
+## Usage
 
 The `ignoreFields` array accepts **standard JSONPath expressions** to specify which fields should be excluded from synchronization.
 
@@ -49,7 +49,7 @@ spec:
                   image: "nginx:{{ .version }}"  # Continues to sync
 ```
 
-## How It Works
+## Reconciliation Behavior
 
 ### Initial Creation
 

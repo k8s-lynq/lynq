@@ -204,8 +204,89 @@ Namespace/acme-ns@ns-main
 
 During reconciliation, the controller compares this list against the current template. Entries present in the status but absent from the template are treated as orphans.
 
+## Template Evolution
+
+Lynq handles template changes at runtime. Resources are added, updated, or removed automatically on the next reconcile.
+
+### Adding Resources
+
+New resources are created for all existing LynqNodes using this template:
+
+::: v-pre
+```yaml
+# Add a new service — created for all existing nodes on next sync
+services:
+  - id: api-service
+    nameTemplate: "{{ .uid }}-api"
+    spec:
+      apiVersion: v1
+      kind: Service
+      # ...
+```
+:::
+
+### Modifying Resources
+
+Resources are updated according to their `patchStrategy` (default: SSA — only managed fields are changed).
+
+### Removing Resources
+
+When a resource is removed from the template, Lynq checks its `deletionPolicy`:
+
+- `Delete` (default): resource is deleted from the cluster
+- `Retain`: resource is kept with orphan markers added
+
+::: v-pre
+```yaml
+# Before: worker and cache exist alongside web
+deployments:
+  - id: web
+    deletionPolicy: Delete
+  - id: worker
+    deletionPolicy: Retain
+  - id: cache
+    deletionPolicy: Delete
+
+# After: only web in template
+deployments:
+  - id: web
+    deletionPolicy: Delete
+```
+:::
+
+**Result:**
+- `worker` — retained with orphan labels
+- `cache` — deleted from cluster
+- `web` — continues managed normally
+
+### Re-adopting Orphaned Resources
+
+When you re-add a previously removed resource back to the template, Lynq automatically removes orphan markers and restores management.
+
+::: v-pre
+```bash
+# Confirm re-adoption
+kubectl get deployment acme-worker -o jsonpath='{.metadata.labels.lynq\.sh/orphaned}'
+# (empty output = successfully re-adopted)
+```
+:::
+
+### Best Practices for Template Changes
+
+- Test in non-production first to validate resource cleanup behavior.
+- Use `deletionPolicy: Retain` for stateful resources (PVCs, databases) before removing them from templates.
+- Use `creationPolicy: Once` for init resources (one-time Jobs, seed ConfigMaps).
+
+::: v-pre
+```bash
+# Check current tracked resources before changing a template
+kubectl get lynqnode <name> -o jsonpath='{.status.appliedResources}' | jq .
+```
+:::
+
 ## See Also
 
 - [API Reference](api.md) — CRD schema, field types, validation rules
-- [Policies Guide](policies.md) — `deletionPolicy`, `creationPolicy`, `conflictPolicy`
-- [Templates Guide](templates.md) — Using labels and annotations in templates
+- [Policies](policies.md) — `deletionPolicy`, `creationPolicy`, `conflictPolicy`
+- [Templates](templates.md) — Using labels and annotations in templates
+- [Templates Troubleshooting](templates-troubleshooting.md) — Debug template errors and rendering issues

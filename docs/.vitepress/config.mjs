@@ -53,9 +53,7 @@ export default withMermaid(
           text: "Concepts",
           collapsed: false,
           items: [
-            { text: "What is Lynq", link: "/about-lynq" },
-            { text: "Infrastructure as Data", link: "/recordops" },
-            { text: "How It Works", link: "/how-it-works" },
+            { text: "Introduction", link: "/introduction" },
             { text: "Architecture", link: "/architecture" },
           ],
         },
@@ -64,7 +62,14 @@ export default withMermaid(
           text: "Guides",
           collapsed: false,
           items: [
-            { text: "Datasources", link: "/datasource" },
+            {
+              text: "Datasources",
+              collapsed: false,
+              items: [
+                { text: "Overview", link: "/datasource" },
+                { text: "MySQL Views", link: "/datasource-views" },
+              ],
+            },
             {
               text: "Templates",
               collapsed: false,
@@ -81,6 +86,7 @@ export default withMermaid(
               collapsed: false,
               items: [
                 { text: "Overview", link: "/policies" },
+                { text: "Operations & Migration", link: "/policies-operations" },
                 { text: "Examples", link: "/policies-examples" },
                 { text: "Field-Level Ignore", link: "/field-ignore" },
               ],
@@ -116,6 +122,7 @@ export default withMermaid(
           collapsed: false,
           items: [
             { text: "Crossplane", link: "/integration-crossplane" },
+            { text: "Crossplane Full-Stack", link: "/integration-crossplane-fullstack" },
             { text: "External DNS", link: "/integration-external-dns" },
             { text: "Flux", link: "/integration-flux" },
             { text: "Argo CD", link: "/integration-argocd" },
@@ -126,8 +133,17 @@ export default withMermaid(
           text: "Reference",
           collapsed: false,
           items: [
-            { text: "API Reference", link: "/api" },
-            { text: "Resource Lifecycle", link: "/api-lifecycle" },
+            {
+              text: "API Reference",
+              collapsed: false,
+              items: [
+                { text: "Overview", link: "/api" },
+                { text: "LynqHub", link: "/api-lynqhub" },
+                { text: "LynqForm", link: "/api-lynqform" },
+                { text: "LynqNode", link: "/api-lynqnode" },
+                { text: "Resource Lifecycle", link: "/api-lifecycle" },
+              ],
+            },
             { text: "Configuration", link: "/configuration" },
             { text: "Dashboard", link: "/dashboard" },
             { text: "Glossary", link: "/glossary" },
@@ -142,6 +158,7 @@ export default withMermaid(
             { text: "Prometheus Queries", link: "/prometheus-queries" },
             { text: "Alert Runbooks", link: "/alert-runbooks" },
             { text: "Security", link: "/security" },
+            { text: "Multi-Tenant Isolation", link: "/multi-tenant-isolation" },
             { text: "Performance", link: "/performance" },
             { text: "Troubleshooting", link: "/troubleshooting" },
           ],
