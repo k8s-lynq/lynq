@@ -55,6 +55,51 @@ docker run -d \
   /app/bff-server -mode local -context my-cluster-context
 ```
 
+### EKS or Exec-Plugin Clusters (AWS, GKE, etc.)
+
+If your kubeconfig uses an exec-based credential plugin (e.g. `aws-iam-authenticator`, `gke-gcloud-auth-plugin`), the plugin binary won't be available inside the Docker container. Use `kubectl proxy` to handle authentication on the host side instead.
+
+**Terminal 1** — start the proxy with host access enabled:
+
+```bash
+kubectl proxy --port=8001 \
+  --context=<your-context> \
+  --accept-hosts='.*'
+```
+
+**Terminal 2** — create a simple kubeconfig pointing to the proxy and run the Dashboard:
+
+```bash
+cat > /tmp/lynq-proxy.kubeconfig << 'EOF'
+apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    server: http://host.docker.internal:8001
+  name: proxy
+contexts:
+- context:
+    cluster: proxy
+    user: ""
+  name: proxy
+current-context: proxy
+users: []
+EOF
+
+docker run --rm -p 8080:8080 \
+  -v /tmp/lynq-proxy.kubeconfig:/app/.kube/config:ro \
+  -e KUBECONFIG=/app/.kube/config \
+  -e APP_MODE=local \
+  ghcr.io/k8s-lynq/lynq-dashboard:latest \
+  /app/bff-server -mode local -addr :8080 -context proxy
+```
+
+Open `http://localhost:8080` in your browser. `kubectl proxy` handles all cluster authentication transparently — no credentials enter the container.
+
+::: tip
+`--accept-hosts='.*'` is required because Docker containers connect via `host.docker.internal`, not `127.0.0.1`. Without it, kubectl proxy rejects the requests with `403 Forbidden`.
+:::
+
 ### Environment Variables
 
 | Variable | Default | Description |
