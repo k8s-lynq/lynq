@@ -4,18 +4,7 @@ description: "Tuning guide for Lynq at scale. Covers concurrency flags, requeue 
 
 # Performance Tuning Guide
 
-Practical optimization strategies for scaling Lynq to thousands of nodes.
-
-## Before/After: 500 Nodes Optimization
-
-| Metric | Before | After | Improvement |
-|--------|--------|-------|-------------|
-| Reconciliation P95 | 45s | 4.2s | **90% faster** |
-| Ready Rate | 72% | 99% | **+27%** |
-| CPU Usage | 1850m | 450m | **75% reduction** |
-| Memory | 1.8Gi | 890Mi | **50% reduction** |
-
-**What changed:** reduced dependency depth (5→3 levels), set `waitForReady: false` on ConfigMaps, `creationPolicy: Once` on init Secrets, increased `--node-concurrency` from 10→20.
+Practical optimization strategies for scaling Lynq to hundreds of nodes.
 
 ## Understanding Performance
 
@@ -181,7 +170,7 @@ CREATE INDEX idx_node_id ON node_configs(node_id);
 
 Monitor these Prometheus metrics with specific thresholds:
 
-| Metric | Normal | Warning | Critical | Action |
+| Metric | Target | Warning | Critical | Action |
 |--------|--------|---------|----------|--------|
 | Reconciliation P95 | < 5s | 5-15s | > 15s | Simplify templates, reduce dependencies |
 | Reconciliation P99 | < 15s | 15-30s | > 30s | Check for blocking resources |
@@ -301,76 +290,6 @@ Performance Issue?
    ├─ High error count? → Check specific error messages
    └─ Low errors? → Performance may be within normal range
 ```
-
-### Real-World Before/After Optimization
-
-**Scenario:** 500 nodes with 8 resources each = 4,000 resources total
-
-**Before Optimization:**
-```bash
-# Status: Slow reconciliation, high CPU
-kubectl logs -n lynq-system deployment/lynq-controller-manager | grep "Reconciliation completed" | tail -5
-2024-01-15T10:30:45.123Z INFO  Reconciliation completed  {"node": "node-001", "duration": "45.2s"}
-2024-01-15T10:31:30.456Z INFO  Reconciliation completed  {"node": "node-002", "duration": "43.8s"}
-2024-01-15T10:32:15.789Z INFO  Reconciliation completed  {"node": "node-003", "duration": "47.1s"}
-
-kubectl top pods -n lynq-system
-NAME                                     CPU(cores)   MEMORY(bytes)
-lynq-controller-manager-xxx              1850m        1.8Gi
-
-# Metrics
-lynqnode_reconcile_duration_seconds{quantile="0.95"} = 45.0
-lynqnode_resources_ready / lynqnode_resources_desired = 0.72  # 72% ready
-```
-
-**Optimization Applied:**
-
-```yaml
-# 1. Reduced dependency depth from 5 to 3 levels
-# Before: secret → configmap → deployment → service → ingress (depth: 5)
-# After: secret, configmap (parallel) → deployment → service, ingress (parallel)
-
-# 2. Set waitForReady: false for non-critical resources
-configMaps:
-  - id: config
-    waitForReady: false  # ConfigMaps don't need readiness checks
-
-# 3. Used creationPolicy: Once for init resources
-secrets:
-  - id: init-secret
-    creationPolicy: Once  # Skip re-applying on each reconcile
-
-# 4. Increased concurrency
-args:
-  - --node-concurrency=20  # Up from 10
-```
-
-**After Optimization:**
-```bash
-# Status: Fast reconciliation, normal CPU
-kubectl logs -n lynq-system deployment/lynq-controller-manager | grep "Reconciliation completed" | tail -5
-2024-01-15T11:30:02.123Z INFO  Reconciliation completed  {"node": "node-001", "duration": "3.2s"}
-2024-01-15T11:30:05.456Z INFO  Reconciliation completed  {"node": "node-002", "duration": "2.8s"}
-2024-01-15T11:30:08.789Z INFO  Reconciliation completed  {"node": "node-003", "duration": "3.5s"}
-
-kubectl top pods -n lynq-system
-NAME                                     CPU(cores)   MEMORY(bytes)
-lynq-controller-manager-xxx              450m         890Mi
-
-# Metrics
-lynqnode_reconcile_duration_seconds{quantile="0.95"} = 4.2  # 90% improvement!
-lynqnode_resources_ready / lynqnode_resources_desired = 0.99  # 99% ready
-```
-
-**Improvement Summary:**
-
-| Metric | Before | After | Improvement |
-|--------|--------|-------|-------------|
-| Reconciliation P95 | 45s | 4.2s | **90% faster** |
-| Ready Rate | 72% | 99% | **+27%** |
-| CPU Usage | 1850m | 450m | **75% reduction** |
-| Memory Usage | 1.8Gi | 890Mi | **50% reduction** |
-| Time to Ready (all) | ~25min | ~3min | **88% faster** |
 
 ## Troubleshooting Slow Performance
 
