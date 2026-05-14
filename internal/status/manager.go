@@ -259,19 +259,31 @@ func (m *Manager) flushBatch(ctx context.Context, batch map[client.ObjectKey]*St
 func (m *Manager) applyUpdate(ctx context.Context, update *StatusUpdate) error {
 	logger := log.Log.WithName("status-manager")
 
+	var nodeDeleted, uidMismatch bool
+
 	// Update Kubernetes status
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		// Get latest version
 		node := &lynqv1.LynqNode{}
 		if err := m.client.Get(ctx, update.Key, node); err != nil {
 			if errors.IsNotFound(err) {
-				// LynqNode was deleted, skip update
+				nodeDeleted = true
 				logger.V(1).Info("LynqNode not found, skipping status update",
 					"node", update.Key.Name,
 					"namespace", update.Key.Namespace)
 				return nil
 			}
 			return err
+		}
+
+		// Discard stale events from a deleted-and-recreated instance with the same name.
+		if update.UID != "" && node.UID != update.UID {
+			uidMismatch = true
+			logger.V(1).Info("LynqNode UID changed (recreated), discarding stale event",
+				"node", update.Key,
+				"expectedUID", update.UID,
+				"actualUID", node.UID)
+			return nil
 		}
 
 		// Apply changes to status
@@ -321,8 +333,6 @@ func (m *Manager) applyUpdate(ctx context.Context, update *StatusUpdate) error {
 
 		// Only call Update if something changed
 		if !statusChanged {
-			// Even if status didn't change, we still need to update metrics
-			// Return nil to skip the K8s API call, but continue to metrics update
 			return nil
 		}
 
@@ -330,11 +340,20 @@ func (m *Manager) applyUpdate(ctx context.Context, update *StatusUpdate) error {
 		return m.client.Status().Update(ctx, node)
 	})
 
-	// Update metrics if provided (metrics don't require retry)
-	// CRITICAL: Always update metrics regardless of status changes
-	// This ensures Prometheus always gets the latest values during scraping
+	// Only update metrics when the LynqNode we observed is the same instance
+	// that produced this event. Guards against two races:
+	//   nodeDeleted: flush-after-deletion — series resurrection prevention.
+	//   uidMismatch: same-name recreation — stale event must not touch the new instance.
 	if update.Metrics != nil {
-		m.updateMetrics(update.Key, update.Metrics)
+		switch {
+		case uidMismatch:
+			// Stale event — do not touch the new instance's series.
+		case nodeDeleted:
+			// Prevent resurrection. The finalizer path already cleaned up, but idempotent.
+			metrics.CleanupLynqNodeMetrics(update.Key.Name, update.Key.Namespace)
+		default:
+			m.updateMetrics(update.Key, update.Metrics)
+		}
 	}
 
 	if err != nil {

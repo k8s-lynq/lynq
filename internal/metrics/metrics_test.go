@@ -441,3 +441,91 @@ func TestRolloutMetricLabels(t *testing.T) {
 	assert.GreaterOrEqual(t, testutil.CollectAndCount(FormRolloutPhase), 0)
 	assert.GreaterOrEqual(t, testutil.CollectAndCount(FormRolloutProgress), 0)
 }
+
+func TestCleanupLynqNodeMetrics(t *testing.T) {
+	LynqNodeResourcesReady.Reset()
+	LynqNodeResourcesDesired.Reset()
+	LynqNodeResourcesFailed.Reset()
+	LynqNodeResourcesConflicted.Reset()
+	LynqNodeConditionStatus.Reset()
+	LynqNodeDegradedStatus.Reset()
+	LynqNodeConflictsTotal.Reset()
+
+	// Set metrics for two nodes
+	LynqNodeResourcesReady.WithLabelValues("node-a", "ns-x").Set(5)
+	LynqNodeResourcesReady.WithLabelValues("node-b", "ns-x").Set(3)
+	LynqNodeResourcesDesired.WithLabelValues("node-a", "ns-x").Set(5)
+	LynqNodeResourcesDesired.WithLabelValues("node-b", "ns-x").Set(3)
+	LynqNodeResourcesFailed.WithLabelValues("node-a", "ns-x").Set(0)
+	LynqNodeResourcesFailed.WithLabelValues("node-b", "ns-x").Set(1)
+	LynqNodeResourcesConflicted.WithLabelValues("node-a", "ns-x").Set(0)
+	LynqNodeResourcesConflicted.WithLabelValues("node-b", "ns-x").Set(0)
+
+	// node-a has two condition types and one degraded reason
+	LynqNodeConditionStatus.WithLabelValues("node-a", "ns-x", "Ready").Set(1)
+	LynqNodeConditionStatus.WithLabelValues("node-a", "ns-x", "Degraded").Set(0)
+	LynqNodeConditionStatus.WithLabelValues("node-b", "ns-x", "Ready").Set(1)
+	LynqNodeDegradedStatus.WithLabelValues("node-a", "ns-x", "ResourceFailures").Set(1)
+	LynqNodeDegradedStatus.WithLabelValues("node-b", "ns-x", "ResourceFailures").Set(0)
+	LynqNodeConflictsTotal.WithLabelValues("node-a", "ns-x", "Deployment", "Stuck").Add(2)
+	LynqNodeConflictsTotal.WithLabelValues("node-b", "ns-x", "Service", "Force").Add(1)
+
+	assert.Equal(t, 2, testutil.CollectAndCount(LynqNodeResourcesReady))
+
+	// Cleanup only node-a
+	CleanupLynqNodeMetrics("node-a", "ns-x")
+
+	// node-a series gone, node-b remains
+	assert.Equal(t, 1, testutil.CollectAndCount(LynqNodeResourcesReady))
+	assert.Equal(t, 1, testutil.CollectAndCount(LynqNodeResourcesDesired))
+	assert.Equal(t, 1, testutil.CollectAndCount(LynqNodeResourcesFailed))
+	assert.Equal(t, 1, testutil.CollectAndCount(LynqNodeResourcesConflicted))
+	// Both node-a condition types removed; node-b's 1 remains
+	assert.Equal(t, 1, testutil.CollectAndCount(LynqNodeConditionStatus))
+	assert.Equal(t, 1, testutil.CollectAndCount(LynqNodeDegradedStatus))
+	assert.Equal(t, 1, testutil.CollectAndCount(LynqNodeConflictsTotal))
+
+	// Idempotent — must not panic when series are already absent
+	assert.NotPanics(t, func() { CleanupLynqNodeMetrics("node-a", "ns-x") })
+
+	// node-b values intact
+	expected := `
+# HELP lynqnode_resources_ready Number of ready resources for a LynqNode
+# TYPE lynqnode_resources_ready gauge
+lynqnode_resources_ready{lynqnode="node-b",namespace="ns-x"} 3
+`
+	err := testutil.CollectAndCompare(LynqNodeResourcesReady, strings.NewReader(expected))
+	assert.NoError(t, err)
+}
+
+func TestCleanupHubMetrics(t *testing.T) {
+	HubDesired.Reset()
+	HubReady.Reset()
+	HubFailed.Reset()
+
+	HubDesired.WithLabelValues("hub-a", "ns-x").Set(10)
+	HubDesired.WithLabelValues("hub-b", "ns-x").Set(5)
+	HubReady.WithLabelValues("hub-a", "ns-x").Set(10)
+	HubReady.WithLabelValues("hub-b", "ns-x").Set(4)
+	HubFailed.WithLabelValues("hub-a", "ns-x").Set(0)
+	HubFailed.WithLabelValues("hub-b", "ns-x").Set(1)
+
+	assert.Equal(t, 2, testutil.CollectAndCount(HubDesired))
+
+	CleanupHubMetrics("hub-a", "ns-x")
+
+	assert.Equal(t, 1, testutil.CollectAndCount(HubDesired))
+	assert.Equal(t, 1, testutil.CollectAndCount(HubReady))
+	assert.Equal(t, 1, testutil.CollectAndCount(HubFailed))
+
+	// Idempotent
+	assert.NotPanics(t, func() { CleanupHubMetrics("hub-a", "ns-x") })
+
+	expected := `
+# HELP hub_desired Number of desired LynqNodes from the hub data source
+# TYPE hub_desired gauge
+hub_desired{hub="hub-b",namespace="ns-x"} 5
+`
+	err := testutil.CollectAndCompare(HubDesired, strings.NewReader(expected))
+	assert.NoError(t, err)
+}

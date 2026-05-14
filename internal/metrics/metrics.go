@@ -199,3 +199,24 @@ func RolloutPhaseToMetric(phase string) float64 {
 		return 0
 	}
 }
+
+// CleanupLynqNodeMetrics removes all Prometheus time series scoped to a single
+// LynqNode. Idempotent — safe to call multiple times even if series are absent.
+func CleanupLynqNodeMetrics(name, namespace string) {
+	LynqNodeResourcesReady.DeleteLabelValues(name, namespace)
+	LynqNodeResourcesDesired.DeleteLabelValues(name, namespace)
+	LynqNodeResourcesFailed.DeleteLabelValues(name, namespace)
+	LynqNodeResourcesConflicted.DeleteLabelValues(name, namespace)
+
+	partial := prometheus.Labels{"lynqnode": name, "namespace": namespace}
+	LynqNodeConditionStatus.DeletePartialMatch(partial)
+	LynqNodeDegradedStatus.DeletePartialMatch(partial)
+	LynqNodeConflictsTotal.DeletePartialMatch(partial)
+}
+
+// CleanupHubMetrics removes Prometheus time series scoped to a single LynqHub.
+func CleanupHubMetrics(name, namespace string) {
+	HubDesired.DeleteLabelValues(name, namespace)
+	HubReady.DeleteLabelValues(name, namespace)
+	HubFailed.DeleteLabelValues(name, namespace)
+}

@@ -102,10 +102,15 @@ func (r *LynqHubReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 			// Remove finalizer
 			registry.Finalizers = removeString(registry.Finalizers, FinalizerLynqHub)
-			if err := r.Update(ctx, registry); err != nil {
-				logger.Error(err, "Failed to remove finalizer")
-				return ctrl.Result{}, err
+			updateErr := r.Update(ctx, registry)
+			if updateErr != nil && !errors.IsNotFound(updateErr) {
+				logger.Error(updateErr, "Failed to remove finalizer")
+				return ctrl.Result{}, updateErr
 			}
+
+			// Clean up Prometheus series regardless of whether the CR still exists.
+			metrics.CleanupHubMetrics(registry.Name, registry.Namespace)
+
 			logger.Info("Finalizer removed, registry cleanup complete")
 		}
 		return ctrl.Result{}, nil
