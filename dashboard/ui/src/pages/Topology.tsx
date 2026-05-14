@@ -90,7 +90,7 @@ export function Topology() {
   }, [searchQuery, data])
 
   // Determine which nodes to highlight and mode
-  const { highlightedNodeIds, dimNonHighlighted, highlightMode } = useMemo(() => {
+  const { highlightedNodeIds, highlightMode } = useMemo(() => {
     // Problem mode takes precedence when active and there are problems
     if (problemMode && problemCount > 0) {
       return {
@@ -156,6 +156,13 @@ export function Topology() {
       }
     }
   }, [matchedNodeIds.length])
+
+  // Keep the selected node fresh: look up the live version from data on every render
+  // so the drawer reflects status/children changes from polling without requiring re-click.
+  const liveSelectedNode = useMemo(() => {
+    if (!selectedNode || !data) return selectedNode
+    return data.nodes.find((n) => n.id === selectedNode.id) ?? selectedNode
+  }, [selectedNode, data])
 
   // Handle click on node body - open detail drawer
   const handleNodeClick = useCallback((node: TopologyNode) => {
@@ -402,7 +409,7 @@ export function Topology() {
 
       {/* Node Detail Drawer */}
       <NodeDetailDrawer
-        node={selectedNode}
+        node={liveSelectedNode}
         allNodes={data?.nodes || []}
         open={!!selectedNode}
         onClose={handleCloseDrawer}

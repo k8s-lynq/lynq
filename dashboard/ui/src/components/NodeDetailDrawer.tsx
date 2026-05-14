@@ -54,6 +54,7 @@ import {
   IconBroadcast,
 } from "@tabler/icons-react";
 import { useEvents, type ConnectionStatus } from "@/hooks/useEvents";
+import { useNodeConflicts, type ConflictInfo } from "@/hooks/useNodeConflicts";
 import type { TFunction } from "i18next";
 
 const MIN_WIDTH = 360;
@@ -363,6 +364,8 @@ function ResourcesTab({
   childNodes: TopologyNode[];
 }) {
   const { t } = useTranslation();
+  const conflictSectionRef = useRef<HTMLDivElement>(null);
+
   // Filter to get only resource type children (for LynqNode)
   // or show forms/nodes for hub/form types
   const resourceChildren = childNodes.filter((n) => n.type === "resource");
@@ -378,9 +381,32 @@ function ResourcesTab({
     return { kind: t("drawer.resource"), name };
   };
 
-  // Separate managed vs skipped resources
+  // Fetch conflict info from events — only for LynqNode type
+  const { conflictsByKey } = useNodeConflicts({
+    nodeName: node.name,
+    namespace: node.namespace,
+    enabled: node.type === "node",
+  });
+
+  // Build resource key matching the parsed event key: "${kind}/${ns}/${name}"
+  const getConflictKey = (resource: TopologyNode) => {
+    const [kind, ...rest] = resource.name.split("/");
+    return `${kind}/${resource.namespace}/${rest.join("/")}`;
+  };
+
+  // Separate conflicted / managed / skipped.
+  // Gate conflict display on the LynqNode itself being non-ready.
+  // Individual resource nodes often keep 'ready' status even during a conflict
+  // (the resource physically exists — ownership is disputed, not the resource).
+  // node.status transitioning back to 'ready' (via liveSelectedNode) is the
+  // reliable signal that the controller re-reconciled successfully, even though
+  // old ResourceConflict events persist in Kubernetes for ~1 hour.
+  const conflictActive = node.status !== "ready" && conflictsByKey.size > 0;
+  const conflictedResources = resourceChildren.filter(
+    (r) => conflictActive && conflictsByKey.has(getConflictKey(r))
+  );
   const managedResources = resourceChildren.filter(
-    (r) => r.status !== "skipped"
+    (r) => r.status !== "skipped" && !conflictedResources.includes(r)
   );
   const skippedResources = resourceChildren.filter(
     (r) => r.status === "skipped"
@@ -391,17 +417,84 @@ function ResourcesTab({
       {/* Show resources for LynqNode */}
       {node.type === "node" && (
         <>
+          {/* Conflict banner — driven by live cross-referenced count, clears when topology normalises */}
+          {conflictedResources.length > 0 && (
+            <button
+              className="w-full p-3 rounded-md bg-rose-50 dark:bg-rose-950/30 border border-rose-300 dark:border-rose-800 text-left"
+              onClick={() =>
+                conflictSectionRef.current?.scrollIntoView({
+                  behavior: "smooth",
+                })
+              }
+            >
+              <div className="flex items-start gap-2">
+                <IconAlertTriangle
+                  size={16}
+                  className="text-rose-500 mt-0.5 shrink-0"
+                />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-rose-700 dark:text-rose-400">
+                    {t("drawer.conflictDetectedTitle")}
+                  </p>
+                  <p className="text-xs text-rose-600 dark:text-rose-500 mt-0.5">
+                    {t("drawer.conflictDetectedDesc")}
+                  </p>
+                </div>
+                <Badge className="bg-rose-100 text-rose-700 border border-rose-300 dark:bg-rose-950 dark:text-rose-400 dark:border-rose-800 text-xs shrink-0">
+                  {conflictedResources.length}
+                </Badge>
+              </div>
+            </button>
+          )}
+
           {/* Info about resource status */}
           <div className="text-xs text-muted-foreground p-2 bg-muted/50 rounded">
             <p>
               <strong>{t("drawer.managedColon")}</strong>{" "}
               {t("drawer.managedInfo")}
             </p>
+            {conflictedResources.length > 0 && (
+              <p>
+                <strong className="text-rose-600 dark:text-rose-400">
+                  {t("drawer.conflictedColon")}
+                </strong>{" "}
+                <span className="text-rose-600 dark:text-rose-400">
+                  {t("drawer.conflictedInfo")}
+                </span>
+              </p>
+            )}
             <p>
               <strong>{t("drawer.skippedColon")}</strong>{" "}
               {t("drawer.skippedInfo")}
             </p>
           </div>
+
+          {/* Conflicted resources section */}
+          {conflictedResources.length > 0 && (
+            <div ref={conflictSectionRef}>
+              <p className="text-sm font-medium text-rose-600 dark:text-rose-400">
+                {t("drawer.conflictedResources")} ({conflictedResources.length}
+                ):
+              </p>
+              <div className="space-y-2 w-full overflow-hidden mt-2">
+                {conflictedResources.map((resource) => {
+                  const parsed = parseResourceName(resource.name);
+                  const conflictKey = getConflictKey(resource);
+                  return (
+                    <ResourceItem
+                      key={resource.id}
+                      kind={parsed.kind}
+                      name={parsed.name}
+                      namespace={resource.namespace}
+                      status={resource.status}
+                      metadata={resource.metadata}
+                      conflictInfo={conflictsByKey.get(conflictKey)}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           <p className="text-sm text-muted-foreground">
             {t("drawer.managedResources")} ({managedResources.length}):
@@ -424,9 +517,11 @@ function ResourcesTab({
               })}
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground italic">
-              {t("drawer.noResources")}
-            </p>
+            conflictedResources.length === 0 && (
+              <p className="text-sm text-muted-foreground italic">
+                {t("drawer.noResources")}
+              </p>
+            )
           )}
 
           {/* Skipped resources section */}
@@ -622,48 +717,65 @@ function ResourceItem({
   namespace,
   status,
   metadata,
+  conflictInfo,
 }: {
   kind: string;
   name: string;
   namespace: string;
   status: ResourceStatus;
   metadata?: ResourceMetadata;
+  conflictInfo?: ConflictInfo;
 }) {
   const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
+
   const isOnce = metadata?.creationPolicy === "Once";
   const isRetain = metadata?.deletionPolicy === "Retain";
   const isStuck = metadata?.conflictPolicy === "Stuck";
   const isForce = metadata?.conflictPolicy === "Force";
 
-  // Show warning if this individual resource is failed and has Stuck policy (potential conflict)
-  const mayBeStuck = isStuck && status === "failed";
+  const isConflicted = !!conflictInfo;
+  // mayBeStuck: heuristic fallback when no event data — suppressed when we have real conflict info
+  const mayBeStuck = !isConflicted && isStuck && status === "failed";
+  const isHighlighted = isConflicted || mayBeStuck;
 
   return (
     <div
       className={`p-2.5 rounded-md border overflow-hidden ${
-        mayBeStuck
+        isHighlighted
           ? "border-rose-300 bg-rose-50/50 dark:bg-rose-950/30"
           : "border-border bg-muted/30"
       }`}
     >
-      {/* Header row: Kind badge + Name + Status - using grid for fixed column sizes */}
-      <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2">
-        <Badge variant="outline" className="text-xs font-medium">
-          {kind}
-        </Badge>
-        <span className="text-sm font-medium truncate min-w-0" title={name}>
-          {name}
-        </span>
-        <div>{STATUS_ICONS[status]}</div>
-      </div>
-
-      {/* Namespace */}
-      <p
-        className="text-xs text-muted-foreground mt-1 truncate"
-        title={namespace}
+      {/* Header row — clickable to expand when we have real conflict info */}
+      <div
+        className={isConflicted ? "cursor-pointer" : ""}
+        onClick={isConflicted ? () => setExpanded((v) => !v) : undefined}
       >
-        {namespace}
-      </p>
+        <div className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-2">
+          <Badge variant="outline" className="text-xs font-medium">
+            {kind}
+          </Badge>
+          <span className="text-sm font-medium truncate min-w-0" title={name}>
+            {name}
+          </span>
+          <div>{STATUS_ICONS[status]}</div>
+          {isConflicted &&
+            (expanded ? (
+              <IconChevronDown size={14} className="text-rose-500" />
+            ) : (
+              <IconChevronRight size={14} className="text-rose-500" />
+            ))}
+        </div>
+
+        {/* Namespace */}
+        <p
+          className="text-xs text-muted-foreground mt-1 truncate"
+          title={namespace}
+        >
+          {namespace}
+        </p>
+      </div>
 
       {/* Policy chips */}
       {metadata && (
@@ -714,26 +826,30 @@ function ResourceItem({
             </TooltipContent>
           </Tooltip>
 
-          {/* Conflict Policy - highlight if potentially stuck */}
+          {/* Conflict Policy — upgraded chip when we have real conflict data */}
           <Tooltip>
             <TooltipTrigger asChild>
               <span
                 className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium cursor-help ${
-                  mayBeStuck
+                  isConflicted || mayBeStuck
                     ? "bg-rose-100 text-rose-700 border border-rose-300 animate-pulse dark:bg-rose-950 dark:text-rose-400 dark:border-rose-800"
                     : isForce
                     ? "bg-orange-100 text-orange-700 border border-orange-200 dark:bg-orange-950 dark:text-orange-400 dark:border-orange-800"
                     : "bg-slate-100 text-slate-600 border border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700"
                 }`}
               >
-                {mayBeStuck ? (
+                {isConflicted || mayBeStuck ? (
                   <IconAlertTriangle size={10} />
                 ) : isForce ? (
                   <IconBolt size={10} />
                 ) : (
                   <IconLock size={10} />
                 )}
-                {mayBeStuck
+                {isConflicted
+                  ? t("drawer.conflictPolicy", {
+                      policy: conflictInfo.policy,
+                    })
+                  : mayBeStuck
                   ? t("drawer.mayBeStuck")
                   : isForce
                   ? t("drawer.force")
@@ -741,13 +857,33 @@ function ResourceItem({
               </span>
             </TooltipTrigger>
             <TooltipContent>
-              {mayBeStuck
+              {isConflicted
+                ? t("drawer.conflictPolicyTooltip", {
+                    policy: conflictInfo.policy,
+                  })
+                : mayBeStuck
                 ? t("drawer.mayBeStuckTooltip")
                 : isForce
                 ? t("drawer.forceTakesOwnership")
                 : t("drawer.stopsReconciliation")}
             </TooltipContent>
           </Tooltip>
+        </div>
+      )}
+
+      {/* Expanded conflict details */}
+      {isConflicted && expanded && (
+        <div className="mt-2 pt-2 border-t border-rose-200 dark:border-rose-800 space-y-1.5">
+          <p className="text-xs text-rose-700 dark:text-rose-400 leading-relaxed break-words">
+            {conflictInfo.message}
+          </p>
+          <div className="flex items-center gap-3 text-[10px] text-rose-500/70">
+            <span>
+              {t("drawer.lastSeen")}:{" "}
+              {formatRelativeTime(t, conflictInfo.lastSeen)}
+            </span>
+            {conflictInfo.count > 1 && <span>× {conflictInfo.count}</span>}
+          </div>
         </div>
       )}
     </div>

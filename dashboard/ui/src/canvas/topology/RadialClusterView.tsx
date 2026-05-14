@@ -3,6 +3,7 @@ import * as d3 from 'd3-hierarchy'
 import { arc as d3Arc } from 'd3-shape'
 import { zoom as d3Zoom, zoomIdentity } from 'd3-zoom'
 import { select } from 'd3-selection'
+import 'd3-transition'
 import type { ZoomBehavior } from 'd3-zoom'
 import type { Selection } from 'd3-selection'
 import type { TopologyData, TopologyNode, ResourceStatus } from '@/types/lynq'
@@ -241,16 +242,16 @@ export function RadialClusterView({
       .size([2 * Math.PI, outerR])
       .separation((a, b) => (a.parent === b.parent ? 1 : leafCount < 20 ? 2 : 1.2))
 
-    clusterLayout(root)
+    const layoutRoot = clusterLayout(root)
 
     // Polar → Cartesian
-    root.each((node: d3.HierarchyPointNode<HierarchyDatum>) => {
+    layoutRoot.each((node) => {
       const n = node as d3.HierarchyPointNode<HierarchyDatum> & { px: number; py: number }
       n.px = node.y * Math.cos(node.x - Math.PI / 2)
       n.py = node.y * Math.sin(node.x - Math.PI / 2)
     })
 
-    return { root, outerR, nodeR }
+    return { root: layoutRoot, outerR, nodeR }
   }, [hierarchyData, width, height, showResources])
 
   // ── Zoom behavior ────────────────────────
@@ -349,7 +350,7 @@ export function RadialClusterView({
 
     // Resource nodes animate faster and with a tighter stagger
     nodeEnter.transition()
-      .duration(reduced ? 0 : (d) => d.data.nodeType === 'resource' ? 250 : 500)
+      .duration((d) => reduced ? 0 : (d.data.nodeType === 'resource' ? 250 : 500))
       .delay((_d, i) => Math.min(i * (showResources ? 8 : 15), 500))
       .attr('transform', (d) => `translate(${d.px},${d.py}) scale(1)`)
 
@@ -495,7 +496,7 @@ function linkOpacity(
 }
 
 function drawNode(
-  el: Selection<SVGGElement, d3.HierarchyPointNode<HierarchyDatum> & { px: number; py: number }, SVGGElement, unknown>,
+  el: Selection<SVGGElement, unknown, null, undefined>,
   d: d3.HierarchyPointNode<HierarchyDatum> & { px: number; py: number },
   nodeR: number,
   selectedNodeId: string | null | undefined,
