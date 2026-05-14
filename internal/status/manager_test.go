@@ -460,10 +460,10 @@ func TestManager_MetricsNotFoundGuard(t *testing.T) {
 	manager := NewManager(fakeClient, WithSyncMode())
 
 	manager.Publish(StatusEvent{
-		Type:    EventMetricsUpdate,
-		NodeKey: client.ObjectKey{Name: "ghost-node", Namespace: "default"},
-		NodeUID: "some-uid",
-		Payload: MetricsPayload{Ready: 3, Failed: 0, Desired: 3},
+		Type:      EventMetricsUpdate,
+		NodeKey:   client.ObjectKey{Name: "ghost-node", Namespace: "default"},
+		NodeUID:   "some-uid",
+		Payload:   MetricsPayload{Ready: 3, Failed: 0, Desired: 3},
 		Timestamp: time.Now(),
 	})
 
@@ -500,10 +500,10 @@ func TestManager_MetricsUIDMismatchGuard(t *testing.T) {
 
 	// Old instance's stale event with old UID
 	manager.Publish(StatusEvent{
-		Type:    EventMetricsUpdate,
-		NodeKey: client.ObjectKey{Name: "recycled-node", Namespace: "default"},
-		NodeUID: "old-uid", // mismatches node.UID = "new-uid"
-		Payload: MetricsPayload{Ready: 99, IsDegraded: true, DegradedReason: "ResourceFailures"},
+		Type:      EventMetricsUpdate,
+		NodeKey:   client.ObjectKey{Name: "recycled-node", Namespace: "default"},
+		NodeUID:   "old-uid", // mismatches node.UID = "new-uid"
+		Payload:   MetricsPayload{Ready: 99, IsDegraded: true, DegradedReason: "ResourceFailures"},
 		Timestamp: time.Now(),
 	})
 
@@ -540,10 +540,10 @@ func TestManager_MetricsNormalPath(t *testing.T) {
 	manager := NewManager(fakeClient, WithSyncMode())
 
 	manager.Publish(StatusEvent{
-		Type:    EventMetricsUpdate,
-		NodeKey: client.ObjectKey{Name: "my-node", Namespace: "default"},
-		NodeUID: "my-uid",
-		Payload: MetricsPayload{Ready: 4, Failed: 0, Desired: 4},
+		Type:      EventMetricsUpdate,
+		NodeKey:   client.ObjectKey{Name: "my-node", Namespace: "default"},
+		NodeUID:   "my-uid",
+		Payload:   MetricsPayload{Ready: 4, Failed: 0, Desired: 4},
 		Timestamp: time.Now(),
 	})
 
