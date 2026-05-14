@@ -1,5 +1,5 @@
 ---
-description: "Isolated API sandbox environments per developer account — provisioned automatically when an account is created, updated when the plan changes, torn down when the account closes."
+description: "Isolated Kubernetes sandbox environments per developer account — provisioned on account creation, updated on plan change, torn down on account closure. No manual ops."
 ---
 
 # Developer Sandbox Environments

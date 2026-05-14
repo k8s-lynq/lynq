@@ -1,5 +1,5 @@
 ---
-description: "Per-node custom domains with automatic DNS records and TLS certificates, driven by a verified database column."
+description: "Per-node custom domains with automatic DNS records (ExternalDNS) and TLS certificates (cert-manager), driven by a database column. No manual DNS ops."
 ---
 
 # Custom Domain Provisioning

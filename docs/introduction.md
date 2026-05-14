@@ -1,5 +1,5 @@
 ---
-description: "What Lynq is, why database-driven infrastructure matters, and when to use it — the complete concept in one page."
+description: "What Lynq is and why it exists — database-driven Kubernetes infrastructure, the three CRDs (LynqHub, LynqForm, LynqNode), and when to use it."
 ---
 
 # Introduction to Lynq

@@ -1,5 +1,5 @@
 ---
-description: "Security guide for Lynq: credential management, RBAC, audit logging, and multi-tenant isolation."
+description: "Security hardening for Lynq: credential management with SecretRef, RBAC least-privilege roles, audit logging, and namespace isolation practices."
 ---
 
 # Security Guide

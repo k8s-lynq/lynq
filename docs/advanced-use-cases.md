@@ -1,5 +1,5 @@
 ---
-description: "Advanced Lynq patterns: custom domains, blue-green deployments, multi-tier stacks, database-per-node, feature flags, preview environments, and sandbox environments."
+description: "Real-world Lynq patterns: custom domains, blue-green deployments, multi-tier stacks, database-per-node, feature flags, and preview environments."
 ---
 
 # Advanced Use Cases

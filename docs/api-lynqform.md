@@ -1,5 +1,5 @@
 ---
-description: "LynqForm API reference — spec fields, TResource structure, rollout configuration, and status."
+description: "LynqForm CRD API reference — hubId, resource arrays, TResource spec fields, dependency ordering, creationPolicy, and deletionPolicy."
 ---
 
 # LynqForm API Reference

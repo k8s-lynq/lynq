@@ -238,6 +238,12 @@ export default withMermaid(
       const cleanUrl = page.replace(/\.md$/, "").replace(/index$/, "");
       head.push(["link", { rel: "canonical", href: `${hostname}/${cleanUrl}` }]);
 
+      // Doc pages: set og:type to article (more accurate than website)
+      const isDoc = !page.startsWith("blog/") && page !== "index.md";
+      if (isDoc) {
+        head.push(["meta", { property: "og:type", content: "article" }]);
+      }
+
       // Blog posts: OG/Twitter/article/JSON-LD override
       const isBlogPost = page.startsWith("blog/") && page !== "blog/index.md";
       if (isBlogPost) {
@@ -314,9 +320,17 @@ export default withMermaid(
         return head;
       }
 
-      // Home page: Organization + WebSite + SoftwareApplication JSON-LD
+      // Home page: description override + Organization + WebSite + SoftwareApplication JSON-LD
       const isHomePage = page === "index.md";
       if (isHomePage) {
+        const homeDesc = pageData.frontmatter?.description;
+        if (homeDesc) {
+          head.push(
+            ["meta", { name: "description", content: homeDesc }],
+            ["meta", { property: "og:description", content: homeDesc }],
+            ["meta", { name: "twitter:description", content: homeDesc }],
+          );
+        }
         head.push([
           "script",
           { type: "application/ld+json" },
@@ -340,6 +354,11 @@ export default withMermaid(
                 url: hostname,
                 name: "Lynq",
                 publisher: { "@id": `${hostname}/#organization` },
+                potentialAction: {
+                  "@type": "SearchAction",
+                  target: `${hostname}/?search={search_term_string}`,
+                  "query-input": "required name=search_term_string",
+                },
               },
               {
                 "@type": "SoftwareApplication",
@@ -347,7 +366,7 @@ export default withMermaid(
                 applicationCategory: "DeveloperApplication",
                 operatingSystem: "Kubernetes",
                 description:
-                  "A RecordOps platform that implements Infrastructure as Data for Kubernetes. Turn database records into infrastructure automatically.",
+                  "Open-source Kubernetes operator that provisions Deployments, Services, and Ingresses automatically from MySQL database records. Each active row becomes a managed set of Kubernetes resources.",
                 url: hostname,
                 image: `${hostname}/og-image.png`,
                 author: { "@id": `${hostname}/#organization` },
@@ -357,6 +376,7 @@ export default withMermaid(
                   priceCurrency: "USD",
                 },
                 license: "https://opensource.org/licenses/Apache-2.0",
+                keywords: "kubernetes operator, database-driven infrastructure, infrastructure automation, kubernetes multi-tenant, resource provisioning",
               },
             ],
           }),
@@ -486,7 +506,7 @@ export default withMermaid(
         {
           name: "description",
           content:
-            "Lynq is a RecordOps platform that implements Infrastructure as Data for Kubernetes. Transform database records into production-ready infrastructure automatically. No YAML, no CI/CD delays—just data.",
+            "Lynq is an open-source Kubernetes operator that provisions Deployments, Services, and Ingresses automatically from MySQL database records. No YAML pipelines required.",
         },
       ],
       [
@@ -494,7 +514,7 @@ export default withMermaid(
         {
           name: "keywords",
           content:
-            "kubernetes, operator, automation, database-driven, k8s, lynq, multi-tenancy, resource provisioning, recordops, infrastructure as data, infrastructure as code alternative, data-driven infrastructure",
+            "kubernetes operator, database-driven infrastructure, infrastructure as data, kubernetes automation, resource provisioning, lynq, kubernetes multi-tenant, recordops, mysql kubernetes, k8s operator",
         },
       ],
       ["meta", { name: "author", content: "Lynq Contributors" }],
@@ -514,7 +534,7 @@ export default withMermaid(
         {
           property: "og:description",
           content:
-            "A RecordOps platform that implements Infrastructure as Data for Kubernetes. Turn database records into infrastructure. No YAML files, no CI/CD delays—just data.",
+            "Open-source Kubernetes operator that provisions Deployments, Services, and Ingresses automatically from MySQL records. No YAML pipelines required.",
         },
       ],
       ["meta", { property: "og:url", content: "https://lynq.sh/" }],
@@ -541,14 +561,18 @@ export default withMermaid(
         {
           name: "twitter:description",
           content:
-            "A RecordOps platform that implements Infrastructure as Data for Kubernetes. Turn database records into infrastructure. No YAML, no CI/CD delays—just data.",
+            "Open-source Kubernetes operator that provisions Deployments, Services, and Ingresses automatically from MySQL records. No YAML pipelines required.",
         },
       ],
       [
         "meta",
         { name: "twitter:image", content: "https://lynq.sh/og-image.png" },
       ],
-      ["meta", { name: "twitter:image:alt", content: "Lynq Logo" }],
+      ["meta", { name: "twitter:image:alt", content: "Lynq — Kubernetes operator for database-driven infrastructure" }],
+      ["meta", { name: "twitter:site", content: "@k8slynq" }],
+
+      // Robots
+      ["meta", { name: "robots", content: "index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" }],
 
       // Google site verification
       [

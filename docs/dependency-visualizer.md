@@ -1,5 +1,5 @@
 ---
-description: "Interactive visualizer for inspecting resource dependency graphs within a LynqForm."
+description: "Interactive dependency graph visualizer for LynqForm. Paste YAML to see execution order, detect cycles, and identify parallel resource groups."
 layout: doc
 aside: false
 ---

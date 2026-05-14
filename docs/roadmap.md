@@ -1,5 +1,5 @@
 ---
-description: "Lynq feature roadmap with completed milestones (v1.0, v1.1) and planned features for v1.2 and v1.3."
+description: "Lynq roadmap: completed milestones in v1.0–v1.1, planned features for v1.2 (PostgreSQL, Helm) and v1.3 (horizontal scaling, OIDC) and beyond."
 ---
 
 # Roadmap

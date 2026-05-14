@@ -1,5 +1,5 @@
 ---
-description: "LynqNode API reference — spec, status fields, conditions, and lifecycle annotations."
+description: "LynqNode CRD API reference — auto-generated spec, status conditions, readyResources, appliedResources, and lifecycle annotations."
 ---
 
 # LynqNode API Reference

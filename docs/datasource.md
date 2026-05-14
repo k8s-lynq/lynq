@@ -1,5 +1,5 @@
 ---
-description: "Connect Lynq to MySQL. Covers connection setup, credential management, column mappings, and extraValueMappings."
+description: "Connect Lynq to a MySQL database. Configure LynqHub with host, credentials, value mappings, and extraValueMappings for template variables."
 ---
 
 # Datasource Configuration

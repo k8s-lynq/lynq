@@ -1,5 +1,5 @@
 ---
-description: "LynqHub API reference — spec fields, status fields, and validation rules."
+description: "LynqHub CRD API reference — spec.source MySQL connection, syncInterval, valueMappings, status fields, and multi-template support."
 ---
 
 # LynqHub API Reference

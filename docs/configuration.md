@@ -1,5 +1,5 @@
 ---
-description: "Lynq controller runtime flags, concurrency settings, and configuration reference index."
+description: "Lynq operator configuration reference: controller runtime flags, concurrency knobs (node, hub, form), requeue intervals, and feature gates."
 ---
 
 # Configuration

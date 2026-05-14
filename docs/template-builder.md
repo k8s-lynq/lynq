@@ -1,5 +1,5 @@
 ---
-description: "Interactive Form Builder for composing LynqForm resource templates visually."
+description: "Interactive LynqForm builder — compose resource templates visually, configure dependencies and policies, and export ready-to-apply YAML."
 layout: doc
 aside: false
 ---

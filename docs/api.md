@@ -1,5 +1,5 @@
 ---
-description: "Lynq API reference index — CRD overview, common types, shared labels/annotations, and kubectl quick reference."
+description: "Lynq Kubernetes CRD reference index — LynqHub, LynqForm, LynqNode overview, common types, shared labels/annotations, and kubectl commands."
 ---
 
 # API Reference

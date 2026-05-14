@@ -1,5 +1,5 @@
 ---
-description: "Definitions for Lynq terms, CRDs, labels, policies, and Kubernetes concepts."
+description: "Definitions for Lynq-specific terms: CRDs, labels, annotations, policy types, template functions, and core Kubernetes concepts used throughout the docs."
 ---
 
 # Glossary
