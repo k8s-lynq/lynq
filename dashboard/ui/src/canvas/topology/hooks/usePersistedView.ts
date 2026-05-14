@@ -6,6 +6,7 @@ const DEFAULT_FILTERS: TopologyFilters = {
   status: 'all',
   namespace: '',
   formId: '',
+  showResources: false,
 }
 
 const DEFAULT_VIEW: PersistedView = {

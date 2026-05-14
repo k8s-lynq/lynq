@@ -9,7 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { IconX } from '@tabler/icons-react'
+import { IconX, IconStack2 } from '@tabler/icons-react'
 
 interface FilterChipsProps {
   filters: TopologyFilters
@@ -32,6 +32,10 @@ export function FilterChips({ filters, formNodes, namespaces, onChange, onReset 
 
   const set = useCallback(<K extends keyof TopologyFilters>(key: K, value: TopologyFilters[K]) => {
     onChange({ ...filters, [key]: value })
+  }, [filters, onChange])
+
+  const toggleResources = useCallback(() => {
+    onChange({ ...filters, showResources: !filters.showResources })
   }, [filters, onChange])
 
   return (
@@ -76,6 +80,17 @@ export function FilterChips({ filters, formNodes, namespaces, onChange, onReset 
           </SelectContent>
         </Select>
       )}
+
+      <Button
+        variant={filters.showResources ? 'default' : 'outline'}
+        size="sm"
+        className={`h-7 px-2 text-xs gap-1.5 ${filters.showResources ? 'bg-violet-600 hover:bg-violet-700 text-white border-violet-600' : ''}`}
+        onClick={toggleResources}
+        title={filters.showResources ? 'Hide K8s resources' : 'Show K8s resources per node'}
+      >
+        <IconStack2 size={12} />
+        Resources
+      </Button>
 
       {hasActiveFilter && (
         <Button variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1" onClick={onReset}>

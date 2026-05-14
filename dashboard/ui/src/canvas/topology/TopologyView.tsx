@@ -58,14 +58,20 @@ export function TopologyView({
     [data]
   )
 
-  // Apply filters: filter the data passed to the radial view
+  // Apply filters: filter the data passed to the radial view.
+  // When showResources is on, resource nodes whose parent LynqNode passed the
+  // filter are also included — buildHierarchy handles the rest.
   const filteredData = useMemo((): TopologyData => {
     const f = view.filters
     if (f.status === 'all' && !f.namespace && !f.formId) return data
 
+    const nodeMap = new Map(data.nodes.map(n => [n.id, n]))
     const allowed = new Set<string>()
+
     for (const n of data.nodes) {
       if (n.type === 'hub') { allowed.add(n.id); continue }
+      if (n.type === 'resource') continue  // resolved after main loop
+      if (n.type === 'orphan') continue
       if (f.namespace && n.namespace !== f.namespace) continue
       if (f.formId && n.type === 'form' && n.id !== f.formId) continue
       if (f.formId && n.type === 'node') {
@@ -83,6 +89,7 @@ export function TopologyView({
       if (f.status !== 'all' && n.type === 'node' && n.status !== f.status) continue
       allowed.add(n.id)
     }
+
     // Always include forms that still have children after filter
     for (const n of data.nodes) {
       if (n.type === 'form') {
@@ -90,6 +97,17 @@ export function TopologyView({
         if (hasChild || (f.formId === n.id)) allowed.add(n.id)
       }
     }
+
+    // When resources are shown, include resource nodes whose parent passed the filter
+    if (f.showResources) {
+      for (const edge of data.edges) {
+        const target = nodeMap.get(edge.target)
+        if (target?.type === 'resource' && allowed.has(edge.source)) {
+          allowed.add(edge.target)
+        }
+      }
+    }
+
     return {
       nodes: data.nodes.filter((n) => allowed.has(n.id)),
       edges: data.edges.filter((e) => allowed.has(e.source) && allowed.has(e.target)),
@@ -145,6 +163,7 @@ export function TopologyView({
           onNodeClick={onNodeClick}
           selectedNodeId={selectedNodeId}
           focusedNodeId={focusedNodeId}
+          showResources={view.filters.showResources}
         />
       )}
 

@@ -41,6 +41,7 @@ export const SUNBURST_STATUS_OUTER = 220      // Status ring outer
 
 // Radial tree
 export const RADIAL_NODE_RADIUS = 8
+export const RESOURCE_R = 3            // visual half-size of resource squares
 
 // Zoom thresholds (with hysteresis)
 export const ZOOM_TIER1_MAX = 2.0             // Above this → Tier 2

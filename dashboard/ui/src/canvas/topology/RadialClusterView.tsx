@@ -38,6 +38,7 @@ interface RadialClusterViewProps {
   onNodeClick: (node: TopologyNode) => void
   selectedNodeId?: string | null
   focusedNodeId?: string | null
+  showResources?: boolean
 }
 
 // ─────────────────────────────────────────
@@ -46,8 +47,10 @@ interface RadialClusterViewProps {
 
 const HUB_R = 44
 const FORM_R = 18
+const RESOURCE_HALF = 3   // half-size of resource squares (visual)
 const CANVAS_PAD = 60
 const LINK_COLOR = '#cbd5e1'
+const RESOURCE_LINK_COLOR = '#e2e8f0'
 
 function statusColor(status: ResourceStatus, field: 'accent' | 'bg' = 'accent') {
   return STATUS_COLORS[status]?.[field] ?? '#94a3b8'
@@ -55,6 +58,8 @@ function statusColor(status: ResourceStatus, field: 'accent' | 'bg' = 'accent') 
 
 // Node radius adapts to leaf count so nodes never overlap at initial zoom
 function adaptiveNodeR(leafCount: number): number {
+  if (leafCount > 800) return 2.0
+  if (leafCount > 400) return 2.5
   if (leafCount > 150) return 3.5
   if (leafCount > 80) return 5
   if (leafCount > 40) return 6
@@ -63,11 +68,13 @@ function adaptiveNodeR(leafCount: number): number {
 
 // ─────────────────────────────────────────
 // Build D3 hierarchy
-// Unions children[] and edges; supports multiple hubs via virtual root
+// Unions children[] and edges; supports multiple hubs via virtual root.
+// When showResources is true, walks one level deeper (hub→form→node→resource).
 // ─────────────────────────────────────────
 
-function buildHierarchy(data: TopologyData): HierarchyDatum | null {
+function buildHierarchy(data: TopologyData, showResources: boolean): HierarchyDatum | null {
   const nodeMap = new Map(data.nodes.map((n) => [n.id, n]))
+  const maxDepth = showResources ? 3 : 2
 
   // Build parent→children map from both children[] arrays and edges
   const childrenMap = new Map<string, Set<string>>()
@@ -86,15 +93,19 @@ function buildHierarchy(data: TopologyData): HierarchyDatum | null {
   if (hubs.length === 0) return null
 
   function toHierarchyDatum(n: TopologyNode, depth = 0): HierarchyDatum {
-    const childIds = depth < 2 ? [...(childrenMap.get(n.id) ?? [])] : []
+    const childIds = depth < maxDepth ? [...(childrenMap.get(n.id) ?? [])] : []
     const children = childIds
       .map((id) => nodeMap.get(id))
-      .filter((c): c is TopologyNode => !!c && c.type !== 'resource' && c.type !== 'orphan')
+      .filter((c): c is TopologyNode => {
+        if (!c) return false
+        if (c.type === 'orphan') return false
+        // At depth < maxDepth-1 (i.e., not the last expansion level), skip resources
+        if (!showResources && c.type === 'resource') return false
+        return true
+      })
       .map((c) => toHierarchyDatum(c, depth + 1))
 
-    // Compute hub/form metrics from actual leaf node statuses rather than
-    // trusting the stored metrics field, which can lag behind node changes
-    // because the hub controller reconciles on its own schedule.
+    // Compute hub/form metrics from actual leaf statuses — bypasses stale operator metrics
     let metrics = n.metrics
     if ((n.type === 'hub' || n.type === 'form') && children.length > 0) {
       const leaves: HierarchyDatum[] = []
@@ -105,11 +116,14 @@ function buildHierarchy(data: TopologyData): HierarchyDatum | null {
         }
       }
       collect(children)
-      if (leaves.length > 0) {
+      // Only aggregate from LynqNode leaves (not resource leaves) to keep hub metrics stable
+      const nodeLeavesOnly = leaves.filter(l => l.nodeType === 'node')
+      const src = nodeLeavesOnly.length > 0 ? nodeLeavesOnly : leaves
+      if (src.length > 0) {
         metrics = {
-          desired: leaves.length,
-          ready: leaves.filter((l) => l.status === 'ready').length,
-          failed: leaves.filter((l) => l.status === 'failed').length,
+          desired: nodeLeavesOnly.length > 0 ? src.length : (n.metrics?.desired ?? src.length),
+          ready: src.filter((l) => l.status === 'ready').length,
+          failed: src.filter((l) => l.status === 'failed').length,
         }
       }
     }
@@ -187,17 +201,14 @@ export function RadialClusterView({
   onNodeClick,
   selectedNodeId,
   focusedNodeId,
+  showResources = false,
 }: RadialClusterViewProps) {
   const svgRef = useRef<SVGSVGElement>(null)
   const gRef = useRef<SVGGElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const zoomRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null)
   const tooltipRef = useRef<HTMLDivElement>(null)
-  // Use the last outerR that triggered a successful fit so we can re-fit if
-  // the container had zero size on first render (initial containerSize = 800×600
-  // placeholder, but ResizeObserver fires with the real size shortly after).
   const lastFitOuterR = useRef<number | null>(null)
-  // Stable ref avoids stale closures in D3 event handlers
   const onNodeClickRef = useRef(onNodeClick)
   const prefersReducedMotion = useRef(
     typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -206,7 +217,10 @@ export function RadialClusterView({
   useEffect(() => { onNodeClickRef.current = onNodeClick }, [onNodeClick])
 
   // ── Build hierarchy ──────────────────────
-  const hierarchyData = useMemo(() => buildHierarchy(data), [data])
+  const hierarchyData = useMemo(
+    () => buildHierarchy(data, showResources),
+    [data, showResources]
+  )
 
   // ── Compute layout with adaptive sizing ──
   const layoutResult = useMemo((): LayoutResult | null => {
@@ -217,8 +231,9 @@ export function RadialClusterView({
     const nodeR = adaptiveNodeR(leafCount)
 
     // Grow outerR if the container is too small for non-overlapping nodes.
-    // Minimum arc per leaf = nodeR * 2.5 so adjacent circles don't touch.
-    const minRFromLeaves = Math.ceil((nodeR * 2.5 * leafCount) / (2 * Math.PI))
+    // Resource squares are RESOURCE_HALF*2 wide, use that as min spacing unit.
+    const spacingUnit = showResources ? Math.max(RESOURCE_HALF * 2.5, nodeR * 2.5) : nodeR * 2.5
+    const minRFromLeaves = Math.ceil((spacingUnit * leafCount) / (2 * Math.PI))
     const containerR = Math.max(10, Math.min(width, height) / 2 - CANVAS_PAD)
     const outerR = Math.max(minRFromLeaves, containerR)
 
@@ -236,11 +251,11 @@ export function RadialClusterView({
     })
 
     return { root, outerR, nodeR }
-  }, [hierarchyData, width, height])
+  }, [hierarchyData, width, height, showResources])
 
   // ── Zoom behavior ────────────────────────
   // Re-attach event listener on resize, but only set initial transform once.
-  // Scale to fit on first mount so large trees are fully visible.
+  // Re-fit (animated) whenever outerR changes — handles both resize and resource toggle.
   useEffect(() => {
     const svg = svgRef.current
     const g = gRef.current
@@ -255,15 +270,14 @@ export function RadialClusterView({
     zoomRef.current = zoom
     select(svg).call(zoom)
 
-    // Fit on first valid render, and re-fit if outerR changed (e.g. after
-    // ResizeObserver gives us the real container size on first paint).
     if (layoutResult && width > 50 && height > 50 && layoutResult.outerR !== lastFitOuterR.current) {
       lastFitOuterR.current = layoutResult.outerR
       const fitScale = Math.min(
         0.95,
         Math.max(0.1, (Math.min(width, height) / 2 - 10) / layoutResult.outerR)
       )
-      select(svg).call(
+      // Animated re-fit — smooth when toggling resources on/off
+      select(svg).transition().duration(prefersReducedMotion.current ? 0 : 500).call(
         zoom.transform,
         zoomIdentity.translate(width / 2, height / 2).scale(fitScale)
       )
@@ -283,27 +297,34 @@ export function RadialClusterView({
     const links = layoutNodes.links()
 
     // ── Links (bezier curves) ──
+    // Split links into regular and resource links for separate styling
     const linkSel = g.selectAll<SVGPathElement, typeof links[0]>('path.radial-link')
       .data(links, (d) => `${d.source.data.id}--${d.target.data.id}`)
+
+    const isResourceLink = (d: typeof links[0]) => d.target.data.nodeType === 'resource'
 
     linkSel.enter()
       .append('path')
       .attr('class', 'radial-link')
       .attr('fill', 'none')
-      .attr('stroke', LINK_COLOR)
-      .attr('stroke-width', 1.2)
+      .attr('stroke', (d) => isResourceLink(d) ? RESOURCE_LINK_COLOR : LINK_COLOR)
+      .attr('stroke-width', (d) => isResourceLink(d) ? 0.7 : 1.2)
+      .attr('stroke-dasharray', (d) => isResourceLink(d) ? '2 3' : 'none')
       .attr('stroke-opacity', 0)
       .attr('d', (d) => radialCurve(d))
       .transition().duration(reduced ? 0 : 600)
-      .attr('stroke-opacity', (d) => linkOpacity(d.target.data.id, highlightedNodeIds, highlightMode))
+      .attr('stroke-opacity', (d) => linkOpacity(d.target.data.id, isResourceLink(d), highlightedNodeIds, highlightMode))
 
     linkSel
       .transition().duration(reduced ? 0 : 400)
+      .attr('stroke', (d) => isResourceLink(d) ? RESOURCE_LINK_COLOR : LINK_COLOR)
+      .attr('stroke-width', (d) => isResourceLink(d) ? 0.7 : 1.2)
+      .attr('stroke-dasharray', (d) => isResourceLink(d) ? '2 3' : 'none')
       .attr('d', (d) => radialCurve(d))
-      .attr('stroke-opacity', (d) => linkOpacity(d.target.data.id, highlightedNodeIds, highlightMode))
+      .attr('stroke-opacity', (d) => linkOpacity(d.target.data.id, isResourceLink(d), highlightedNodeIds, highlightMode))
 
     linkSel.exit()
-      .transition().duration(200)
+      .transition().duration(reduced ? 0 : 200)
       .attr('stroke-opacity', 0)
       .remove()
 
@@ -326,8 +347,10 @@ export function RadialClusterView({
         if (event.key === 'Enter' || event.key === ' ') onNodeClickRef.current(d.data._original)
       })
 
-    nodeEnter.transition().duration(reduced ? 0 : 500)
-      .delay((_d, i) => Math.min(i * 15, 500))
+    // Resource nodes animate faster and with a tighter stagger
+    nodeEnter.transition()
+      .duration(reduced ? 0 : (d) => d.data.nodeType === 'resource' ? 250 : 500)
+      .delay((_d, i) => Math.min(i * (showResources ? 8 : 15), 500))
       .attr('transform', (d) => `translate(${d.px},${d.py}) scale(1)`)
 
     const nodeMerge = nodeEnter.merge(
@@ -336,10 +359,10 @@ export function RadialClusterView({
 
     nodeMerge.transition().duration(reduced ? 0 : 400)
       .attr('transform', (d) => `translate(${d.px},${d.py}) scale(1)`)
-      .attr('opacity', (d) => nodeOpacity(d.data.id, highlightedNodeIds, highlightMode))
+      .attr('opacity', (d) => nodeOpacity(d.data.id, d.data.nodeType, highlightedNodeIds, highlightMode))
 
     nodeSel.exit()
-      .transition().duration(200)
+      .transition().duration(reduced ? 0 : 180)
       .attr('transform', (d) => `translate(${(d as typeof nodes[0]).px},${(d as typeof nodes[0]).py}) scale(0)`)
       .remove()
 
@@ -351,7 +374,7 @@ export function RadialClusterView({
     })
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layoutResult, highlightedNodeIds, highlightMode, selectedNodeId, focusedNodeId])
+  }, [layoutResult, highlightedNodeIds, highlightMode, selectedNodeId, focusedNodeId, showResources])
 
   // ── Pan to focused node when search cycling ──
   useEffect(() => {
@@ -379,17 +402,31 @@ export function RadialClusterView({
     )
   }, [width, height, layoutResult])
 
+  // Scale guard: warn when resource count is high
+  const resourceCount = useMemo(
+    () => data.nodes.filter(n => n.type === 'resource').length,
+    [data]
+  )
+  const showScaleWarning = showResources && resourceCount > 2000
+
   return (
     <div ref={containerRef} className="relative w-full h-full">
       <svg ref={svgRef} width={width} height={height} className="w-full h-full">
         <g ref={gRef} />
       </svg>
 
-      {/* Floating tooltip — positioned relative to container using clientX/Y */}
+      {/* Floating tooltip */}
       <div
         ref={tooltipRef}
-        className="pointer-events-none absolute z-50 hidden rounded-lg border bg-popover px-3 py-2 text-sm shadow-md max-w-[220px]"
+        className="pointer-events-none absolute z-50 hidden rounded-lg border bg-popover px-3 py-2 text-sm shadow-md max-w-[240px]"
       />
+
+      {/* Scale warning */}
+      {showScaleWarning && (
+        <div className="absolute bottom-16 right-4 text-[10px] text-amber-600 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+          {resourceCount.toLocaleString()} resources — performance may vary
+        </div>
+      )}
 
       {/* Zoom controls */}
       <div className="absolute bottom-4 right-4 flex flex-col gap-1">
@@ -424,7 +461,6 @@ export function RadialClusterView({
 function radialCurve(d: d3.HierarchyPointLink<HierarchyDatum>): string {
   const s = d.source as d3.HierarchyPointNode<HierarchyDatum> & { px: number; py: number }
   const t = d.target as d3.HierarchyPointNode<HierarchyDatum> & { px: number; py: number }
-  // Cubic bezier: control points at midpoint radius, source and target angles
   const midR = (s.y + t.y) / 2
   const sAngle = s.x - Math.PI / 2
   const tAngle = t.x - Math.PI / 2
@@ -435,14 +471,27 @@ function radialCurve(d: d3.HierarchyPointLink<HierarchyDatum>): string {
   return `M${s.px},${s.py} C${cx1},${cy1} ${cx2},${cy2} ${t.px},${t.py}`
 }
 
-function nodeOpacity(id: string, highlighted: Set<string> | undefined, mode: string | undefined): number {
+function nodeOpacity(
+  id: string,
+  nodeType: string,
+  highlighted: Set<string> | undefined,
+  mode: string | undefined
+): number {
   if (!mode || mode === 'none' || !highlighted || highlighted.size === 0) return 1
-  return highlighted.has(id) ? 1 : 0.25
+  if (highlighted.has(id)) return 1
+  // Resource nodes dim more aggressively during highlight modes
+  return nodeType === 'resource' ? 0.1 : 0.25
 }
 
-function linkOpacity(targetId: string, highlighted: Set<string> | undefined, mode: string | undefined): number {
-  if (!mode || mode === 'none' || !highlighted || highlighted.size === 0) return 0.5
-  return highlighted.has(targetId) ? 0.8 : 0.08
+function linkOpacity(
+  targetId: string,
+  isResource: boolean,
+  highlighted: Set<string> | undefined,
+  mode: string | undefined
+): number {
+  const base = isResource ? 0.18 : 0.5
+  if (!mode || mode === 'none' || !highlighted || highlighted.size === 0) return base
+  return highlighted.has(targetId) ? (isResource ? 0.4 : 0.8) : (isResource ? 0.04 : 0.08)
 }
 
 function drawNode(
@@ -511,8 +560,65 @@ function drawNode(
         .attr('stroke-width', 2)
     }
 
+  } else if (datum.nodeType === 'resource') {
+    // Resource: small rounded square, angled to follow radial direction
+    const half = RESOURCE_HALF
+    const angle = (d.x - Math.PI / 2) * (180 / Math.PI)
+
+    if (isHighlighted && highlightMode !== 'none') {
+      el.append('rect')
+        .attr('x', -(half + 3.5)).attr('y', -(half + 3.5))
+        .attr('width', (half + 3.5) * 2).attr('height', (half + 3.5) * 2)
+        .attr('rx', 2.5)
+        .attr('fill', 'none')
+        .attr('stroke', highlightMode === 'problem' ? '#dc2626' : '#0d9488')
+        .attr('stroke-width', 1.2)
+        .attr('stroke-dasharray', '3 2')
+        .attr('transform', `rotate(${angle + 45})`)
+    }
+
+    el.append('rect')
+      .attr('x', -half).attr('y', -half)
+      .attr('width', half * 2).attr('height', half * 2)
+      .attr('rx', 1)
+      .attr('fill', accent)
+      .attr('fill-opacity', datum.status === 'skipped' ? 0.5 : 0.82)
+      .attr('stroke', 'white')
+      .attr('stroke-width', 0.8)
+      .attr('transform', `rotate(${angle + 45})`)
+
+    // Inner mark for failed state (white X)
+    if (datum.status === 'failed') {
+      const s = half * 0.45
+      el.append('line')
+        .attr('x1', -s).attr('y1', -s).attr('x2', s).attr('y2', s)
+        .attr('stroke', 'white').attr('stroke-width', 1).attr('stroke-opacity', 0.9)
+      el.append('line')
+        .attr('x1', s).attr('y1', -s).attr('x2', -s).attr('y2', s)
+        .attr('stroke', 'white').attr('stroke-width', 1).attr('stroke-opacity', 0.9)
+    }
+
+    if (isSelected) {
+      el.append('rect')
+        .attr('x', -(half + 3)).attr('y', -(half + 3))
+        .attr('width', (half + 3) * 2).attr('height', (half + 3) * 2)
+        .attr('rx', 2)
+        .attr('fill', 'none')
+        .attr('stroke', accent).attr('stroke-width', 1.5)
+        .attr('transform', `rotate(${angle + 45})`)
+    }
+    if (isFocused) {
+      el.append('rect')
+        .attr('x', -(half + 4)).attr('y', -(half + 4))
+        .attr('width', (half + 4) * 2).attr('height', (half + 4) * 2)
+        .attr('rx', 2.5)
+        .attr('fill', 'none')
+        .attr('stroke', '#f59e0b').attr('stroke-width', 2)
+        .attr('transform', `rotate(${angle + 45})`)
+    }
+
   } else {
-    // Leaf node: small circle, color = status
+    // LynqNode leaf: small circle, color = status
     const r = nodeR
     if (isHighlighted && highlightMode !== 'none') {
       el.append('circle').attr('r', r + 4).attr('fill', 'none')
@@ -525,7 +631,6 @@ function drawNode(
       .attr('fill-opacity', 0.85)
       .attr('stroke', 'white')
       .attr('stroke-width', r > 5 ? 1.5 : 1)
-    // Inner dot for failed state
     if (datum.status === 'failed') {
       el.append('circle').attr('r', Math.max(1.5, r * 0.3)).attr('fill', 'white').attr('fill-opacity', 0.8)
     }
@@ -552,6 +657,13 @@ function drawNode(
   }
 }
 
+// Parse "Kind/Name" from resource node name field
+function parseResourceName(raw: string): { kind: string; name: string } {
+  const slash = raw.indexOf('/')
+  if (slash === -1) return { kind: raw, name: raw }
+  return { kind: raw.slice(0, slash), name: raw.slice(slash + 1) }
+}
+
 function showTooltip(
   event: MouseEvent,
   d: d3.HierarchyPointNode<HierarchyDatum>,
@@ -560,14 +672,30 @@ function showTooltip(
 ) {
   if (!el || !container) return
   const datum = d.data
-  const lines = [
-    `<span style="font-weight:600">${datum.name}</span>`,
-    `<span style="font-size:11px;color:#64748b">${datum.namespace}</span>`,
-    `<span style="font-size:11px">${datum.metrics.ready}/${datum.metrics.desired} ready${datum.metrics.failed > 0 ? ` · <span style="color:#dc2626">${datum.metrics.failed} failed</span>` : ''}</span>`,
-  ]
+  let lines: string[]
+
+  if (datum.nodeType === 'resource') {
+    const { kind, name } = parseResourceName(datum.name)
+    lines = [
+      `<span style="font-weight:600">${name}</span>`,
+      `<span style="font-size:11px;color:#7c3aed;font-weight:500">${kind}</span>`,
+      datum.namespace
+        ? `<span style="font-size:11px;color:#64748b">${datum.namespace}</span>`
+        : '',
+      `<span style="font-size:11px;color:${datum.status === 'failed' ? '#dc2626' : datum.status === 'skipped' ? '#64748b' : '#0d9488'}">${datum.status}</span>`,
+    ].filter(Boolean)
+  } else {
+    lines = [
+      `<span style="font-weight:600">${datum.name}</span>`,
+      `<span style="font-size:11px;color:#64748b">${datum.namespace}</span>`,
+      datum.nodeType !== 'hub' && datum.nodeType !== 'form'
+        ? `<span style="font-size:11px;color:${datum.status === 'failed' ? '#dc2626' : '#64748b'}">${datum.status}</span>`
+        : `<span style="font-size:11px">${datum.metrics.ready}/${datum.metrics.desired} ready${datum.metrics.failed > 0 ? ` · <span style="color:#dc2626">${datum.metrics.failed} failed</span>` : ''}</span>`,
+    ]
+  }
+
   el.innerHTML = lines.join('<br/>')
   el.style.display = 'block'
-  // Use clientX/Y relative to container — avoids SVG coordinate system issues
   const rect = container.getBoundingClientRect()
   el.style.left = `${event.clientX - rect.left + 14}px`
   el.style.top = `${event.clientY - rect.top - 8}px`

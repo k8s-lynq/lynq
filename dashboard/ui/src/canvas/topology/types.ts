@@ -48,6 +48,7 @@ export interface TopologyFilters {
   status: ResourceStatus | 'all'
   namespace: string
   formId: string
+  showResources: boolean
 }
 
 // Tooltip content
