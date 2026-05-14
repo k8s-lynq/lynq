@@ -17,7 +17,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { TopologyCanvas } from '@/canvas/TopologyCanvas'
+import { TopologyView } from '@/canvas/topology/TopologyView'
 import { NodeDetailDrawer } from '@/components/NodeDetailDrawer'
 import { useTopology } from '@/hooks/useTopology'
 import type { TopologyNode } from '@/types/lynq'
@@ -40,28 +40,15 @@ import {
 export function Topology() {
   const { t } = useTranslation()
   const [pollInterval, setPollInterval] = useState(30000)
-  const { data, loading, error, refetch, hubNodes, formNodes, lynqNodes } = useTopology({
-    pollInterval,
-  })
+  const { data, loading, error, refetch, hubNodes, formNodes, lynqNodes } = useTopology({ pollInterval })
 
   const [selectedNode, setSelectedNode] = useState<TopologyNode | null>(null)
-  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set())
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [isSearchFocused, setIsSearchFocused] = useState(false)
   const [focusedMatchIndex, setFocusedMatchIndex] = useState(0)
   const [problemMode, setProblemMode] = useState(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
-
-  // Build parent map from edges for expanding tree
-  const parentMap = useMemo(() => {
-    if (!data) return new Map<string, string>()
-    const map = new Map<string, string>()
-    for (const edge of data.edges) {
-      map.set(edge.target, edge.source)
-    }
-    return map
-  }, [data])
 
   // Calculate problem nodes (failed status)
   const { problemNodeIds, problemCount } = useMemo(() => {
@@ -128,61 +115,7 @@ export function Topology() {
     }
   }, [problemMode, problemCount, problemNodeIds, searchQuery, searchHighlightedIds])
 
-  // Get ancestor nodes that need to be expanded
-  const getAncestors = useCallback((nodeId: string): string[] => {
-    const ancestors: string[] = []
-    let currentId = nodeId
-    while (parentMap.has(currentId)) {
-      const parentId = parentMap.get(currentId)!
-      ancestors.push(parentId)
-      currentId = parentId
-    }
-    return ancestors
-  }, [parentMap])
-
-  // Expand ancestors of focused node (for search)
   const focusedNodeId = matchedNodeIds[focusedMatchIndex] || null
-
-  useEffect(() => {
-    if (!focusedNodeId) return
-
-    // Get all ancestor nodes that need to be expanded
-    const ancestors = getAncestors(focusedNodeId)
-    if (ancestors.length === 0) return
-
-    // Expand all ancestors
-    setExpandedNodes((prev) => {
-      const next = new Set(prev)
-      let changed = false
-      for (const ancestorId of ancestors) {
-        if (!next.has(ancestorId)) {
-          next.add(ancestorId)
-          changed = true
-        }
-      }
-      return changed ? next : prev
-    })
-  }, [focusedNodeId, getAncestors])
-
-  // Auto-expand ancestors of problem nodes when problem mode is activated
-  useEffect(() => {
-    if (!problemMode || problemNodeIds.size === 0) return
-
-    setExpandedNodes((prev) => {
-      const next = new Set(prev)
-      let changed = false
-      for (const problemId of problemNodeIds) {
-        const ancestors = getAncestors(problemId)
-        for (const ancestorId of ancestors) {
-          if (!next.has(ancestorId)) {
-            next.add(ancestorId)
-            changed = true
-          }
-        }
-      }
-      return changed ? next : prev
-    })
-  }, [problemMode, problemNodeIds, getAncestors])
 
   // Reset focus index when search query changes
   useEffect(() => {
@@ -229,34 +162,8 @@ export function Topology() {
     setSelectedNode(node)
   }, [])
 
-  // Handle click on chevron - toggle expand/collapse
-  const handleNodeExpand = useCallback((node: TopologyNode) => {
-    setExpandedNodes((prev) => {
-      const next = new Set(prev)
-      if (next.has(node.id)) {
-        next.delete(node.id)
-      } else {
-        next.add(node.id)
-      }
-      return next
-    })
-  }, [])
-
   const handleCloseDrawer = useCallback(() => {
     setSelectedNode(null)
-  }, [])
-
-  const handleExpandAll = useCallback(() => {
-    if (!data) return
-    const allIds = new Set([
-      ...data.nodes.filter((n) => n.type === 'hub').map((n) => n.id),
-      ...data.nodes.filter((n) => n.type === 'form').map((n) => n.id),
-    ])
-    setExpandedNodes(allIds)
-  }, [data])
-
-  const handleCollapseAll = useCallback(() => {
-    setExpandedNodes(new Set())
   }, [])
 
   const toggleFullscreen = useCallback(() => {
@@ -371,34 +278,6 @@ export function Topology() {
                 </Badge>
               </div>
 
-              {/* Actions */}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleExpandAll}
-                    disabled={loading || !data}
-                  >
-                    {t('topology.expandAll')}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t('topology.expandAllTooltip')}</TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleCollapseAll}
-                    disabled={loading || expandedNodes.size === 0}
-                  >
-                    {t('topology.collapseAll')}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t('topology.collapseAllTooltip')}</TooltipContent>
-              </Tooltip>
-
               {/* Poll interval + Refresh group */}
               <div className="flex items-center h-8 rounded-lg border border-input bg-transparent shadow-sm">
                 <Tooltip>
@@ -503,51 +382,20 @@ export function Topology() {
             </div>
           )}
 
-          {/* Canvas */}
+          {/* Radial topology view */}
           {data && data.nodes.length > 0 && (
-            <TopologyCanvas
-              nodes={data.nodes}
-              edges={data.edges}
-              onNodeClick={handleNodeClick}
-              onNodeExpand={handleNodeExpand}
-              selectedNodeId={selectedNode?.id}
-              expandedNodes={expandedNodes}
+            <TopologyView
+              data={data}
+              loading={loading}
+              searchQuery={searchQuery}
               highlightedNodeIds={highlightedNodeIds}
-              dimNonHighlighted={dimNonHighlighted}
-              focusNodeId={focusedNodeId}
               highlightMode={highlightMode}
-              className="h-full"
+              problemMode={problemMode}
+              problemCount={problemCount}
+              selectedNodeId={selectedNode?.id ?? null}
+              focusedNodeId={focusedNodeId}
+              onNodeClick={handleNodeClick}
             />
-          )}
-
-          {/* Problem mode indicator */}
-          {problemMode && problemCount > 0 && (
-            <div className="absolute top-2 left-2">
-              <Badge variant="destructive" className="gap-1.5 animate-pulse">
-                <IconAlertTriangle size={12} />
-                {t('topology.problemsDetected', { count: problemCount })}
-              </Badge>
-            </div>
-          )}
-
-          {/* Problem mode - no problems */}
-          {problemMode && problemCount === 0 && (
-            <div className="absolute top-2 left-2">
-              <Badge variant="secondary" className="gap-1.5">
-                <IconAlertTriangle size={12} />
-                {t('topology.noProblemsDetected')}
-              </Badge>
-            </div>
-          )}
-
-          {/* Loading overlay when refreshing */}
-          {loading && data && !problemMode && (
-            <div className="absolute top-2 left-2">
-              <Badge variant="secondary" className="gap-1">
-                <IconLoader2 size={12} className="animate-spin" />
-                {t('topology.refreshing')}
-              </Badge>
-            </div>
           )}
         </CardContent>
       </Card>
