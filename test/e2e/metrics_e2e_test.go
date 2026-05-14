@@ -703,11 +703,6 @@ func assertMetricAbsentG(g Gomega, metricsOutput, metricName string, labelClause
 	}
 }
 
-// assertMetricAbsent is the non-Eventually wrapper around assertMetricAbsentG.
-func assertMetricAbsent(metricsOutput, metricName string, labelClauses ...string) {
-	assertMetricAbsentG(Default, metricsOutput, metricName, labelClauses...)
-}
-
 // assertMetricPresentG fails (via g) if no /metrics line for metricName matches ALL
 // labelClauses. Used to verify series exist before the deletion step so that an
 // absent series doesn't cause the subsequent assertMetricAbsent to trivially pass.
