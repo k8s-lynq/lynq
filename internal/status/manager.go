@@ -286,6 +286,17 @@ func (m *Manager) applyUpdate(ctx context.Context, update *StatusUpdate) error {
 			return nil
 		}
 
+		// Treat terminating nodes as already deleted for metric purposes.
+		// Guards the window between finalizer removal and K8s GC completing deletion,
+		// where Get still succeeds but the series has already been cleaned up.
+		if !node.DeletionTimestamp.IsZero() {
+			nodeDeleted = true
+			logger.V(1).Info("LynqNode is terminating, treating as deleted for metrics",
+				"node", update.Key.Name,
+				"namespace", update.Key.Namespace)
+			return nil
+		}
+
 		// Apply changes to status
 		statusChanged := false
 
