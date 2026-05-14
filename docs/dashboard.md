@@ -21,6 +21,7 @@ Lynq Dashboard is a web UI that shows the Hub → Form → Node topology and res
 | Method | Use Case | Difficulty |
 |--------|----------|------------|
 | [Docker (Local)](#docker-local) | Quick local testing | Easy |
+| [Local Dev Server](#local-dev-server) | Dashboard development | Easy |
 | [Kubernetes Deployment](#kubernetes-deployment) | Running in cluster | Medium |
 | [Helm Chart](#helm-chart) | Production deployment | Medium |
 
@@ -113,6 +114,83 @@ Open `http://localhost:8080` in your browser. `kubectl proxy` handles all cluste
 docker stop lynq-dashboard
 docker rm lynq-dashboard
 ```
+
+## Local Dev Server
+
+Run the BFF and UI dev server directly from source. Best for dashboard development or when you want hot-reload.
+
+### Prerequisites
+
+- Go 1.21+
+- Node.js 20+
+- Source code cloned: `git clone https://github.com/k8s-lynq/lynq && cd lynq/dashboard`
+
+### EKS or Exec-Plugin Clusters
+
+If your cluster uses an exec-based credential plugin (`aws-iam-authenticator`, `gke-gcloud-auth-plugin`, etc.), use `kubectl proxy` to handle authentication on the host side.
+
+**Terminal 1** — start kubectl proxy:
+
+```bash
+kubectl proxy --port=8001 --context=<your-context>
+```
+
+**Terminal 2** — create a kubeconfig pointing to the proxy and start the BFF:
+
+```bash
+cat > /tmp/lynq-proxy.kubeconfig << 'EOF'
+apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    server: http://localhost:8001
+  name: proxy
+contexts:
+- context:
+    cluster: proxy
+    user: ""
+  name: proxy
+current-context: proxy
+users: []
+EOF
+
+cd dashboard
+KUBECONFIG=/tmp/lynq-proxy.kubeconfig go run ./bff/cmd/server -mode local -addr :8080 -context proxy
+```
+
+**Terminal 3** — start the UI dev server:
+
+```bash
+cd dashboard
+npm --prefix ui run dev
+```
+
+Open `http://localhost:5173` (or the next available port if 5173 is in use).
+
+::: tip
+Unlike the Docker method, `kubectl proxy` does not need `--accept-hosts='.*'` here because the BFF runs on the host and connects to `localhost:8001` directly.
+:::
+
+### Standard Clusters (kubeconfig with certificates)
+
+If your kubeconfig uses standard certificate-based auth:
+
+**Terminal 1** — start the BFF:
+
+```bash
+cd dashboard
+make dev-bff
+# or: go run ./bff/cmd/server -mode local -context <your-context>
+```
+
+**Terminal 2** — start the UI dev server:
+
+```bash
+cd dashboard
+make dev-ui
+```
+
+Open `http://localhost:5173`.
 
 ## Kubernetes Deployment
 
