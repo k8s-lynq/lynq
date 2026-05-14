@@ -12,9 +12,11 @@ Each node gets its own namespace, network boundary, and resource quota — enfor
 
 ## How It Works
 
+::: v-pre
 - **Namespace-per-node** — `targetNamespace: "{{ .uid }}"` creates a dedicated namespace for every node.
 - **NetworkPolicy** — default-deny plus allow-internal rules confine traffic to the node's own namespace.
 - **ResourceQuota** — CPU/memory/pod limits prevent any single node from exhausting cluster resources.
+:::
 
 ## Prerequisites
 

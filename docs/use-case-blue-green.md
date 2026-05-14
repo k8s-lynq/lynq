@@ -15,7 +15,9 @@ The `active_color` column in your database determines which environment is live.
 ## How It Works
 
 - Each node has two Deployments (`blue` and `green`) always running — the active one at full replicas, the inactive one at 1.
+::: v-pre
 - The Service selector is a template expression: `color: "{{ .activeColor }}"`. When the column changes, Lynq updates the selector and traffic shifts.
+:::
 - Rollback is the same operation as a deploy: update `active_color` and the Service re-points to the previous environment.
 
 ## Database Schema

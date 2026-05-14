@@ -87,7 +87,9 @@ extraValueMappings:
   maxUsers: max_user_count
 ```
 
+::: v-pre
 These become available in all templates as `{{ .planId }}`, `{{ .region }}`, etc.
+:::
 
 ## Schema Examples
 

@@ -108,7 +108,7 @@ Quick-reference definitions. For deeper explanations, follow the linked pages.
 
 **orphan markers** — Labels and annotations added to retained resources:
 - `lynq.sh/orphaned: "true"`
-- `lynq.sh/orphaned-at: <RFC3339 timestamp>`
+- `lynq.sh/orphaned-at: (RFC3339 timestamp)`
 - `lynq.sh/orphaned-reason: "RemovedFromTemplate"` or `"LynqNodeDeleted"`
 
 **ownerReference** — Kubernetes metadata establishing a parent-child GC relationship. Resources with `DeletionPolicy: Delete` have an `ownerReference` pointing to their LynqNode. Resources with `DeletionPolicy: Retain` do not.
@@ -141,7 +141,9 @@ Quick-reference definitions. For deeper explanations, follow the linked pages.
 
 ## T
 
+::: v-pre
 **`toHost`** — Custom template function. `{{ .nodeUrl | toHost }}` extracts the hostname from a URL string.
+:::
 
 **topological sort** — Algorithm used to determine apply order from the dependency graph. Resources with no dependencies are applied first; dependents follow.
 

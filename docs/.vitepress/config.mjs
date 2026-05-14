@@ -51,7 +51,7 @@ export default withMermaid(
         // 2. Understand it
         {
           text: "Concepts",
-          collapsed: false,
+          collapsed: true,
           items: [
             { text: "Introduction", link: "/introduction" },
             { text: "Architecture", link: "/architecture" },
@@ -64,7 +64,7 @@ export default withMermaid(
           items: [
             {
               text: "Datasources",
-              collapsed: false,
+              collapsed: true,
               items: [
                 { text: "Overview", link: "/datasource" },
                 { text: "MySQL Views", link: "/datasource-views" },
@@ -72,7 +72,7 @@ export default withMermaid(
             },
             {
               text: "Templates",
-              collapsed: false,
+              collapsed: true,
               items: [
                 { text: "Overview", link: "/templates" },
                 { text: "Syntax & Functions", link: "/templates-syntax" },
@@ -83,7 +83,7 @@ export default withMermaid(
             },
             {
               text: "Policies",
-              collapsed: false,
+              collapsed: true,
               items: [
                 { text: "Overview", link: "/policies" },
                 { text: "Operations & Migration", link: "/policies-operations" },
@@ -93,7 +93,7 @@ export default withMermaid(
             },
             {
               text: "Dependencies",
-              collapsed: false,
+              collapsed: true,
               items: [
                 { text: "Overview", link: "/dependencies" },
                 { text: "Dependency Visualizer", link: "/dependency-visualizer" },
@@ -104,7 +104,7 @@ export default withMermaid(
         // 4. Real-world examples
         {
           text: "Use Cases",
-          collapsed: false,
+          collapsed: true,
           items: [
             { text: "Overview", link: "/advanced-use-cases" },
             { text: "Custom Domains", link: "/use-case-custom-domains" },
@@ -119,7 +119,7 @@ export default withMermaid(
         // 5. Connect with other tools
         {
           text: "Integrations",
-          collapsed: false,
+          collapsed: true,
           items: [
             { text: "Crossplane", link: "/integration-crossplane" },
             { text: "Crossplane Full-Stack", link: "/integration-crossplane-fullstack" },
@@ -131,11 +131,11 @@ export default withMermaid(
         // 6. Look things up
         {
           text: "Reference",
-          collapsed: false,
+          collapsed: true,
           items: [
             {
               text: "API Reference",
-              collapsed: false,
+              collapsed: true,
               items: [
                 { text: "Overview", link: "/api" },
                 { text: "LynqHub", link: "/api-lynqhub" },
@@ -152,7 +152,7 @@ export default withMermaid(
         // 7. Run it in production
         {
           text: "Operations",
-          collapsed: false,
+          collapsed: true,
           items: [
             { text: "Monitoring", link: "/monitoring" },
             { text: "Prometheus Queries", link: "/prometheus-queries" },
