@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,6 +55,10 @@ var _ = Describe("Pprof Endpoint", Ordered, func() {
 		// connections. Subsequent tests that create LynqHub resources will hit the
 		// mutating webhook and fail with "context deadline exceeded" if we proceed
 		// too quickly. Poll until the webhook responds to a dry-run apply.
+		//
+		// Any webhook response — including admission rejection — proves the webhook
+		// is up. Only connectivity failures (timeout, connection refused) mean it
+		// is not ready yet.
 		By("waiting for the webhook to be accepting connections after rollout")
 		Eventually(func(g Gomega) {
 			dryRunYAML := `
@@ -81,6 +86,17 @@ spec:
 			cmd := exec.Command("kubectl", "apply", "--dry-run=server", "-f", "-")
 			cmd.Stdin = utils.StringReader(dryRunYAML)
 			_, err := utils.Run(cmd)
+			if err == nil {
+				return
+			}
+			// Admission/validation rejection means the webhook responded — it is up.
+			errMsg := err.Error()
+			if strings.Contains(errMsg, "denied the request") ||
+				strings.Contains(errMsg, "is invalid") ||
+				strings.Contains(errMsg, "Forbidden") ||
+				strings.Contains(errMsg, "Unsupported value") {
+				return
+			}
 			g.Expect(err).NotTo(HaveOccurred(), "webhook not yet accepting connections")
 		}, 2*time.Minute, 3*time.Second).Should(Succeed())
 	})
