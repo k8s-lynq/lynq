@@ -64,6 +64,7 @@ metadata:
   namespace: ` + namespace + `
 spec:
   source:
+    type: mysql
     syncInterval: 5s
     mysql:
       host: "probe.example.com"
