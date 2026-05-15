@@ -59,6 +59,29 @@ var _ = Describe("Pprof Endpoint", Ordered, func() {
 		// Any webhook response — including admission rejection — proves the webhook
 		// is up. Only connectivity failures (timeout, connection refused) mean it
 		// is not ready yet.
+		// Ensure the old pod is fully gone before probing the webhook.
+		// kubectl rollout status completes as soon as the new pod is Ready, but the
+		// old pod may still be Terminating and still registered in the Service
+		// endpoints. If the probe hits the old pod it can succeed while the new
+		// pod's webhook server is still initializing, causing the next test to get
+		// "context deadline exceeded" from mlynqhub/mlynqform webhooks.
+		By("waiting for all old pods to finish terminating after rollout")
+		Eventually(func(g Gomega) {
+			cmd := exec.Command("kubectl", "get", "pods",
+				"-l", "control-plane=controller-manager",
+				"-o", "json", "-n", namespace)
+			output, err := utils.Run(cmd)
+			g.Expect(err).NotTo(HaveOccurred())
+			var pods controllerPodList
+			g.Expect(json.Unmarshal([]byte(output), &pods)).To(Succeed())
+			for _, pod := range pods.Items {
+				g.Expect(pod.Metadata.DeletionTimestamp).To(BeNil(),
+					"pod %s still terminating", pod.Metadata.Name)
+			}
+		}, 2*time.Minute, 2*time.Second).Should(Succeed())
+
+		// Any webhook response — including admission rejection — proves the new pod's
+		// webhook is accepting connections. Only connectivity failures mean not ready.
 		By("waiting for the webhook to be accepting connections after rollout")
 		Eventually(func(g Gomega) {
 			dryRunYAML := `
