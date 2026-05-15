@@ -17,8 +17,13 @@ limitations under the License.
 package e2e
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"net"
 	"os/exec"
+	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -53,19 +58,10 @@ var _ = Describe("Pprof Endpoint", Ordered, func() {
 	It("should verify the pprof server log message", func() {
 		By("checking controller manager logs for pprof startup message")
 		Eventually(func(g Gomega) {
-			cmd := exec.Command("kubectl", "get", "pods",
-				"-l", "control-plane=controller-manager",
-				"-o", "go-template={{ range .items }}"+
-					"{{ if not .metadata.deletionTimestamp }}"+
-					"{{ .metadata.name }}"+
-					"{{ \"\\n\" }}{{ end }}{{ end }}",
-				"-n", namespace)
-			podOutput, err := utils.Run(cmd)
+			podName, err := pprofReadyControllerPod()
 			g.Expect(err).NotTo(HaveOccurred())
-			podNames := utils.GetNonEmptyLines(podOutput)
-			g.Expect(podNames).ToNot(BeEmpty())
 
-			cmd = exec.Command("kubectl", "logs", podNames[0], "-n", namespace)
+			cmd := exec.Command("kubectl", "logs", podName, "-n", namespace)
 			output, err := utils.Run(cmd)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(output).To(ContainSubstring("Starting pprof server"),
@@ -74,19 +70,6 @@ var _ = Describe("Pprof Endpoint", Ordered, func() {
 	})
 
 	It("should serve pprof index page over HTTP on port 6060", func() {
-		By("getting the controller manager pod name")
-		var podName string
-		Eventually(func(g Gomega) {
-			cmd := exec.Command("kubectl", "get", "pods",
-				"-l", "control-plane=controller-manager",
-				"-o", "jsonpath={.items[0].metadata.name}",
-				"-n", namespace)
-			output, err := utils.Run(cmd)
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(output).ToNot(BeEmpty())
-			podName = output
-		}, 2*time.Minute, 2*time.Second).Should(Succeed())
-
 		// Restart port-forward on every Eventually iteration.
 		// kubectl rollout status completes when the readiness probe (:8081) passes,
 		// independent of the pprof goroutine binding :6060. If port-forward starts
@@ -94,24 +77,33 @@ var _ = Describe("Pprof Endpoint", Ordered, func() {
 		// Re-creating it each iteration makes the poll self-healing across all K8s versions.
 		By("forwarding pprof port to localhost and verifying the endpoint")
 		Eventually(func(g Gomega) {
+			podName, err := pprofReadyControllerPod()
+			g.Expect(err).NotTo(HaveOccurred())
+
 			pfCtx, pfCancel := context.WithCancel(context.Background())
 			defer pfCancel()
 
+			var pfOutput lockedBuffer
 			pfCmd := exec.CommandContext(pfCtx, "kubectl", "port-forward",
-				"pod/"+podName, "16060:6060", "-n", namespace)
+				"--address", "127.0.0.1", "pod/"+podName, "16060:6060", "-n", namespace)
+			pfCmd.Stdout = &pfOutput
+			pfCmd.Stderr = &pfOutput
 			g.Expect(pfCmd.Start()).To(Succeed(), "Failed to start kubectl port-forward")
 			defer func() {
 				pfCancel()
 				_ = pfCmd.Wait()
 			}()
 
-			// Give the port-forward process time to establish the tunnel before curling.
-			time.Sleep(500 * time.Millisecond)
+			g.Expect(waitForLocalPort("127.0.0.1:16060", 5*time.Second)).To(Succeed(),
+				"port-forward to pod %s did not bind localhost; kubectl output: %s",
+				podName, pfOutput.String())
 
 			cmd := exec.Command("curl", "-sf", "--max-time", "5",
-				"http://localhost:16060/debug/pprof/")
+				"http://127.0.0.1:16060/debug/pprof/")
 			output, err := utils.Run(cmd)
-			g.Expect(err).NotTo(HaveOccurred(), "pprof endpoint should respond via port-forward")
+			g.Expect(err).NotTo(HaveOccurred(),
+				"pprof endpoint should respond via port-forward to pod %s; kubectl output: %s",
+				podName, pfOutput.String())
 			g.Expect(output).To(ContainSubstring("/debug/pprof/"),
 				"Pprof index page should contain profile links")
 			g.Expect(output).To(ContainSubstring("heap"),
@@ -121,3 +113,110 @@ var _ = Describe("Pprof Endpoint", Ordered, func() {
 		}, 2*time.Minute, 3*time.Second).Should(Succeed())
 	})
 })
+
+type controllerPodList struct {
+	Items []controllerPod `json:"items"`
+}
+
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+type controllerPod struct {
+	Metadata struct {
+		Name              string  `json:"name"`
+		DeletionTimestamp *string `json:"deletionTimestamp,omitempty"`
+	} `json:"metadata"`
+	Spec struct {
+		Containers []struct {
+			Name string   `json:"name"`
+			Args []string `json:"args"`
+		} `json:"containers"`
+	} `json:"spec"`
+	Status struct {
+		Phase      string `json:"phase"`
+		Conditions []struct {
+			Type   string `json:"type"`
+			Status string `json:"status"`
+		} `json:"conditions"`
+	} `json:"status"`
+}
+
+func pprofReadyControllerPod() (string, error) {
+	cmd := exec.Command("kubectl", "get", "pods",
+		"-l", "control-plane=controller-manager",
+		"-o", "json",
+		"-n", namespace)
+	output, err := utils.Run(cmd)
+	if err != nil {
+		return "", err
+	}
+
+	var pods controllerPodList
+	if err := json.Unmarshal([]byte(output), &pods); err != nil {
+		return "", fmt.Errorf("parse controller-manager pod list: %w", err)
+	}
+
+	for _, pod := range pods.Items {
+		if pod.Metadata.DeletionTimestamp != nil || pod.Status.Phase != "Running" {
+			continue
+		}
+		if !podReady(pod) || !podHasPprofEnabled(pod) {
+			continue
+		}
+		return pod.Metadata.Name, nil
+	}
+
+	return "", fmt.Errorf("no running ready controller-manager pod with --enable-pprof found")
+}
+
+func podReady(pod controllerPod) bool {
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == "Ready" && condition.Status == "True" {
+			return true
+		}
+	}
+	return false
+}
+
+func podHasPprofEnabled(pod controllerPod) bool {
+	for _, container := range pod.Spec.Containers {
+		if container.Name != "manager" {
+			continue
+		}
+		for _, arg := range container.Args {
+			if arg == "--enable-pprof" || arg == "--enable-pprof=true" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func waitForLocalPort(address string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", address, 100*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		lastErr = err
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("%s did not accept connections within %s: %w", address, timeout, lastErr)
+}
