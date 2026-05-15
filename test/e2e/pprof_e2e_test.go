@@ -49,6 +49,39 @@ var _ = Describe("Pprof Endpoint", Ordered, func() {
 			"-n", namespace, "--timeout=120s")
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Deployment rollout did not complete")
+
+		// The readiness probe (:8081) passes before the webhook server is accepting
+		// connections. Subsequent tests that create LynqHub resources will hit the
+		// mutating webhook and fail with "context deadline exceeded" if we proceed
+		// too quickly. Poll until the webhook responds to a dry-run apply.
+		By("waiting for the webhook to be accepting connections after rollout")
+		Eventually(func(g Gomega) {
+			dryRunYAML := `
+apiVersion: operator.lynq.sh/v1
+kind: LynqHub
+metadata:
+  name: pprof-webhook-probe
+  namespace: ` + namespace + `
+spec:
+  source:
+    syncInterval: 5s
+    mysql:
+      host: "probe.example.com"
+      port: 3306
+      database: "probe"
+      username: "probe"
+      passwordRef:
+        name: probe-secret
+        key: password
+  valueMappings:
+    uid: id
+    activate: active
+`
+			cmd := exec.Command("kubectl", "apply", "--dry-run=server", "-f", "-")
+			cmd.Stdin = utils.StringReader(dryRunYAML)
+			_, err := utils.Run(cmd)
+			g.Expect(err).NotTo(HaveOccurred(), "webhook not yet accepting connections")
+		}, 2*time.Minute, 3*time.Second).Should(Succeed())
 	})
 
 	// AfterAll intentionally does NOT restore the deployment (remove --enable-pprof):
