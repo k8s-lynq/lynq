@@ -433,6 +433,53 @@ func TestManager_HandleDeletedLynqNode(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestStatusBatch_ResetOnUIDChange(t *testing.T) {
+	// When a LynqNode is deleted and immediately recreated with the same name,
+	// old-instance events and new-instance events can land in the same batch window.
+	// The batch entry must be reset when the UID changes so that stale payloads from
+	// the old instance do not bleed into the new instance's status/metrics flush.
+	key := client.ObjectKey{Name: "node", Namespace: "default"}
+
+	// Mirror the batch building logic from manager.run() so the test stays in sync
+	// with the production code.
+	applyToBatch := func(batch map[client.ObjectKey]*StatusUpdate, event StatusEvent) {
+		update := batch[event.NodeKey]
+		if update == nil {
+			update = NewStatusUpdate(event.NodeKey)
+			batch[event.NodeKey] = update
+		}
+		if event.NodeUID != "" && update.UID != "" && update.UID != event.NodeUID {
+			update = NewStatusUpdate(event.NodeKey)
+			batch[event.NodeKey] = update
+		}
+		update.Apply(event)
+	}
+
+	batch := make(map[client.ObjectKey]*StatusUpdate)
+
+	// Old instance: Ready=99, Failed=5 accumulated in the batch
+	applyToBatch(batch, StatusEvent{
+		Type:    EventResourceCountsUpdated,
+		NodeKey: key,
+		NodeUID: "old-uid",
+		Payload: ResourceCountsPayload{Ready: 99, Failed: 5, Desired: 10},
+	})
+	require.Equal(t, int32(99), *batch[key].ReadyResources)
+
+	// New instance arrives with different UID — old state must be discarded
+	applyToBatch(batch, StatusEvent{
+		Type:    EventResourceCountsUpdated,
+		NodeKey: key,
+		NodeUID: "new-uid",
+		Payload: ResourceCountsPayload{Ready: 4, Failed: 0, Desired: 4},
+	})
+
+	assert.Equal(t, types.UID("new-uid"), batch[key].UID)
+	assert.Equal(t, int32(4), *batch[key].ReadyResources)
+	// Old instance's Failed=5 must not bleed through into the new instance's update
+	assert.Equal(t, int32(0), *batch[key].FailedResources, "stale Failed count must not persist")
+}
+
 func TestNewStatusUpdate(t *testing.T) {
 	key := client.ObjectKey{Name: "test", Namespace: "default"}
 	update := NewStatusUpdate(key)

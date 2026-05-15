@@ -1469,6 +1469,10 @@ func (r *LynqHubReconciler) handleHubDeletion(ctx context.Context, registry *lyn
 	// Clean up Prometheus series regardless of whether the CR still exists.
 	metrics.CleanupHubMetrics(registry.Name, registry.Namespace)
 
-	logger.Info("Finalizer removed, registry cleanup complete")
+	if errors.IsNotFound(updateErr) {
+		logger.Info("Hub CR already gone, metrics cleaned up", "hub", registry.Name)
+	} else {
+		logger.Info("Finalizer removed, registry cleanup complete")
+	}
 	return ctrl.Result{}, nil
 }

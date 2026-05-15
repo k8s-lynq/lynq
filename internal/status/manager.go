@@ -209,6 +209,13 @@ func (m *Manager) run() {
 				update = NewStatusUpdate(event.NodeKey)
 				batch[event.NodeKey] = update
 			}
+			// If the UID changed, the node was deleted and recreated with the same
+			// name between flushes. Discard accumulated state from the old instance
+			// to prevent stale payloads from being written to the new one.
+			if event.NodeUID != "" && update.UID != "" && update.UID != event.NodeUID {
+				update = NewStatusUpdate(event.NodeKey)
+				batch[event.NodeKey] = update
+			}
 			update.Apply(event)
 
 			// Flush if batch is full
