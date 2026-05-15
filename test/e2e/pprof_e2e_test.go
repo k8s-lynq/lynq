@@ -17,7 +17,7 @@ limitations under the License.
 package e2e
 
 import (
-	"fmt"
+	"context"
 	"os/exec"
 	"time"
 
@@ -28,10 +28,7 @@ import (
 )
 
 var _ = Describe("Pprof Endpoint", Ordered, func() {
-	const (
-		pprofPodName   = "curl-pprof"
-		deploymentName = "lynq-controller-manager"
-	)
+	const deploymentName = "lynq-controller-manager"
 
 	BeforeAll(func() {
 		By("enabling pprof on the controller manager deployment")
@@ -49,15 +46,9 @@ var _ = Describe("Pprof Endpoint", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred(), "Deployment rollout did not complete")
 	})
 
-	AfterAll(func() {
-		// Cleanup curl pod only. Do NOT restore the deployment (remove --enable-pprof)
-		// because the rolling restart would cause webhook unavailability and break
-		// subsequent tests. Leaving pprof enabled is harmless — it only adds an HTTP
-		// server on :6060 that doesn't affect webhook, metrics, or reconciliation.
-		cmd := exec.Command("kubectl", "delete", "pod", pprofPodName,
-			"-n", namespace, "--ignore-not-found=true")
-		_, _ = utils.Run(cmd)
-	})
+	// AfterAll intentionally does NOT restore the deployment (remove --enable-pprof):
+	// the rolling restart would cause webhook unavailability and break subsequent tests.
+	// Leaving pprof enabled is harmless — it only adds an HTTP server on :6060.
 
 	It("should verify the pprof server log message", func() {
 		By("checking controller manager logs for pprof startup message")
@@ -83,70 +74,47 @@ var _ = Describe("Pprof Endpoint", Ordered, func() {
 	})
 
 	It("should serve pprof index page over HTTP on port 6060", func() {
-		By("getting the controller manager pod IP")
-		var podIP string
+		By("getting the controller manager pod name")
+		var podName string
 		Eventually(func(g Gomega) {
 			cmd := exec.Command("kubectl", "get", "pods",
 				"-l", "control-plane=controller-manager",
-				"-o", "jsonpath={.items[0].status.podIP}",
+				"-o", "jsonpath={.items[0].metadata.name}",
 				"-n", namespace)
 			output, err := utils.Run(cmd)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(output).ToNot(BeEmpty())
-			podIP = output
+			podName = output
 		}, 2*time.Minute, 2*time.Second).Should(Succeed())
 
-		pprofURL := fmt.Sprintf("http://%s:6060/debug/pprof/", podIP)
+		// Use kubectl port-forward instead of direct Pod IP access.
+		// Direct Pod IP access is fragile across K8s versions: kubectl rollout status
+		// completes when the readiness probe (:8081) passes, which is independent of
+		// the pprof goroutine binding :6060. Port-forward eliminates pod-to-pod
+		// networking dependency and retries until the port is actually accepting connections.
+		By("forwarding pprof port to localhost and verifying the endpoint")
+		pfCtx, pfCancel := context.WithCancel(context.Background())
+		defer pfCancel()
 
-		By("creating a curl pod to access the pprof endpoint via Pod IP")
-		cmd := exec.Command("kubectl", "delete", "pod", pprofPodName,
-			"-n", namespace, "--ignore-not-found=true")
-		_, _ = utils.Run(cmd)
+		pfCmd := exec.CommandContext(pfCtx, "kubectl", "port-forward",
+			"pod/"+podName, "16060:6060", "-n", namespace)
+		Expect(pfCmd.Start()).To(Succeed(), "Failed to start kubectl port-forward")
+		defer func() {
+			pfCancel()
+			_ = pfCmd.Wait()
+		}()
 
-		cmd = exec.Command("kubectl", "run", pprofPodName, "--restart=Never",
-			"--namespace", namespace,
-			"--image=curlimages/curl:latest",
-			"--overrides",
-			fmt.Sprintf(`{
-				"spec": {
-					"containers": [{
-						"name": "curl",
-						"image": "curlimages/curl:latest",
-						"command": ["/bin/sh", "-c"],
-						"args": ["curl -sf --max-time 10 %s"],
-						"securityContext": {
-							"allowPrivilegeEscalation": false,
-							"capabilities": {"drop": ["ALL"]},
-							"runAsNonRoot": true,
-							"runAsUser": 1000,
-							"seccompProfile": {"type": "RuntimeDefault"}
-						}
-					}],
-					"serviceAccount": "%s"
-				}
-			}`, pprofURL, serviceAccountName))
-		_, err := utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to create curl-pprof pod")
-
-		By("waiting for the curl-pprof pod to complete")
 		Eventually(func(g Gomega) {
-			cmd := exec.Command("kubectl", "get", "pods", pprofPodName,
-				"-o", "jsonpath={.status.phase}", "-n", namespace)
+			cmd := exec.Command("curl", "-sf", "--max-time", "5",
+				"http://localhost:16060/debug/pprof/")
 			output, err := utils.Run(cmd)
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(output).To(Equal("Succeeded"), "curl-pprof pod should succeed")
-		}, 2*time.Minute, 2*time.Second).Should(Succeed())
-
-		By("verifying pprof index page contains expected profile links")
-		cmd = exec.Command("kubectl", "logs", pprofPodName, "-n", namespace)
-		output, err := utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred())
-
-		Expect(output).To(ContainSubstring("/debug/pprof/"),
-			"Pprof index page should contain profile links")
-		Expect(output).To(ContainSubstring("heap"),
-			"Pprof index should list heap profile")
-		Expect(output).To(ContainSubstring("goroutine"),
-			"Pprof index should list goroutine profile")
+			g.Expect(err).NotTo(HaveOccurred(), "pprof endpoint should respond via port-forward")
+			g.Expect(output).To(ContainSubstring("/debug/pprof/"),
+				"Pprof index page should contain profile links")
+			g.Expect(output).To(ContainSubstring("heap"),
+				"Pprof index should list heap profile")
+			g.Expect(output).To(ContainSubstring("goroutine"),
+				"Pprof index should list goroutine profile")
+		}, 30*time.Second, 2*time.Second).Should(Succeed())
 	})
 })
