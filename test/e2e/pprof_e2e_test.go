@@ -87,24 +87,27 @@ var _ = Describe("Pprof Endpoint", Ordered, func() {
 			podName = output
 		}, 2*time.Minute, 2*time.Second).Should(Succeed())
 
-		// Use kubectl port-forward instead of direct Pod IP access.
-		// Direct Pod IP access is fragile across K8s versions: kubectl rollout status
-		// completes when the readiness probe (:8081) passes, which is independent of
-		// the pprof goroutine binding :6060. Port-forward eliminates pod-to-pod
-		// networking dependency and retries until the port is actually accepting connections.
+		// Restart port-forward on every Eventually iteration.
+		// kubectl rollout status completes when the readiness probe (:8081) passes,
+		// independent of the pprof goroutine binding :6060. If port-forward starts
+		// before :6060 is listening, kubectl exits immediately with a non-zero code.
+		// Re-creating it each iteration makes the poll self-healing across all K8s versions.
 		By("forwarding pprof port to localhost and verifying the endpoint")
-		pfCtx, pfCancel := context.WithCancel(context.Background())
-		defer pfCancel()
-
-		pfCmd := exec.CommandContext(pfCtx, "kubectl", "port-forward",
-			"pod/"+podName, "16060:6060", "-n", namespace)
-		Expect(pfCmd.Start()).To(Succeed(), "Failed to start kubectl port-forward")
-		defer func() {
-			pfCancel()
-			_ = pfCmd.Wait()
-		}()
-
 		Eventually(func(g Gomega) {
+			pfCtx, pfCancel := context.WithCancel(context.Background())
+			defer pfCancel()
+
+			pfCmd := exec.CommandContext(pfCtx, "kubectl", "port-forward",
+				"pod/"+podName, "16060:6060", "-n", namespace)
+			g.Expect(pfCmd.Start()).To(Succeed(), "Failed to start kubectl port-forward")
+			defer func() {
+				pfCancel()
+				_ = pfCmd.Wait()
+			}()
+
+			// Give the port-forward process time to establish the tunnel before curling.
+			time.Sleep(500 * time.Millisecond)
+
 			cmd := exec.Command("curl", "-sf", "--max-time", "5",
 				"http://localhost:16060/debug/pprof/")
 			output, err := utils.Run(cmd)
@@ -115,6 +118,6 @@ var _ = Describe("Pprof Endpoint", Ordered, func() {
 				"Pprof index should list heap profile")
 			g.Expect(output).To(ContainSubstring("goroutine"),
 				"Pprof index should list goroutine profile")
-		}, 30*time.Second, 2*time.Second).Should(Succeed())
+		}, 2*time.Minute, 3*time.Second).Should(Succeed())
 	})
 })
