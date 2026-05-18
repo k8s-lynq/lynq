@@ -136,11 +136,19 @@ var _ = Describe("Bottleneck Regression (BUG 1 + BUG 2)", Ordered, func() {
 				[]string{nodeUID1, nodeUID2})
 		})
 
+		JustAfterEach(func() {
+			// Always dump diagnostic state to help debug failures
+			for _, uid := range []string{nodeUID1, nodeUID2} {
+				dumpBottleneckDebugState(uid, formName)
+			}
+		})
+
 		It("should apply successfully without immediately failing pre-existing Deployments", func() {
 			By("expecting both LynqNodes to eventually become Ready")
 			// With BUG 1: both nodes are immediately FAILED (25s > 20s timeout).
 			// → Ready condition is never reached. Test fails after the Eventually timeout.
 			// With fix: rolling update completes (~10s pod start + 30s requeue) → Ready.
+			// Reduced from 3*policyTestTimeout (15m) to 1*policyTestTimeout (5m) so failures surface faster.
 			for _, uid := range []string{nodeUID1, nodeUID2} {
 				nodeName := fmt.Sprintf("%s-%s", uid, formName)
 				Eventually(func(g Gomega) {
@@ -150,9 +158,9 @@ var _ = Describe("Bottleneck Regression (BUG 1 + BUG 2)", Ordered, func() {
 					output, err := utils.Run(cmd)
 					g.Expect(err).NotTo(HaveOccurred())
 					g.Expect(output).To(Equal("True"),
-						"LynqNode %s should be Ready; pre-existing Deployment (25s old) must not be "+
+						"LynqNode %s should be Ready; pre-existing Deployment must not be "+
 							"immediately timed out using creationTimestamp", nodeName)
-				}, 3*policyTestTimeout, policyTestInterval).Should(Succeed())
+				}, policyTestTimeout, policyTestInterval).Should(Succeed())
 			}
 
 			By("verifying Deployments are running nginx:1.25 (rolling update completed)")
@@ -529,6 +537,67 @@ spec:
 	cmd.Stdin = utils.StringReader(formYAML)
 	_, err := utils.Run(cmd)
 	Expect(err).NotTo(HaveOccurred(), "Failed to apply bottleneck LynqForm %s", name)
+}
+
+// dumpBottleneckDebugState prints the state of LynqNode, Deployment, and ReplicaSets
+// for diagnosing why a LynqNode is not becoming Ready. Output is added to test logs
+// via Ginkgo's By() so it appears in CI artifacts.
+func dumpBottleneckDebugState(uid, formName string) {
+	nodeName := fmt.Sprintf("%s-%s", uid, formName)
+	deployName := uid + "-nginx"
+
+	By(fmt.Sprintf("=== DEBUG: LynqNode %s ===", nodeName))
+	cmd := exec.Command("kubectl", "get", "lynqnode", nodeName, "-n", policyTestNamespace, "-o", "yaml")
+	if out, err := utils.Run(cmd); err == nil {
+		fmt.Fprintln(GinkgoWriter, out)
+	} else {
+		fmt.Fprintf(GinkgoWriter, "failed to get lynqnode: %v\n", err)
+	}
+
+	By(fmt.Sprintf("=== DEBUG: Deployment %s ===", deployName))
+	cmd = exec.Command("kubectl", "get", "deployment", deployName, "-n", policyTestNamespace, "-o", "yaml")
+	if out, err := utils.Run(cmd); err == nil {
+		fmt.Fprintln(GinkgoWriter, out)
+	} else {
+		fmt.Fprintf(GinkgoWriter, "failed to get deployment: %v\n", err)
+	}
+
+	By(fmt.Sprintf("=== DEBUG: ReplicaSets owned by %s ===", deployName))
+	cmd = exec.Command("kubectl", "get", "rs", "-n", policyTestNamespace,
+		"-l", "app="+deployName, "-o", "yaml")
+	if out, err := utils.Run(cmd); err == nil {
+		fmt.Fprintln(GinkgoWriter, out)
+	} else {
+		fmt.Fprintf(GinkgoWriter, "failed to get replicasets: %v\n", err)
+	}
+
+	By(fmt.Sprintf("=== DEBUG: Pods with app=%s ===", deployName))
+	cmd = exec.Command("kubectl", "get", "pods", "-n", policyTestNamespace,
+		"-l", "app="+deployName, "-o", "wide")
+	if out, err := utils.Run(cmd); err == nil {
+		fmt.Fprintln(GinkgoWriter, out)
+	} else {
+		fmt.Fprintf(GinkgoWriter, "failed to get pods: %v\n", err)
+	}
+
+	By("=== DEBUG: Recent controller logs (last 200 lines) ===")
+	cmd = exec.Command("kubectl", "logs", "-n", "lynq-system",
+		"deployment/lynq-controller-manager", "--tail=200")
+	if out, err := utils.Run(cmd); err == nil {
+		fmt.Fprintln(GinkgoWriter, out)
+	} else {
+		fmt.Fprintf(GinkgoWriter, "failed to get controller logs: %v\n", err)
+	}
+
+	By(fmt.Sprintf("=== DEBUG: Events for LynqNode %s ===", nodeName))
+	cmd = exec.Command("kubectl", "get", "events", "-n", policyTestNamespace,
+		"--field-selector", "involvedObject.name="+nodeName,
+		"--sort-by=.lastTimestamp")
+	if out, err := utils.Run(cmd); err == nil {
+		fmt.Fprintln(GinkgoWriter, out)
+	} else {
+		fmt.Fprintf(GinkgoWriter, "failed to get events: %v\n", err)
+	}
 }
 
 // cleanupBottleneckResources removes all resources created by bottleneck tests.
