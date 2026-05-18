@@ -42,17 +42,24 @@ limitations under the License.
 // ## Test Strategy
 //
 // To reproduce "old resources" without waiting 5 minutes:
-//   - Use timeoutSeconds:20 (shorter than default 300s).
-//   - Pre-create Deployments, then sleep 25 seconds.
-//   - Result: Deployments are 25s old, which exceeds the 20s timeout.
-//   - BUG 1 behavior:  elapsed=25s ≥ 20s → immediately FAILED after apply.
-//   - Fixed behavior:  elapsed from applyStartTime ≈ 0 < 20s → wait for rolling update → Ready.
+//   - Use timeoutSeconds:60 (shorter than default 300s, but long enough for rolling updates in CI).
+//   - Pre-create Deployments, then sleep 65 seconds so they are older than the 60s timeout.
+//   - Result: Deployments are 65s old, which exceeds the 60s timeout.
+//   - BUG 1 behavior:  elapsed=65s ≥ 60s → immediately FAILED after apply.
+//   - Fixed behavior:  elapsed from applyStartTime ≈ 0 < 60s → wait for rolling update → Ready.
+//
+// Why timeoutSeconds:60 instead of a shorter value:
+//   - The controller requeues every 30 seconds (reconcile interval).
+//   - With timeout < 30s: on the second reconcile (t=30s), elapsed > timeout → fires even with the fix.
+//   - With timeout ≥ 60s: the pod has at least one full reconcile cycle (30s) of grace after apply.
+//   - In CI, nginx image pull may take 20-30s; a 60s timeout ensures the pod becomes ready first.
+//   - The readiness check runs BEFORE the timeout check, so a ready pod always wins regardless of timeout.
 //
 // Rolling update timing (nginx with initialDelaySeconds:8):
-//   - Pod becomes ready ~10 seconds after the new pod starts.
-//   - Controller requeues every 30 seconds.
-//   - On the second reconcile (~30s later), the pod is ready → LynqNode becomes Ready.
-//   - Total per-node: ~40s. With maxSkew=2 and 4 nodes: ~80s total (two batches of 2).
+//   - Image pull in CI: ~20-30s. Pod start + readiness: ~10s. Total: ~30-40s.
+//   - At t=30s (2nd reconcile): pod may or may not be ready. elapsed=30s < 60s → wait.
+//   - At t=60s (3rd reconcile): pod IS ready. Readiness check passes → LynqNode becomes Ready.
+//   - Total per-node: ~60s. With maxSkew=2 and 4 nodes: ~120s total (two batches of 2).
 
 package e2e
 
@@ -103,10 +110,10 @@ var _ = Describe("Bottleneck Regression (BUG 1 + BUG 2)", Ordered, func() {
 				createPreExistingDeployment(uid+"-nginx", policyTestNamespace, "nginx:1.24")
 			}
 
-			By("waiting 25 seconds so Deployments are older than timeoutSeconds:20")
-			// With BUG 1 (elapsed from creationTimestamp): 25s ≥ 20s → immediately FAILED.
-			// With fix (elapsed from applyStartTime):      ≈0s < 20s  → wait for rolling update.
-			time.Sleep(25 * time.Second)
+			By("waiting 65 seconds so Deployments are older than timeoutSeconds:60")
+			// With BUG 1 (elapsed from creationTimestamp): 65s ≥ 60s → immediately FAILED.
+			// With fix (elapsed from applyStartTime):      ≈0s < 60s  → wait for rolling update.
+			time.Sleep(65 * time.Second)
 
 			By("creating LynqHub")
 			createHubWithTable(hubName, testTable)
@@ -192,12 +199,12 @@ var _ = Describe("Bottleneck Regression (BUG 1 + BUG 2)", Ordered, func() {
 				createPreExistingDeployment(uid+"-nginx", policyTestNamespace, "nginx:1.24")
 			}
 
-			By("waiting 25 seconds so Deployments are older than timeoutSeconds:20")
+			By("waiting 65 seconds so Deployments are older than timeoutSeconds:60")
 			// With BUG 1 + maxSkew=2:
 			//   1. Hub schedules 2 nodes (maxSkew slot capacity).
-			//   2. Both immediately FAILED (25s > 20s) → count=2 = maxSkew=2 → remaining 2 blocked.
+			//   2. Both immediately FAILED (65s > 60s) → count=2 = maxSkew=2 → remaining 2 blocked.
 			//   3. Deadlock: first 2 stuck in FAILED, last 2 never get a chance to update.
-			time.Sleep(25 * time.Second)
+			time.Sleep(65 * time.Second)
 
 			By("creating LynqHub")
 			createHubWithTable(hubName, testTable)
@@ -291,8 +298,8 @@ var _ = Describe("Bottleneck Regression (BUG 1 + BUG 2)", Ordered, func() {
 				createPreExistingDeployment(uid+"-nginx", policyTestNamespace, "nginx:1.24")
 			}
 
-			By("waiting 25 seconds so Deployments are older than timeoutSeconds:20")
-			time.Sleep(25 * time.Second)
+			By("waiting 65 seconds so Deployments are older than timeoutSeconds:60")
+			time.Sleep(65 * time.Second)
 
 			By("creating LynqHub")
 			createHubWithTable(hubName, testTable)
@@ -305,8 +312,8 @@ var _ = Describe("Bottleneck Regression (BUG 1 + BUG 2)", Ordered, func() {
 			applyBottleneckForm(formName, hubName, "nginx:1.25", 0)
 
 			By("waiting for all nodes to become Ready before restart")
-			// At this point, Deployments are 25s + rolling time ≈ 55-65s old.
-			// This is older than the 20s timeout, so BUG 1 + BUG 2 would fire on restart.
+			// At this point, Deployments are 65s + rolling time ≈ 125-135s old.
+			// This is older than the 60s timeout, so BUG 1 + BUG 2 would fire on restart.
 			for _, uid := range []string{nodeUID1, nodeUID2} {
 				nodeName := fmt.Sprintf("%s-%s", uid, formName)
 				Eventually(func(g Gomega) {
@@ -333,7 +340,7 @@ var _ = Describe("Bottleneck Regression (BUG 1 + BUG 2)", Ordered, func() {
 			By("restarting the controller to simulate real-world restart scenario")
 			// In production, the controller was restarted to try to resolve the deadlock.
 			// With BUG 2 + BUG 1: restart clears the appliedRV cache → unconditional re-Update
-			//   → rolling update starts → Deployments (now 55-65s old) > 20s timeout → FAILED.
+			//   → rolling update starts → Deployments (now 125-135s old) > 60s timeout → FAILED.
 			// With fixes: annotation-based cache restores → Update skipped → nodes stay Ready.
 			cmd := exec.Command("kubectl", "rollout", "restart",
 				"deployment/lynq-controller-manager", "-n", "lynq-system")
@@ -370,7 +377,7 @@ var _ = Describe("Bottleneck Regression (BUG 1 + BUG 2)", Ordered, func() {
 
 		It("should complete a subsequent rollout after restart with no failed nodes", func() {
 			By("updating LynqForm to nginx:1.26 to trigger another rolling update post-restart")
-			// After restart, the Deployments are now ~65s+ old (well beyond timeoutSeconds:20).
+			// After restart, the Deployments are now ~135s+ old (well beyond timeoutSeconds:60).
 			// BUG 2 + BUG 1 would cause immediate FAILED when the new rolling update starts.
 			// With fixes: elapsed from new applyStartTime ≈ 0 → wait → rolling update completes.
 			applyBottleneckForm(formName, hubName, "nginx:1.26", 0)
@@ -465,7 +472,7 @@ spec:
 
 // applyBottleneckForm creates or updates the LynqForm that reproduces the bottleneck scenario.
 // The form uses patchStrategy:replace + conflictPolicy:Force (the exact production config).
-// timeoutSeconds:20 with 25-second-old Deployments is the controlled reproduction of BUG 1.
+// timeoutSeconds:60 with 65-second-old Deployments is the controlled reproduction of BUG 1.
 // maxSkew=0 means unlimited (no throttling); maxSkew>0 enables the deadlock test.
 func applyBottleneckForm(name, hubName, nginxImage string, maxSkew int32) {
 	rolloutSection := ""
@@ -490,7 +497,7 @@ spec:
       patchStrategy: replace
       conflictPolicy: Force
       waitForReady: true
-      timeoutSeconds: 20
+      timeoutSeconds: 60
       spec:
         apiVersion: apps/v1
         kind: Deployment
