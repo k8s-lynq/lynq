@@ -302,12 +302,7 @@ func (a *Applier) ApplyResource(
 		// spec (SSA would own them and later remove them when they're absent from the template),
 		// so we use a separate MergePatch. This is the only way to stamp apply-start-time on a
 		// resource that was just SSA-created.
-		if newRV := a.persistAppliedHash(ctx, obj, preApplyDesiredHash, true); newRV != "" {
-			a.appliedRV.Store(rvKey, &appliedState{
-				desiredHash:     preApplyDesiredHash,
-				resourceVersion: newRV,
-			})
-		}
+		a.persistAndCache(ctx, obj, rvKey, preApplyDesiredHash, true)
 		return true, nil
 	}
 
@@ -333,16 +328,20 @@ func (a *Applier) ApplyResource(
 	// that case persistAppliedHash is still called (to refresh applied-hash) but must NOT
 	// reset apply-start-time, otherwise the readiness-timeout clock would restart on every
 	// reconcile and never accumulate enough elapsed time to fire.
-	if newRV := a.persistAppliedHash(ctx, obj, preApplyDesiredHash, changed); newRV != "" {
-		// The annotation patch changed the resource's RV. Update the in-memory cache so the
-		// next in-process reconcile doesn't see a stale RV and skip the fast path.
+	a.persistAndCache(ctx, obj, rvKey, preApplyDesiredHash, changed)
+
+	return changed, nil
+}
+
+// persistAndCache calls persistAppliedHash and updates the in-memory cache with the returned RV.
+// Extracted from ApplyResource to keep its cyclomatic complexity within the project limit.
+func (a *Applier) persistAndCache(ctx context.Context, obj *unstructured.Unstructured, rvKey, hash string, specChanged bool) {
+	if newRV := a.persistAppliedHash(ctx, obj, hash, specChanged); newRV != "" {
 		a.appliedRV.Store(rvKey, &appliedState{
-			desiredHash:     preApplyDesiredHash,
+			desiredHash:     hash,
 			resourceVersion: newRV,
 		})
 	}
-
-	return changed, nil
 }
 
 // persistAppliedHash annotates the resource with the last-applied desired spec hash, and
