@@ -141,9 +141,10 @@ const (
 	ReasonResourcesFailed              = "ResourcesFailed"
 	ReasonNotAllResourcesReady         = "NotAllResourcesReady"
 
-	// Resource kinds used in template rendering
-	resourceKindConfigMap = "ConfigMap"
-	resourceKindSecret    = "Secret"
+	// Resource kinds used in template rendering and readiness checks
+	resourceKindConfigMap  = "ConfigMap"
+	resourceKindSecret     = "Secret"
+	resourceKindDeployment = "Deployment"
 
 	// Degraded reasons
 	ReasonResourceFailuresAndConflicts = "ResourceFailuresAndConflicts"
@@ -1631,7 +1632,7 @@ func (r *LynqNodeReconciler) getAPIVersionForKind(kind string) string {
 	switch kind {
 	case "Namespace", "ServiceAccount", "Service", resourceKindConfigMap, resourceKindSecret, "PersistentVolumeClaim":
 		return "v1"
-	case "Deployment", "StatefulSet", "DaemonSet":
+	case resourceKindDeployment, "StatefulSet", "DaemonSet":
 		return "apps/v1"
 	case "Job", "CronJob":
 		return "batch/v1"
