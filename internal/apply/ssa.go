@@ -43,6 +43,11 @@ const (
 	// FieldManager is the name used for Server-Side Apply
 	FieldManager = "lynq-operator"
 
+	// AnnotationAppliedHash stores the desired spec hash from the last successful apply.
+	// Used for cross-restart cache restoration: a new Applier (after controller restart)
+	// can read this annotation to skip re-applying unchanged resources.
+	AnnotationAppliedHash = "lynq.sh/applied-hash"
+
 	// Labels for cross-namespace resource tracking
 	LabelNodeName      = "lynq.sh/node"
 	LabelNodeNamespace = "lynq.sh/node-namespace"
@@ -208,6 +213,21 @@ func (a *Applier) ApplyResource(
 				// Nothing changed: our desired spec is identical AND no external modification
 				return false, nil
 			}
+		} else {
+			// In-memory cache miss (e.g., after controller restart).
+			// Check the resource annotation for cross-restart cache restoration.
+			// If the stored hash matches our desired spec, the resource is unchanged and we can skip.
+			if annotations := existing.GetAnnotations(); annotations != nil {
+				if storedHash := annotations[AnnotationAppliedHash]; storedHash == preApplyDesiredHash {
+					// Desired spec is unchanged since last apply. Restore the in-memory cache
+					// so subsequent reconciles within this process benefit from the fast path.
+					a.appliedRV.Store(rvKey, &appliedState{
+						desiredHash:     preApplyDesiredHash,
+						resourceVersion: beforeResourceVersion,
+					})
+					return false, nil
+				}
+			}
 		}
 	}
 
@@ -275,7 +295,7 @@ func (a *Applier) ApplyResource(
 	afterResourceVersion := obj.GetResourceVersion()
 	changed := beforeResourceVersion != afterResourceVersion
 
-	// Store applied state for future skip checks.
+	// Store applied state in-memory for fast skip detection within this process.
 	// Use preApplyDesiredHash (computed before Patch mutates obj with server response)
 	// so that the next reconcile's skip check compares like-with-like.
 	a.appliedRV.Store(rvKey, &appliedState{
@@ -283,7 +303,48 @@ func (a *Applier) ApplyResource(
 		resourceVersion: afterResourceVersion,
 	})
 
+	// Persist applied hash to resource annotation for cross-restart cache restoration.
+	// After a controller restart the in-memory cache is empty, but this annotation lets
+	// a new Applier skip re-applying unchanged resources (avoiding unnecessary Updates
+	// that would otherwise trigger false readiness-timeout failures under maxSkew).
+	// Non-fatal: if the patch fails, the in-memory cache still works within this process.
+	if newRV := a.persistAppliedHash(ctx, obj, preApplyDesiredHash); newRV != "" {
+		// The annotation patch changed the resource's RV. Update the in-memory cache so the
+		// next in-process reconcile doesn't see a stale RV and skip the fast path.
+		a.appliedRV.Store(rvKey, &appliedState{
+			desiredHash:     preApplyDesiredHash,
+			resourceVersion: newRV,
+		})
+	}
+
 	return changed, nil
+}
+
+// persistAppliedHash annotates the resource with the last-applied desired spec hash.
+// Returns the new resourceVersion after the annotation patch, or "" on failure.
+func (a *Applier) persistAppliedHash(ctx context.Context, obj *unstructured.Unstructured, hash string) string {
+	patchObj := &unstructured.Unstructured{}
+	patchObj.SetGroupVersionKind(obj.GroupVersionKind())
+	patchObj.SetName(obj.GetName())
+	patchObj.SetNamespace(obj.GetNamespace())
+
+	patchData, err := json.Marshal(map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"annotations": map[string]string{AnnotationAppliedHash: hash},
+		},
+	})
+	if err != nil {
+		return ""
+	}
+
+	if err := a.client.Patch(ctx, patchObj, client.RawPatch(types.MergePatchType, patchData)); err != nil {
+		log.FromContext(ctx).V(2).Info("Failed to persist applied-hash annotation (non-fatal)",
+			"resource", fmt.Sprintf("%s/%s/%s", obj.GetKind(), obj.GetNamespace(), obj.GetName()),
+			"error", err)
+		return ""
+	}
+
+	return patchObj.GetResourceVersion()
 }
 
 // computeDesiredHash produces a lightweight hash of the desired spec for PATCH skip detection.

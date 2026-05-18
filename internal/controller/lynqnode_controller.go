@@ -236,6 +236,12 @@ func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.Ly
 	checker := r.getReadinessChecker()
 	templateEngine := r.getTemplateEngine()
 
+	// Record when this reconcile cycle started applying resources.
+	// Timeout for each resource is measured from this point, not from the resource's
+	// creationTimestamp. A pre-existing resource being updated should not be immediately
+	// timed out just because it was created long before this reconcile cycle started.
+	applyStartTime := time.Now()
+
 	totalResources := int32(len(sortedNodes))
 	progressingSet := false
 	templateAppliedEventEmitted := false
@@ -470,9 +476,11 @@ func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.Ly
 					timeoutSeconds = 300 // Default 5 minutes
 				}
 
-				// Check resource creation time to determine if timeout expired
-				creationTime := current.GetCreationTimestamp().Time
-				elapsed := time.Since(creationTime)
+				// Check elapsed time since this reconcile started applying resources.
+				// Using applyStartTime (not creationTimestamp) ensures that pre-existing
+				// resources being updated are not immediately timed out just because they
+				// were created before this reconcile cycle began.
+				elapsed := time.Since(applyStartTime)
 				timeoutDuration := time.Duration(timeoutSeconds) * time.Second
 
 				if elapsed >= timeoutDuration {
