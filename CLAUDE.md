@@ -793,6 +793,18 @@ make test-e2e
   - `lynq.sh/applied-hash` annotation is written to child resources after each successful apply.
     On cache miss after restart, the Applier reads this annotation; if the hash matches the desired
     spec, the re-apply is skipped, preventing the restart from worsening any ongoing deadlock.
+- **A cached RV that no longer matches the live resource does NOT imply external drift.**
+  - Kubernetes routinely bumps a resource's RV without changing its spec: status updates, finalizer
+    edits, controller-managed annotations like `deployment.kubernetes.io/revision`, etc.
+  - When the in-memory cache hash matches but the RV is stale, the Applier MUST consult the
+    `lynq.sh/applied-hash` annotation before re-applying. If the annotation still matches our
+    desired spec, the resource still carries our last apply — skip the Update.
+  - Treating every RV mismatch as drift causes `patchStrategy:replace` to call `client.Update()`
+    on every reconcile. Each Update bumps the Deployment's `metadata.generation` (because the
+    Lynq-rendered spec omits API-server-defaulted fields, so the server sees a "change"). The
+    watch on Deployments fires, the controller reconciles again, RV is stale again → infinite
+    reconcile loop. `observedGeneration` permanently lags `generation`, `isDeploymentReady`
+    stays false, and the LynqNode never becomes Ready.
 - `conflictPolicy:Force` has no effect when `patchStrategy:replace` is used. Force only applies to SSA.
 
 ---

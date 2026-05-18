@@ -647,6 +647,84 @@ func TestRegression_TimerPersistsAcrossReconciles(t *testing.T) {
 			"  failedCount=0 means the annotation is not being read and the timer is resetting each reconcile.")
 }
 
+// TestRegression_StaleRVDoesNotCauseInfiniteUpdateLoop verifies that when something
+// (other than us) has bumped the resource's resourceVersion since our last apply, we
+// fall back to the lynq.sh/applied-hash annotation instead of unconditionally re-applying.
+//
+// Background — the infinite loop this prevents:
+//
+// With patchStrategy:replace, every client.Update() the controller issues bumps the
+// Deployment's metadata.generation because our desired obj lacks fields the API server
+// adds via defaulters (spec.strategy, progressDeadlineSeconds, imagePullPolicy, etc.).
+// The controller watches Deployments and triggers a fresh reconcile on every
+// generation change. If the in-memory cache's resourceVersion no longer matches
+// (because Kubernetes updated status/finalizers/managed-annotations between our
+// previous apply and now), and the cache-hit-with-stale-RV path falls through to
+// re-apply, we get:
+//
+//  apply → generation bump → watch fires → reconcile → apply → … (forever)
+//
+// observedGeneration permanently lags behind generation, isDeploymentReady stays
+// false, and the LynqNode never becomes Ready.
+//
+// The fix: when the in-memory cache hash matches but the RV is stale, check the
+// lynq.sh/applied-hash annotation before re-applying. If the annotation matches,
+// the resource still carries our last-applied spec → skip the Update.
+func TestRegression_StaleRVDoesNotCauseInfiniteUpdateLoop(t *testing.T) {
+	scheme := makeBottleneckScheme(t)
+	node := makeTestNode("test-node", "default")
+	deploy := makeReadyDeployment("ready-deploy", "default")
+
+	resource := makeDeploymentResource("deploy-id", "ready-deploy", lynqv1.PatchStrategyReplace, true, 300)
+	sortedNodes, err := buildSingleNodeGraph(resource)
+	require.NoError(t, err)
+
+	updateCalls := 0
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(deploy, node).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+				if obj.GetObjectKind().GroupVersionKind().Kind == resourceKindDeployment {
+					updateCalls++
+				}
+				return c.Update(ctx, obj, opts...)
+			},
+		}).
+		Build()
+
+	// Use a SHARED reconciler/Applier so the in-memory cache survives across reconciles
+	// (this is what production looks like — main.go creates one Applier per controller).
+	r := makeReconcilerForClient(scheme, c)
+
+	// 1st reconcile: applies the deployment, populates cache, stamps annotation
+	_, failedCount1, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars())
+	require.Equal(t, int32(0), failedCount1, "1st apply must not fail")
+	require.Equal(t, 1, updateCalls, "precondition: 1st reconcile must issue exactly one Update")
+
+	// Simulate an external RV bump (e.g., Kubernetes adding deployment.kubernetes.io/revision,
+	// or a status update from the deployment controller). The spec is unchanged, but the RV is.
+	stale := &appsv1.Deployment{}
+	require.NoError(t, c.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "ready-deploy"}, stale))
+	if stale.Annotations == nil {
+		stale.Annotations = map[string]string{}
+	}
+	stale.Annotations["external/touched-at"] = time.Now().Format(time.RFC3339Nano)
+	require.NoError(t, c.Update(context.Background(), stale))
+	// updateCalls now counts the simulated external update as well; baseline it.
+	prevUpdates := updateCalls
+
+	// 2nd reconcile: same Applier, same hash, but the cached RV is now stale.
+	// The annotation fallback must kick in and skip the apply.
+	_, failedCount2, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars())
+	assert.Equal(t, int32(0), failedCount2, "2nd apply must not fail")
+	assert.Equal(t, 0, updateCalls-prevUpdates,
+		"after a benign external RV bump, the controller must NOT re-issue client.Update() — "+
+			"the annotation fallback should detect the spec is unchanged and skip.\n"+
+			"  Without the fix: each reconcile re-applies → generation bumps → watch fires "+
+			"→ reconcile → re-apply → infinite loop → LynqNode never becomes Ready.")
+}
+
 // =============================================================================
 // HUB CONTROLLER: maxSkew deadlock mechanism verification
 // =============================================================================

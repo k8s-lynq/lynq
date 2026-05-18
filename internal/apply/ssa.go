@@ -213,26 +213,33 @@ func (a *Applier) ApplyResource(
 	rvKey := fmt.Sprintf("%s/%s/%s", obj.GetKind(), obj.GetNamespace(), obj.GetName())
 	preApplyDesiredHash := a.computeDesiredHash(obj)
 	if existsBeforeApply {
+		// Fast path: in-memory cache hit with matching hash AND matching RV → skip.
 		if prev, ok := a.appliedRV.Load(rvKey); ok {
 			state := prev.(*appliedState)
 			if state.desiredHash == preApplyDesiredHash && state.resourceVersion == beforeResourceVersion {
-				// Nothing changed: our desired spec is identical AND no external modification
 				return false, nil
 			}
-		} else {
-			// In-memory cache miss (e.g., after controller restart).
-			// Check the resource annotation for cross-restart cache restoration.
-			// If the stored hash matches our desired spec, the resource is unchanged and we can skip.
-			if annotations := existing.GetAnnotations(); annotations != nil {
-				if storedHash := annotations[AnnotationAppliedHash]; storedHash == preApplyDesiredHash {
-					// Desired spec is unchanged since last apply. Restore the in-memory cache
-					// so subsequent reconciles within this process benefit from the fast path.
-					a.appliedRV.Store(rvKey, &appliedState{
-						desiredHash:     preApplyDesiredHash,
-						resourceVersion: beforeResourceVersion,
-					})
-					return false, nil
-				}
+		}
+		// Slow path: the in-memory cache either missed entirely (controller restart) OR the cached
+		// RV is stale because something bumped the resource's RV since our last apply. The bump may
+		// be benign (status/finalizer/controller-managed-annotation updates) OR genuine external
+		// drift. Distinguish by checking the lynq.sh/applied-hash annotation stamped at apply time:
+		//   - hash matches  → benign RV bump, our spec is still applied, refresh cache and skip
+		//   - hash absent or mismatched → real drift or never applied, fall through to re-apply
+		//
+		// Without this annotation fallback, patchStrategy:replace gets stuck in a reconcile loop:
+		// each client.Update() bumps the Deployment's generation (because our obj lacks the
+		// API-server defaults that exist in the stored object), the watch on Deployments fires,
+		// the controller reconciles again, the cached RV is stale → another client.Update()
+		// → another generation bump → infinite loop. observedGeneration never catches up to
+		// generation, so isDeploymentReady stays false and the LynqNode never becomes Ready.
+		if annotations := existing.GetAnnotations(); annotations != nil {
+			if storedHash := annotations[AnnotationAppliedHash]; storedHash == preApplyDesiredHash {
+				a.appliedRV.Store(rvKey, &appliedState{
+					desiredHash:     preApplyDesiredHash,
+					resourceVersion: beforeResourceVersion,
+				})
+				return false, nil
 			}
 		}
 	}
