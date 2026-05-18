@@ -716,6 +716,55 @@ func TestHasNonLynqAnnotationChange(t *testing.T) {
 	}
 }
 
+// TestRegression_TrackingAnnotationsLandAtomicallyWithSpec verifies that a single SSA
+// apply writes both the spec and lynq.sh/applied-hash + lynq.sh/apply-start-time in one
+// API round-trip, so a reconcile that fires immediately after our apply sees the
+// applied-hash annotation already on the resource and short-circuits.
+//
+// Background — what this regression test catches:
+//
+// Before the fix, persistAppliedHash issued a separate MergePatch AFTER the SSA. There
+// was a window where the cache showed new spec but OLD applied-hash. A reconcile
+// triggered by the SSA's generation watch could land in that window, see "spec changed
+// but annotation stale", and re-issue the SSA — producing a generation 2 → 4 jump in
+// one user-visible update and starving the hub's maxSkew enforcement.
+//
+// Now both annotations are bundled into the SSA submission, so a single cache update
+// makes both fields visible together.
+func TestRegression_TrackingAnnotationsLandAtomicallyWithSpec(t *testing.T) {
+	scheme := makeBottleneckScheme(t)
+	node := makeTestNode("test-node", "default")
+	deploy := makeReadyDeployment("atomic-deploy", "default")
+
+	// Use Replace (not SSA) because controller-runtime's fake client has limited SSA
+	// support; the atomicity property we're testing (annotations land in the same API
+	// call as the spec) is identical for both strategies — for Replace it's the same
+	// PUT body, for SSA the same Apply payload.
+	resource := makeDeploymentResource("deploy-id", "atomic-deploy", lynqv1.PatchStrategyReplace, true, 300)
+	sortedNodes, err := buildSingleNodeGraph(resource)
+	require.NoError(t, err)
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(deploy, node).Build()
+	r := makeReconcilerForClient(scheme, c)
+
+	// 1st apply
+	_, failedCount1, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars())
+	require.Equal(t, int32(0), failedCount1, "1st apply must not fail")
+
+	// Immediately after the apply returns, the live resource must already carry both
+	// lynq.sh/applied-hash and lynq.sh/apply-start-time — i.e., they MUST land in the
+	// same API call as the spec, not in a follow-up MergePatch.
+	got := &appsv1.Deployment{}
+	require.NoError(t, c.Get(context.Background(),
+		client.ObjectKey{Namespace: "default", Name: "atomic-deploy"}, got))
+
+	assert.NotEmpty(t, got.Annotations[apply.AnnotationAppliedHash],
+		"applied-hash must be on the resource immediately after the first apply "+
+			"(bundled into the SSA submission, not added in a follow-up patch)")
+	assert.NotEmpty(t, got.Annotations[apply.AnnotationApplyStartTime],
+		"apply-start-time must be on the resource immediately after the first apply")
+}
+
 // TestRegression_StaleRVDoesNotCauseInfiniteUpdateLoop verifies that when something
 // (other than us) has bumped the resource's resourceVersion since our last apply, we
 // fall back to the lynq.sh/applied-hash annotation instead of unconditionally re-applying.

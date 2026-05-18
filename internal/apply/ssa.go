@@ -244,6 +244,29 @@ func (a *Applier) ApplyResource(
 		}
 	}
 
+	// Decide once whether this apply should reset apply-start-time. We're past the
+	// skip checks above, so we're definitely going to write — the question is only
+	// whether the live spec is actually changing or whether this is a re-apply that
+	// happens to look like a change to the in-memory cache (e.g., RV bumped by an
+	// external status update). Treat "stored hash mismatch or absent" as the spec
+	// genuinely changing.
+	specChanged := true
+	if existsBeforeApply {
+		if stored, ok := existing.GetAnnotations()[AnnotationAppliedHash]; ok && stored == preApplyDesiredHash {
+			specChanged = false
+		}
+	}
+
+	// Bundle the tracking annotations INTO the desired object so the spec and the
+	// applied-hash + apply-start-time annotations land atomically in one API call.
+	// Doing this avoids the race that caused the maxSkew cascade: previously a
+	// separate persistAppliedHash MergePatch followed the SSA, and the SSA's watch
+	// event could be processed by the informer before the MergePatch's. A second
+	// reconcile would then see new spec but OLD applied-hash, falsely conclude
+	// the spec was unapplied, and re-issue the SSA — bumping generation an
+	// extra time and starving the hub's maxSkew enforcement.
+	setLynqTrackingAnnotations(obj, preApplyDesiredHash, specChanged, existing.GetAnnotations())
+
 	// Apply resource based on patch strategy
 	switch patchStrategy {
 	case lynqv1.PatchStrategyApply, "":
@@ -269,10 +292,13 @@ func (a *Applier) ApplyResource(
 		// Strategic Merge Patch
 		// If resource doesn't exist, create it first (merge patch requires existing resource)
 		if !existsBeforeApply {
-			setApplyAnnotations(obj, preApplyDesiredHash)
 			if err := a.client.Create(ctx, obj); err != nil {
 				return false, fmt.Errorf("failed to create resource for merge: %w", err)
 			}
+			a.appliedRV.Store(rvKey, &appliedState{
+				desiredHash:     preApplyDesiredHash,
+				resourceVersion: obj.GetResourceVersion(),
+			})
 			return true, nil
 		}
 		if err := a.client.Patch(ctx, obj, client.Merge); err != nil {
@@ -283,10 +309,13 @@ func (a *Applier) ApplyResource(
 		// Full replacement via Update
 		if !existsBeforeApply {
 			// Create if not exists
-			setApplyAnnotations(obj, preApplyDesiredHash)
 			if err := a.client.Create(ctx, obj); err != nil {
 				return false, fmt.Errorf("failed to create resource: %w", err)
 			}
+			a.appliedRV.Store(rvKey, &appliedState{
+				desiredHash:     preApplyDesiredHash,
+				resourceVersion: obj.GetResourceVersion(),
+			})
 			return true, nil
 		}
 
@@ -303,16 +332,6 @@ func (a *Applier) ApplyResource(
 	// Check if resource was actually changed by comparing resourceVersion.
 	// Patch/Update/Create responses update obj in-place with the server response,
 	// so obj.GetResourceVersion() reflects the post-apply state without an extra GET.
-	if !existsBeforeApply {
-		// Newly created resource — persist apply annotations immediately.
-		// For patchStrategy:apply (SSA) we can't embed tracking annotations in the desired
-		// spec (SSA would own them and later remove them when they're absent from the template),
-		// so we use a separate MergePatch. This is the only way to stamp apply-start-time on a
-		// resource that was just SSA-created.
-		a.persistAndCache(ctx, obj, rvKey, preApplyDesiredHash, true)
-		return true, nil
-	}
-
 	afterResourceVersion := obj.GetResourceVersion()
 	changed := beforeResourceVersion != afterResourceVersion
 
@@ -324,93 +343,90 @@ func (a *Applier) ApplyResource(
 		resourceVersion: afterResourceVersion,
 	})
 
-	// Persist applied hash to resource annotation for cross-restart cache restoration.
-	// After a controller restart the in-memory cache is empty, but this annotation lets
-	// a new Applier skip re-applying unchanged resources (avoiding unnecessary Updates
-	// that would otherwise trigger false readiness-timeout failures under maxSkew).
-	// Non-fatal: if the patch fails, the in-memory cache still works within this process.
-	//
-	// Pass changed so apply-start-time is only reset when the spec actually changed.
-	// K8s may change a resource's RV (status, finalizers) without the spec changing; in
-	// that case persistAppliedHash is still called (to refresh applied-hash) but must NOT
-	// reset apply-start-time, otherwise the readiness-timeout clock would restart on every
-	// reconcile and never accumulate enough elapsed time to fire.
-	a.persistAndCache(ctx, obj, rvKey, preApplyDesiredHash, changed)
-
 	return changed, nil
 }
 
-// persistAndCache calls persistAppliedHash and updates the in-memory cache with the returned RV.
-// Extracted from ApplyResource to keep its cyclomatic complexity within the project limit.
-func (a *Applier) persistAndCache(ctx context.Context, obj *unstructured.Unstructured, rvKey, hash string, specChanged bool) {
-	if newRV := a.persistAppliedHash(ctx, obj, hash, specChanged); newRV != "" {
-		a.appliedRV.Store(rvKey, &appliedState{
-			desiredHash:     hash,
-			resourceVersion: newRV,
-		})
-	}
-}
-
-// persistAppliedHash annotates the resource with the last-applied desired spec hash, and
-// conditionally with the apply-start-time. Returns the new resourceVersion, or "" on failure.
+// setLynqTrackingAnnotations stamps applied-hash and apply-start-time directly onto obj's
+// metadata BEFORE the apply call, so the spec and our tracking annotations land atomically
+// in a single API request. This eliminates the race that occurred when a separate
+// MergePatch followed the apply: the SSA's watch event could be processed by the cache
+// informer before the MergePatch's watch event, so a re-triggered reconcile would see
+// "new spec but old applied-hash" and falsely re-apply.
 //
-// specChanged must be true when the spec actually changed (new resource or modified spec).
-// When false, apply-start-time is intentionally NOT updated: K8s routinely bumps a resource's
-// RV for status/finalizer changes without touching the spec. If we reset apply-start-time on
-// every such no-op apply, the readiness-timeout clock would never accumulate elapsed time.
-func (a *Applier) persistAppliedHash(ctx context.Context, obj *unstructured.Unstructured, hash string, specChanged bool) string {
-	patchObj := &unstructured.Unstructured{}
-	patchObj.SetGroupVersionKind(obj.GroupVersionKind())
-	patchObj.SetName(obj.GetName())
-	patchObj.SetNamespace(obj.GetNamespace())
-
-	annotations := map[string]string{AnnotationAppliedHash: hash}
-	if specChanged {
-		annotations[AnnotationApplyStartTime] = time.Now().UTC().Format(time.RFC3339Nano)
-	}
-
-	patchData, err := json.Marshal(map[string]interface{}{
-		"metadata": map[string]interface{}{
-			"annotations": annotations,
-		},
-	})
-	if err != nil {
-		return ""
-	}
-
-	if err := a.client.Patch(ctx, patchObj, client.RawPatch(types.MergePatchType, patchData)); err != nil {
-		log.FromContext(ctx).V(2).Info("Failed to persist apply annotations (non-fatal)",
-			"resource", fmt.Sprintf("%s/%s/%s", obj.GetKind(), obj.GetNamespace(), obj.GetName()),
-			"error", err)
-		return ""
-	}
-
-	return patchObj.GetResourceVersion()
-}
-
-// setApplyAnnotations stamps the applied-hash and apply-start-time directly onto obj's
-// metadata annotations. Used for the early-return Create paths (replace/merge) where
-// persistAppliedHash cannot be called after the fact.
-func setApplyAnnotations(obj *unstructured.Unstructured, hash string) {
+// applyStart should be true when the spec is actually changing (i.e., stored applied-hash
+// is absent or doesn't match the new hash). When false, the existing apply-start-time on
+// the resource is preserved so the readiness-timeout clock keeps accumulating elapsed
+// time across reconcile loops.
+func setLynqTrackingAnnotations(obj *unstructured.Unstructured, hash string, applyStart bool, existingAnnotations map[string]string) {
 	annotations := obj.GetAnnotations()
 	if annotations == nil {
 		annotations = map[string]string{}
 	}
 	annotations[AnnotationAppliedHash] = hash
-	annotations[AnnotationApplyStartTime] = time.Now().UTC().Format(time.RFC3339Nano)
+	if applyStart {
+		annotations[AnnotationApplyStartTime] = time.Now().UTC().Format(time.RFC3339Nano)
+	} else if existing := existingAnnotations[AnnotationApplyStartTime]; existing != "" {
+		// Preserve the prior apply-start-time so the readiness-timeout clock keeps
+		// accumulating. Without this, every re-apply of an unchanged spec would
+		// reset the clock and prevent the timeout from ever firing.
+		annotations[AnnotationApplyStartTime] = existing
+	}
 	obj.SetAnnotations(annotations)
 }
 
-// computeDesiredHash produces a lightweight hash of the desired spec for PATCH skip detection.
+// computeDesiredHash produces a lightweight hash of the desired spec for skip detection.
+// The hash MUST exclude any annotations we write ourselves (applied-hash, apply-start-time),
+// otherwise the hash would change every time we re-apply (because we set apply-start-time
+// to now), defeating the cache check on the next reconcile.
 func (a *Applier) computeDesiredHash(obj *unstructured.Unstructured) string {
 	// Use JSON serialization of the spec for a deterministic hash.
 	// This is called at most once per resource per reconcile (on apply or skip-check).
-	data, err := json.Marshal(obj.Object)
+	// We marshal a sanitized COPY so the caller's obj is not mutated.
+	sanitized := sanitizeObjectForHashing(obj.Object)
+	data, err := json.Marshal(sanitized)
 	if err != nil {
 		return "" // Force apply on hash failure
 	}
 	h := sha256.Sum256(data)
 	return fmt.Sprintf("%x", h[:8]) // 16-char hex, sufficient for change detection
+}
+
+// sanitizeObjectForHashing returns a shallow-copied view of obj with our tracking
+// annotations removed so the hash is stable across reconciles. We only need to copy
+// the metadata.annotations map to avoid mutating the caller's data — the rest of obj
+// is referenced as-is.
+func sanitizeObjectForHashing(obj map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(obj))
+	for k, v := range obj {
+		out[k] = v
+	}
+	meta, ok := obj["metadata"].(map[string]interface{})
+	if !ok {
+		return out
+	}
+	annos, ok := meta["annotations"].(map[string]interface{})
+	if !ok || len(annos) == 0 {
+		return out
+	}
+	// Copy metadata to avoid mutating the original, then strip our keys.
+	newMeta := make(map[string]interface{}, len(meta))
+	for k, v := range meta {
+		newMeta[k] = v
+	}
+	newAnnos := make(map[string]interface{}, len(annos))
+	for k, v := range annos {
+		if k == AnnotationAppliedHash || k == AnnotationApplyStartTime {
+			continue
+		}
+		newAnnos[k] = v
+	}
+	if len(newAnnos) == 0 {
+		delete(newMeta, "annotations")
+	} else {
+		newMeta["annotations"] = newAnnos
+	}
+	out["metadata"] = newMeta
+	return out
 }
 
 // DeleteResource deletes a resource respecting deletion policy
