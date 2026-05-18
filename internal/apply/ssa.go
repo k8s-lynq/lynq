@@ -267,73 +267,27 @@ func (a *Applier) ApplyResource(
 	// extra time and starving the hub's maxSkew enforcement.
 	setLynqTrackingAnnotations(obj, preApplyDesiredHash, specChanged, existing.GetAnnotations())
 
-	// Apply resource based on patch strategy
-	switch patchStrategy {
-	case lynqv1.PatchStrategyApply, "":
-		// Server-Side Apply (default)
-		force := conflictPolicy == lynqv1.ConflictPolicyForce
-
-		if err := a.client.Patch(ctx, obj, client.Apply, &client.PatchOptions{
-			FieldManager: FieldManager,
-			Force:        &force,
-		}); err != nil {
-			if errors.IsConflict(err) && conflictPolicy == lynqv1.ConflictPolicyStuck {
-				return false, &ConflictError{
-					ResourceName: obj.GetName(),
-					Namespace:    obj.GetNamespace(),
-					Kind:         obj.GetKind(),
-					Err:          err,
-				}
-			}
-			return false, fmt.Errorf("failed to apply resource: %w", err)
-		}
-
-	case lynqv1.PatchStrategyMerge:
-		// Strategic Merge Patch
-		// If resource doesn't exist, create it first (merge patch requires existing resource)
-		if !existsBeforeApply {
-			if err := a.client.Create(ctx, obj); err != nil {
-				return false, fmt.Errorf("failed to create resource for merge: %w", err)
-			}
-			a.appliedRV.Store(rvKey, &appliedState{
-				desiredHash:     preApplyDesiredHash,
-				resourceVersion: obj.GetResourceVersion(),
-			})
-			return true, nil
-		}
-		if err := a.client.Patch(ctx, obj, client.Merge); err != nil {
-			return false, fmt.Errorf("failed to merge resource: %w", err)
-		}
-
-	case lynqv1.PatchStrategyReplace:
-		// Full replacement via Update
-		if !existsBeforeApply {
-			// Create if not exists
-			if err := a.client.Create(ctx, obj); err != nil {
-				return false, fmt.Errorf("failed to create resource: %w", err)
-			}
-			a.appliedRV.Store(rvKey, &appliedState{
-				desiredHash:     preApplyDesiredHash,
-				resourceVersion: obj.GetResourceVersion(),
-			})
-			return true, nil
-		}
-
-		// Preserve resourceVersion and update
-		obj.SetResourceVersion(existing.GetResourceVersion())
-		if err := a.client.Update(ctx, obj); err != nil {
-			return false, fmt.Errorf("failed to replace resource: %w", err)
-		}
-
-	default:
-		return false, fmt.Errorf("unsupported patch strategy: %s", patchStrategy)
+	// Apply (per strategy) is delegated to keep this function under the gocyclo limit.
+	// applyByStrategy may early-return when it creates a brand-new resource; in that case
+	// it returns earlyReturn=true and the caller propagates the result.
+	earlyReturn, changed, err := a.applyByStrategy(ctx, applyArgs{
+		obj:                 obj,
+		existing:            existing,
+		patchStrategy:       patchStrategy,
+		conflictPolicy:      conflictPolicy,
+		existsBeforeApply:   existsBeforeApply,
+		rvKey:               rvKey,
+		preApplyDesiredHash: preApplyDesiredHash,
+	})
+	if err != nil || earlyReturn {
+		return changed, err
 	}
 
 	// Check if resource was actually changed by comparing resourceVersion.
 	// Patch/Update/Create responses update obj in-place with the server response,
 	// so obj.GetResourceVersion() reflects the post-apply state without an extra GET.
 	afterResourceVersion := obj.GetResourceVersion()
-	changed := beforeResourceVersion != afterResourceVersion
+	changed = beforeResourceVersion != afterResourceVersion
 
 	// Store applied state in-memory for fast skip detection within this process.
 	// Use preApplyDesiredHash (computed before Patch mutates obj with server response)
@@ -344,6 +298,82 @@ func (a *Applier) ApplyResource(
 	})
 
 	return changed, nil
+}
+
+// applyArgs bundles ApplyResource's per-call state so applyByStrategy can keep a small
+// signature without losing context. Used purely as a parameter object.
+type applyArgs struct {
+	obj                 *unstructured.Unstructured
+	existing            *unstructured.Unstructured
+	patchStrategy       lynqv1.PatchStrategy
+	conflictPolicy      lynqv1.ConflictPolicy
+	existsBeforeApply   bool
+	rvKey               string
+	preApplyDesiredHash string
+}
+
+// applyByStrategy dispatches the actual API write based on patchStrategy.
+// Returns (earlyReturn, changed, error):
+//   - earlyReturn=true when the strategy did a Create (resource didn't exist before).
+//     The caller should propagate (changed, error) without computing RV diff or storing
+//     the cache twice — applyByStrategy already populated the cache in that path.
+//   - earlyReturn=false on Patch/Update; the caller computes RV diff and stores cache.
+func (a *Applier) applyByStrategy(ctx context.Context, args applyArgs) (bool, bool, error) {
+	switch args.patchStrategy {
+	case lynqv1.PatchStrategyApply, "":
+		force := args.conflictPolicy == lynqv1.ConflictPolicyForce
+		if err := a.client.Patch(ctx, args.obj, client.Apply, &client.PatchOptions{
+			FieldManager: FieldManager,
+			Force:        &force,
+		}); err != nil {
+			if errors.IsConflict(err) && args.conflictPolicy == lynqv1.ConflictPolicyStuck {
+				return false, false, &ConflictError{
+					ResourceName: args.obj.GetName(),
+					Namespace:    args.obj.GetNamespace(),
+					Kind:         args.obj.GetKind(),
+					Err:          err,
+				}
+			}
+			return false, false, fmt.Errorf("failed to apply resource: %w", err)
+		}
+		return false, false, nil
+
+	case lynqv1.PatchStrategyMerge:
+		if !args.existsBeforeApply {
+			if err := a.client.Create(ctx, args.obj); err != nil {
+				return true, false, fmt.Errorf("failed to create resource for merge: %w", err)
+			}
+			a.appliedRV.Store(args.rvKey, &appliedState{
+				desiredHash:     args.preApplyDesiredHash,
+				resourceVersion: args.obj.GetResourceVersion(),
+			})
+			return true, true, nil
+		}
+		if err := a.client.Patch(ctx, args.obj, client.Merge); err != nil {
+			return false, false, fmt.Errorf("failed to merge resource: %w", err)
+		}
+		return false, false, nil
+
+	case lynqv1.PatchStrategyReplace:
+		if !args.existsBeforeApply {
+			if err := a.client.Create(ctx, args.obj); err != nil {
+				return true, false, fmt.Errorf("failed to create resource: %w", err)
+			}
+			a.appliedRV.Store(args.rvKey, &appliedState{
+				desiredHash:     args.preApplyDesiredHash,
+				resourceVersion: args.obj.GetResourceVersion(),
+			})
+			return true, true, nil
+		}
+		args.obj.SetResourceVersion(args.existing.GetResourceVersion())
+		if err := a.client.Update(ctx, args.obj); err != nil {
+			return false, false, fmt.Errorf("failed to replace resource: %w", err)
+		}
+		return false, false, nil
+
+	default:
+		return false, false, fmt.Errorf("unsupported patch strategy: %s", args.patchStrategy)
+	}
 }
 
 // setLynqTrackingAnnotations stamps applied-hash and apply-start-time directly onto obj's
@@ -400,17 +430,17 @@ func sanitizeObjectForHashing(obj map[string]interface{}) map[string]interface{}
 	for k, v := range obj {
 		out[k] = v
 	}
-	meta, ok := obj["metadata"].(map[string]interface{})
+	metaMap, ok := obj["metadata"].(map[string]interface{})
 	if !ok {
 		return out
 	}
-	annos, ok := meta["annotations"].(map[string]interface{})
+	annos, ok := metaMap["annotations"].(map[string]interface{})
 	if !ok || len(annos) == 0 {
 		return out
 	}
 	// Copy metadata to avoid mutating the original, then strip our keys.
-	newMeta := make(map[string]interface{}, len(meta))
-	for k, v := range meta {
+	newMeta := make(map[string]interface{}, len(metaMap))
+	for k, v := range metaMap {
 		newMeta[k] = v
 	}
 	newAnnos := make(map[string]interface{}, len(annos))
