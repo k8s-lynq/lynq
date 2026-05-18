@@ -477,11 +477,15 @@ func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.Ly
 					timeoutSeconds = 300 // Default 5 minutes
 				}
 
-				// Check elapsed time since this reconcile started applying resources.
-				// Using applyStartTime (not creationTimestamp) ensures that pre-existing
-				// resources being updated are not immediately timed out just because they
-				// were created before this reconcile cycle began.
-				elapsed := time.Since(applyStartTime)
+				// Compute elapsed time since we first applied this resource.
+				// We read lynq.sh/apply-start-time from the resource annotation, which is
+				// stamped at apply time and persists across reconcile loops. This ensures:
+				//   - Pre-existing resources are not immediately timed out (BUG 1 fix).
+				//   - Resources that need multiple reconciles to time out accumulate elapsed
+				//     time correctly (regression fix: applyStartTime reset each reconcile).
+				// applyStartTime is used as fallback only for the very first reconcile of a
+				// resource, before the annotation has been persisted.
+				elapsed := elapsedSinceApply(current, applyStartTime)
 				timeoutDuration := time.Duration(timeoutSeconds) * time.Second
 
 				if elapsed >= timeoutDuration {
@@ -2047,4 +2051,20 @@ func (r *LynqNodeReconciler) checkResourcesReadiness(
 	}
 
 	return readyCount, failedCount, conflictedCount
+}
+
+// elapsedSinceApply returns how long it has been since the operator last applied obj.
+// It reads lynq.sh/apply-start-time from the resource's annotations — set by the Applier
+// at apply time and preserved across reconcile loops. This gives a stable reference for
+// readiness-timeout calculations that would otherwise reset with applyStartTime every reconcile.
+// fallback is used on the very first reconcile of a resource, before the annotation is set.
+func elapsedSinceApply(obj client.Object, fallback time.Time) time.Duration {
+	if annotations := obj.GetAnnotations(); annotations != nil {
+		if raw := annotations[apply.AnnotationApplyStartTime]; raw != "" {
+			if t, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+				return time.Since(t)
+			}
+		}
+	}
+	return time.Since(fallback)
 }

@@ -48,6 +48,12 @@ const (
 	// can read this annotation to skip re-applying unchanged resources.
 	AnnotationAppliedHash = "lynq.sh/applied-hash"
 
+	// AnnotationApplyStartTime records when the operator last successfully applied this resource.
+	// Used as a stable reference for readiness-timeout calculations across reconcile loops.
+	// Without this, applyStartTime resets every reconcile so resources that need multiple
+	// reconcile loops to time out (e.g., Deployments with bad images) would never time out.
+	AnnotationApplyStartTime = "lynq.sh/apply-start-time"
+
 	// Labels for cross-namespace resource tracking
 	LabelNodeName      = "lynq.sh/node"
 	LabelNodeNamespace = "lynq.sh/node-namespace"
@@ -256,6 +262,7 @@ func (a *Applier) ApplyResource(
 		// Strategic Merge Patch
 		// If resource doesn't exist, create it first (merge patch requires existing resource)
 		if !existsBeforeApply {
+			setApplyAnnotations(obj, preApplyDesiredHash)
 			if err := a.client.Create(ctx, obj); err != nil {
 				return false, fmt.Errorf("failed to create resource for merge: %w", err)
 			}
@@ -269,6 +276,7 @@ func (a *Applier) ApplyResource(
 		// Full replacement via Update
 		if !existsBeforeApply {
 			// Create if not exists
+			setApplyAnnotations(obj, preApplyDesiredHash)
 			if err := a.client.Create(ctx, obj); err != nil {
 				return false, fmt.Errorf("failed to create resource: %w", err)
 			}
@@ -320,8 +328,8 @@ func (a *Applier) ApplyResource(
 	return changed, nil
 }
 
-// persistAppliedHash annotates the resource with the last-applied desired spec hash.
-// Returns the new resourceVersion after the annotation patch, or "" on failure.
+// persistAppliedHash annotates the resource with the last-applied desired spec hash and apply
+// start time. Returns the new resourceVersion after the annotation patch, or "" on failure.
 func (a *Applier) persistAppliedHash(ctx context.Context, obj *unstructured.Unstructured, hash string) string {
 	patchObj := &unstructured.Unstructured{}
 	patchObj.SetGroupVersionKind(obj.GroupVersionKind())
@@ -330,7 +338,10 @@ func (a *Applier) persistAppliedHash(ctx context.Context, obj *unstructured.Unst
 
 	patchData, err := json.Marshal(map[string]interface{}{
 		"metadata": map[string]interface{}{
-			"annotations": map[string]string{AnnotationAppliedHash: hash},
+			"annotations": map[string]string{
+				AnnotationAppliedHash:    hash,
+				AnnotationApplyStartTime: time.Now().UTC().Format(time.RFC3339Nano),
+			},
 		},
 	})
 	if err != nil {
@@ -338,13 +349,26 @@ func (a *Applier) persistAppliedHash(ctx context.Context, obj *unstructured.Unst
 	}
 
 	if err := a.client.Patch(ctx, patchObj, client.RawPatch(types.MergePatchType, patchData)); err != nil {
-		log.FromContext(ctx).V(2).Info("Failed to persist applied-hash annotation (non-fatal)",
+		log.FromContext(ctx).V(2).Info("Failed to persist apply annotations (non-fatal)",
 			"resource", fmt.Sprintf("%s/%s/%s", obj.GetKind(), obj.GetNamespace(), obj.GetName()),
 			"error", err)
 		return ""
 	}
 
 	return patchObj.GetResourceVersion()
+}
+
+// setApplyAnnotations stamps the applied-hash and apply-start-time directly onto obj's
+// metadata annotations. Used for the early-return Create paths (replace/merge) where
+// persistAppliedHash cannot be called after the fact.
+func setApplyAnnotations(obj *unstructured.Unstructured, hash string) {
+	annotations := obj.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	annotations[AnnotationAppliedHash] = hash
+	annotations[AnnotationApplyStartTime] = time.Now().UTC().Format(time.RFC3339Nano)
+	obj.SetAnnotations(annotations)
 }
 
 // computeDesiredHash produces a lightweight hash of the desired spec for PATCH skip detection.
