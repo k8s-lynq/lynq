@@ -297,6 +297,17 @@ func (a *Applier) ApplyResource(
 	// Patch/Update/Create responses update obj in-place with the server response,
 	// so obj.GetResourceVersion() reflects the post-apply state without an extra GET.
 	if !existsBeforeApply {
+		// Newly created resource — persist apply annotations immediately.
+		// For patchStrategy:apply (SSA) we can't embed tracking annotations in the desired
+		// spec (SSA would own them and later remove them when they're absent from the template),
+		// so we use a separate MergePatch. This is the only way to stamp apply-start-time on a
+		// resource that was just SSA-created.
+		if newRV := a.persistAppliedHash(ctx, obj, preApplyDesiredHash, true); newRV != "" {
+			a.appliedRV.Store(rvKey, &appliedState{
+				desiredHash:     preApplyDesiredHash,
+				resourceVersion: newRV,
+			})
+		}
 		return true, nil
 	}
 
@@ -316,7 +327,13 @@ func (a *Applier) ApplyResource(
 	// a new Applier skip re-applying unchanged resources (avoiding unnecessary Updates
 	// that would otherwise trigger false readiness-timeout failures under maxSkew).
 	// Non-fatal: if the patch fails, the in-memory cache still works within this process.
-	if newRV := a.persistAppliedHash(ctx, obj, preApplyDesiredHash); newRV != "" {
+	//
+	// Pass changed so apply-start-time is only reset when the spec actually changed.
+	// K8s may change a resource's RV (status, finalizers) without the spec changing; in
+	// that case persistAppliedHash is still called (to refresh applied-hash) but must NOT
+	// reset apply-start-time, otherwise the readiness-timeout clock would restart on every
+	// reconcile and never accumulate enough elapsed time to fire.
+	if newRV := a.persistAppliedHash(ctx, obj, preApplyDesiredHash, changed); newRV != "" {
 		// The annotation patch changed the resource's RV. Update the in-memory cache so the
 		// next in-process reconcile doesn't see a stale RV and skip the fast path.
 		a.appliedRV.Store(rvKey, &appliedState{
@@ -328,20 +345,27 @@ func (a *Applier) ApplyResource(
 	return changed, nil
 }
 
-// persistAppliedHash annotates the resource with the last-applied desired spec hash and apply
-// start time. Returns the new resourceVersion after the annotation patch, or "" on failure.
-func (a *Applier) persistAppliedHash(ctx context.Context, obj *unstructured.Unstructured, hash string) string {
+// persistAppliedHash annotates the resource with the last-applied desired spec hash, and
+// conditionally with the apply-start-time. Returns the new resourceVersion, or "" on failure.
+//
+// specChanged must be true when the spec actually changed (new resource or modified spec).
+// When false, apply-start-time is intentionally NOT updated: K8s routinely bumps a resource's
+// RV for status/finalizer changes without touching the spec. If we reset apply-start-time on
+// every such no-op apply, the readiness-timeout clock would never accumulate elapsed time.
+func (a *Applier) persistAppliedHash(ctx context.Context, obj *unstructured.Unstructured, hash string, specChanged bool) string {
 	patchObj := &unstructured.Unstructured{}
 	patchObj.SetGroupVersionKind(obj.GroupVersionKind())
 	patchObj.SetName(obj.GetName())
 	patchObj.SetNamespace(obj.GetNamespace())
 
+	annotations := map[string]string{AnnotationAppliedHash: hash}
+	if specChanged {
+		annotations[AnnotationApplyStartTime] = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+
 	patchData, err := json.Marshal(map[string]interface{}{
 		"metadata": map[string]interface{}{
-			"annotations": map[string]string{
-				AnnotationAppliedHash:    hash,
-				AnnotationApplyStartTime: time.Now().UTC().Format(time.RFC3339Nano),
-			},
+			"annotations": annotations,
 		},
 	})
 	if err != nil {
