@@ -93,21 +93,29 @@ var _ = Describe("Pprof Endpoint", Ordered, func() {
 		// before pprof BeforeAll re-patches the same Deployment.
 		var podIP string
 		Eventually(func(g Gomega) {
+			// Capture the current pod via `$pod := .` so we can reference its podIP
+			// from inside the nested {{ range .status.conditions }}. Using plain `$`
+			// inside the inner range would resolve to the PodList root (the template's
+			// initial dot), not the iterated pod — which would silently expand to
+			// "<no value>" and produce a bogus URL like http://<no value>:6060/...
 			cmd := exec.Command("kubectl", "get", "pods",
 				"-l", "control-plane=controller-manager",
 				"-n", namespace,
-				"-o", "go-template={{ range .items }}"+
-					"{{ if not .metadata.deletionTimestamp }}"+
-					"{{ range .status.conditions }}"+
+				"-o", "go-template={{ range .items }}{{ $pod := . }}"+
+					"{{ if not $pod.metadata.deletionTimestamp }}"+
+					"{{ range $pod.status.conditions }}"+
 					"{{ if and (eq .type \"Ready\") (eq .status \"True\") }}"+
-					"{{ $.status.podIP }}{{ \"\\n\" }}"+
+					"{{ $pod.status.podIP }}{{ \"\\n\" }}"+
 					"{{ end }}{{ end }}{{ end }}{{ end }}")
 			output, err := utils.Run(cmd)
 			g.Expect(err).NotTo(HaveOccurred())
 			lines := utils.GetNonEmptyLines(output)
 			g.Expect(lines).ToNot(BeEmpty(), "no Ready controller-manager pod yet (terminating pods filtered out)")
 			podIP = lines[0]
+			// Defense in depth: reject empty/sentinel values that would otherwise produce
+			// a malformed URL. "<no value>" was the symptom of the original template bug.
 			g.Expect(podIP).ToNot(BeEmpty())
+			g.Expect(podIP).ToNot(Equal("<no value>"))
 		}, 2*time.Minute, 2*time.Second).Should(Succeed())
 
 		pprofURL := fmt.Sprintf("http://%s:6060/debug/pprof/", podIP)
