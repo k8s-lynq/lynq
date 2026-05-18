@@ -546,58 +546,28 @@ func dumpBottleneckDebugState(uid, formName string) {
 	nodeName := fmt.Sprintf("%s-%s", uid, formName)
 	deployName := uid + "-nginx"
 
-	By(fmt.Sprintf("=== DEBUG: LynqNode %s ===", nodeName))
-	cmd := exec.Command("kubectl", "get", "lynqnode", nodeName, "-n", policyTestNamespace, "-o", "yaml")
-	if out, err := utils.Run(cmd); err == nil {
-		fmt.Fprintln(GinkgoWriter, out)
-	} else {
-		fmt.Fprintf(GinkgoWriter, "failed to get lynqnode: %v\n", err)
+	writeDebug := func(label string, cmd *exec.Cmd) {
+		By(label)
+		if out, err := utils.Run(cmd); err == nil {
+			_, _ = fmt.Fprintln(GinkgoWriter, out)
+		} else {
+			_, _ = fmt.Fprintf(GinkgoWriter, "%s failed: %v\n", label, err)
+		}
 	}
 
-	By(fmt.Sprintf("=== DEBUG: Deployment %s ===", deployName))
-	cmd = exec.Command("kubectl", "get", "deployment", deployName, "-n", policyTestNamespace, "-o", "yaml")
-	if out, err := utils.Run(cmd); err == nil {
-		fmt.Fprintln(GinkgoWriter, out)
-	} else {
-		fmt.Fprintf(GinkgoWriter, "failed to get deployment: %v\n", err)
-	}
-
-	By(fmt.Sprintf("=== DEBUG: ReplicaSets owned by %s ===", deployName))
-	cmd = exec.Command("kubectl", "get", "rs", "-n", policyTestNamespace,
-		"-l", "app="+deployName, "-o", "yaml")
-	if out, err := utils.Run(cmd); err == nil {
-		fmt.Fprintln(GinkgoWriter, out)
-	} else {
-		fmt.Fprintf(GinkgoWriter, "failed to get replicasets: %v\n", err)
-	}
-
-	By(fmt.Sprintf("=== DEBUG: Pods with app=%s ===", deployName))
-	cmd = exec.Command("kubectl", "get", "pods", "-n", policyTestNamespace,
-		"-l", "app="+deployName, "-o", "wide")
-	if out, err := utils.Run(cmd); err == nil {
-		fmt.Fprintln(GinkgoWriter, out)
-	} else {
-		fmt.Fprintf(GinkgoWriter, "failed to get pods: %v\n", err)
-	}
-
-	By("=== DEBUG: Recent controller logs (last 200 lines) ===")
-	cmd = exec.Command("kubectl", "logs", "-n", "lynq-system",
-		"deployment/lynq-controller-manager", "--tail=200")
-	if out, err := utils.Run(cmd); err == nil {
-		fmt.Fprintln(GinkgoWriter, out)
-	} else {
-		fmt.Fprintf(GinkgoWriter, "failed to get controller logs: %v\n", err)
-	}
-
-	By(fmt.Sprintf("=== DEBUG: Events for LynqNode %s ===", nodeName))
-	cmd = exec.Command("kubectl", "get", "events", "-n", policyTestNamespace,
-		"--field-selector", "involvedObject.name="+nodeName,
-		"--sort-by=.lastTimestamp")
-	if out, err := utils.Run(cmd); err == nil {
-		fmt.Fprintln(GinkgoWriter, out)
-	} else {
-		fmt.Fprintf(GinkgoWriter, "failed to get events: %v\n", err)
-	}
+	writeDebug(fmt.Sprintf("=== DEBUG: LynqNode %s ===", nodeName),
+		exec.Command("kubectl", "get", "lynqnode", nodeName, "-n", policyTestNamespace, "-o", "yaml"))
+	writeDebug(fmt.Sprintf("=== DEBUG: Deployment %s ===", deployName),
+		exec.Command("kubectl", "get", "deployment", deployName, "-n", policyTestNamespace, "-o", "yaml"))
+	writeDebug(fmt.Sprintf("=== DEBUG: ReplicaSets for app=%s ===", deployName),
+		exec.Command("kubectl", "get", "rs", "-n", policyTestNamespace, "-l", "app="+deployName, "-o", "yaml"))
+	writeDebug(fmt.Sprintf("=== DEBUG: Pods with app=%s ===", deployName),
+		exec.Command("kubectl", "get", "pods", "-n", policyTestNamespace, "-l", "app="+deployName, "-o", "wide"))
+	writeDebug("=== DEBUG: Recent controller logs (last 200 lines) ===",
+		exec.Command("kubectl", "logs", "-n", "lynq-system", "deployment/lynq-controller-manager", "--tail=200"))
+	writeDebug(fmt.Sprintf("=== DEBUG: Events for LynqNode %s ===", nodeName),
+		exec.Command("kubectl", "get", "events", "-n", policyTestNamespace,
+			"--field-selector", "involvedObject.name="+nodeName, "--sort-by=.lastTimestamp"))
 }
 
 // cleanupBottleneckResources removes all resources created by bottleneck tests.
