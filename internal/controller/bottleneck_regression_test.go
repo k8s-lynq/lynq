@@ -662,7 +662,7 @@ func TestRegression_TimerPersistsAcrossReconciles(t *testing.T) {
 // previous apply and now), and the cache-hit-with-stale-RV path falls through to
 // re-apply, we get:
 //
-//  apply → generation bump → watch fires → reconcile → apply → … (forever)
+//	apply → generation bump → watch fires → reconcile → apply → … (forever)
 //
 // observedGeneration permanently lags behind generation, isDeploymentReady stays
 // false, and the LynqNode never becomes Ready.
