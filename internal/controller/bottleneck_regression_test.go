@@ -647,6 +647,75 @@ func TestRegression_TimerPersistsAcrossReconciles(t *testing.T) {
 			"  failedCount=0 means the annotation is not being read and the timer is resetting each reconcile.")
 }
 
+// TestHasNonLynqAnnotationChange verifies that the watch predicate filter ignores
+// lynq.sh/* annotation changes — these are written by persistAppliedHash after every
+// successful apply, and re-firing the watch on them creates a reconcile cascade that
+// inflates Deployment generation and breaks the hub's maxSkew enforcement.
+func TestHasNonLynqAnnotationChange(t *testing.T) {
+	cases := []struct {
+		name string
+		old  map[string]string
+		new  map[string]string
+		want bool
+	}{
+		{
+			name: "no change",
+			old:  map[string]string{"foo": "bar"},
+			new:  map[string]string{"foo": "bar"},
+			want: false,
+		},
+		{
+			name: "only lynq.sh/applied-hash added",
+			old:  map[string]string{"foo": "bar"},
+			new:  map[string]string{"foo": "bar", "lynq.sh/applied-hash": "abc123"},
+			want: false,
+		},
+		{
+			name: "only lynq.sh/apply-start-time changed",
+			old:  map[string]string{"foo": "bar", "lynq.sh/apply-start-time": "2026-05-18T00:00:00Z"},
+			new:  map[string]string{"foo": "bar", "lynq.sh/apply-start-time": "2026-05-18T00:00:01Z"},
+			want: false,
+		},
+		{
+			name: "lynq.sh and user annotation both changed",
+			old:  map[string]string{"foo": "bar", "lynq.sh/applied-hash": "abc"},
+			new:  map[string]string{"foo": "baz", "lynq.sh/applied-hash": "def"},
+			want: true,
+		},
+		{
+			name: "user annotation added",
+			old:  map[string]string{"lynq.sh/applied-hash": "abc"},
+			new:  map[string]string{"lynq.sh/applied-hash": "abc", "deployment.kubernetes.io/revision": "2"},
+			want: true,
+		},
+		{
+			name: "user annotation removed",
+			old:  map[string]string{"foo": "bar", "lynq.sh/applied-hash": "abc"},
+			new:  map[string]string{"lynq.sh/applied-hash": "abc"},
+			want: true,
+		},
+		{
+			name: "nil to all-lynq.sh",
+			old:  nil,
+			new:  map[string]string{"lynq.sh/applied-hash": "abc", "lynq.sh/apply-start-time": "T"},
+			want: false,
+		},
+		{
+			name: "nil to user annotation",
+			old:  nil,
+			new:  map[string]string{"deployment.kubernetes.io/revision": "1"},
+			want: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := hasNonLynqAnnotationChange(tc.old, tc.new)
+			assert.Equal(t, tc.want, got,
+				"old=%v new=%v: hasNonLynqAnnotationChange returned wrong result", tc.old, tc.new)
+		})
+	}
+}
+
 // TestRegression_StaleRVDoesNotCauseInfiniteUpdateLoop verifies that when something
 // (other than us) has bumped the resource's resourceVersion since our last apply, we
 // fall back to the lynq.sh/applied-hash annotation instead of unconditionally re-applying.

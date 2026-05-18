@@ -1274,8 +1274,15 @@ func (r *LynqNodeReconciler) SetupWithManager(mgr ctrl.Manager, concurrency int)
 				return true
 			}
 
-			// Always reconcile on annotation change
-			if !reflect.DeepEqual(oldObj.GetAnnotations(), newObj.GetAnnotations()) {
+			// Reconcile on annotation change, BUT ignore annotations we manage ourselves
+			// (lynq.sh/applied-hash, lynq.sh/apply-start-time, lynq.sh/deletion-policy,
+			// lynq.sh/orphaned-*). Without this filter, every successful apply writes those
+			// annotations via persistAppliedHash → watch fires → reconcile → no spec change
+			// but a fresh apply happens anyway because the cache RV is stale → writes
+			// annotations again → infinite cascade. The cascade inflates Deployment generation
+			// (gen 2 → 4 in a single update window) and starves the hub's maxSkew enforcement
+			// (which uses cache lag-prone LynqNode state to decide who's "updating").
+			if hasNonLynqAnnotationChange(oldObj.GetAnnotations(), newObj.GetAnnotations()) {
 				return true
 			}
 
@@ -2067,4 +2074,42 @@ func elapsedSinceApply(obj client.Object, fallback time.Time) time.Duration {
 		}
 	}
 	return time.Since(fallback)
+}
+
+// hasNonLynqAnnotationChange reports whether the user-visible annotations on a watched
+// child resource have changed. It deliberately ignores annotations we manage ourselves
+// (lynq.sh/* keys written by the Applier), so the watch predicate does not fire on the
+// MergePatch that persistAppliedHash performs after every successful apply.
+//
+// Without this filter, each apply triggers a self-reconcile cascade:
+//
+//	apply → persistAppliedHash MergePatches lynq.sh/applied-hash + apply-start-time →
+//	  Owns watch sees an annotation change → LynqNode re-reconciles → apply skipped via
+//	  hash cache → but the next apply (e.g., spec change) collides with the in-flight
+//	  cascade, doubling the SSA work and inflating Deployment generation. The hub's
+//	  maxSkew enforcement loses track of "who is currently updating" because the cache
+//	  it inspects is being churned by these cascades.
+func hasNonLynqAnnotationChange(oldAnno, newAnno map[string]string) bool {
+	return !reflect.DeepEqual(stripLynqAnnotations(oldAnno), stripLynqAnnotations(newAnno))
+}
+
+// stripLynqAnnotations returns a copy of m with all lynq.sh/* keys removed.
+// Returns nil for nil input AND for results that are empty after stripping, so
+// DeepEqual compares two "no user-visible annotations" cases as equal regardless
+// of whether one map was nil and the other contained only lynq.sh keys.
+func stripLynqAnnotations(m map[string]string) map[string]string {
+	if len(m) == 0 {
+		return nil
+	}
+	var out map[string]string
+	for k, v := range m {
+		if strings.HasPrefix(k, "lynq.sh/") {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]string, len(m))
+		}
+		out[k] = v
+	}
+	return out
 }
