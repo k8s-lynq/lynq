@@ -84,16 +84,30 @@ var _ = Describe("Pprof Endpoint", Ordered, func() {
 
 	It("should serve pprof index page over HTTP on port 6060", func() {
 		By("getting the controller manager pod IP")
+		// IMPORTANT: filter to Ready pods with no deletionTimestamp. Without this filter
+		// the kubectl jsonpath {.items[0]} can pick up a Terminating pod (e.g. from a
+		// previous test's `rollout restart`) whose IP is briefly still assigned but
+		// becomes invalid moments later — curl then fails with connection refused.
+		// This was the root cause of pprof becoming flaky once the bottleneck regression
+		// suite added a BUG 2 test that performs `kubectl rollout restart` immediately
+		// before pprof BeforeAll re-patches the same Deployment.
 		var podIP string
 		Eventually(func(g Gomega) {
 			cmd := exec.Command("kubectl", "get", "pods",
 				"-l", "control-plane=controller-manager",
-				"-o", "jsonpath={.items[0].status.podIP}",
-				"-n", namespace)
+				"-n", namespace,
+				"-o", "go-template={{ range .items }}"+
+					"{{ if not .metadata.deletionTimestamp }}"+
+					"{{ range .status.conditions }}"+
+					"{{ if and (eq .type \"Ready\") (eq .status \"True\") }}"+
+					"{{ $.status.podIP }}{{ \"\\n\" }}"+
+					"{{ end }}{{ end }}{{ end }}{{ end }}")
 			output, err := utils.Run(cmd)
 			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(output).ToNot(BeEmpty())
-			podIP = output
+			lines := utils.GetNonEmptyLines(output)
+			g.Expect(lines).ToNot(BeEmpty(), "no Ready controller-manager pod yet (terminating pods filtered out)")
+			podIP = lines[0]
+			g.Expect(podIP).ToNot(BeEmpty())
 		}, 2*time.Minute, 2*time.Second).Should(Succeed())
 
 		pprofURL := fmt.Sprintf("http://%s:6060/debug/pprof/", podIP)
@@ -103,6 +117,11 @@ var _ = Describe("Pprof Endpoint", Ordered, func() {
 			"-n", namespace, "--ignore-not-found=true")
 		_, _ = utils.Run(cmd)
 
+		// curl --retry-connrefused + --retry-all-errors makes the request tolerant of
+		// the brief window after a pod restart where the IP is assigned but the pprof
+		// HTTP server hasn't bound :6060 yet. Without these flags, the very first
+		// connection-refused fails the pod permanently and the Eventually below times
+		// out for 120s waiting for a never-arriving Succeeded phase.
 		cmd = exec.Command("kubectl", "run", pprofPodName, "--restart=Never",
 			"--namespace", namespace,
 			"--image=curlimages/curl:latest",
@@ -113,7 +132,7 @@ var _ = Describe("Pprof Endpoint", Ordered, func() {
 						"name": "curl",
 						"image": "curlimages/curl:latest",
 						"command": ["/bin/sh", "-c"],
-						"args": ["curl -sf --max-time 10 %s"],
+						"args": ["curl -sf --max-time 10 --retry 5 --retry-delay 3 --retry-connrefused --retry-all-errors %s"],
 						"securityContext": {
 							"allowPrivilegeEscalation": false,
 							"capabilities": {"drop": ["ALL"]},

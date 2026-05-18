@@ -334,6 +334,29 @@ var _ = Describe("Bottleneck Regression (BUG 1 + BUG 2)", Ordered, func() {
 			cleanupBottleneckResources(formName, hubName, policyTestNamespace,
 				[]string{nodeUID1 + "-nginx", nodeUID2 + "-nginx"},
 				[]string{nodeUID1, nodeUID2})
+
+			// This context restarts the lynq-controller-manager deployment via
+			// `kubectl rollout restart`. Even though `kubectl rollout status` returns
+			// success once the new ReplicaSet is Available, the old ReplicaSet's pod
+			// may still be in the Terminating state for its terminationGracePeriod.
+			// The very next E2E test (Pprof Endpoint) patches the same Deployment;
+			// if a Terminating pod is still listed when that test reads
+			// `kubectl get pods -l control-plane=controller-manager`, it can pick the
+			// dying pod's IP and the subsequent curl will hit a refused connection.
+			// Wait until only Ready, non-Terminating pods are visible to avoid leaking
+			// this transient state across tests.
+			By("waiting for any Terminating lynq-controller-manager pods to fully exit")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "pods",
+					"-l", "control-plane=controller-manager",
+					"-n", "lynq-system",
+					"-o", "go-template={{ range .items }}"+
+						"{{ if .metadata.deletionTimestamp }}terminating "+
+						"{{ end }}{{ end }}")
+				output, _ := utils.Run(cmd)
+				g.Expect(output).To(BeEmpty(),
+					"a Terminating controller-manager pod is still present: %q", output)
+			}, 2*time.Minute, 2*time.Second).Should(Succeed())
 		})
 
 		It("should keep LynqNodes Ready after controller restart", func() {
