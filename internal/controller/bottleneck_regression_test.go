@@ -367,7 +367,7 @@ func TestRegression_Bug2_UnchangedResourceNotReappliedAfterRestart(t *testing.T)
 		WithObjects(readyDeploy, node).
 		WithInterceptorFuncs(interceptor.Funcs{
 			Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
-				if obj.GetObjectKind().GroupVersionKind().Kind == "Deployment" {
+				if obj.GetObjectKind().GroupVersionKind().Kind == resourceKindDeployment {
 					totalUpdateCalls++
 				}
 				return c.Update(ctx, obj, opts...)
@@ -449,7 +449,7 @@ func TestRegression_Bug2_ChangedResourceMustBeReapplied(t *testing.T) {
 		WithObjects(existingDeploy, node).
 		WithInterceptorFuncs(interceptor.Funcs{
 			Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
-				if obj.GetObjectKind().GroupVersionKind().Kind == "Deployment" {
+				if obj.GetObjectKind().GroupVersionKind().Kind == resourceKindDeployment {
 					updateCalls++
 				}
 				return c.Update(ctx, obj, opts...)
@@ -467,7 +467,8 @@ func TestRegression_Bug2_ChangedResourceMustBeReapplied(t *testing.T) {
 // =============================================================================
 
 // TestRegression_RestartDoesNotWorsenMaxSkewDeadlock verifies that controller restart
-// does NOT cause additional resources to be immediately marked as failed.
+// does NOT cause additional resources to be immediately marked as failed, AND that
+// the BUG 2 fix (annotation-based cache) prevents redundant Update calls after restart.
 func TestRegression_RestartDoesNotWorsenMaxSkewDeadlock(t *testing.T) {
 	scheme := makeBottleneckScheme(t)
 	node := makeTestNode("test-node", "default")
@@ -477,20 +478,40 @@ func TestRegression_RestartDoesNotWorsenMaxSkewDeadlock(t *testing.T) {
 	sortedNodes, err := buildSingleNodeGraph(resource)
 	require.NoError(t, err)
 
-	c1 := fake.NewClientBuilder().WithScheme(scheme).WithObjects(rollingDeploy, node).Build()
-	r1 := makeReconcilerForClient(scheme, c1)
-	_, failedCount1, _, _, _, _ := r1.applyResources(context.Background(), node, sortedNodes, defaultVars())
-	t.Logf("first controller: failedCount=%d", failedCount1)
+	// Shared fake client: annotation written by r1 is visible to r2,
+	// simulating a real restart where cluster state persists across the restart.
+	updateCalls := 0
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(rollingDeploy, node).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+				if obj.GetObjectKind().GroupVersionKind().Kind == resourceKindDeployment {
+					updateCalls++
+				}
+				return c.Update(ctx, obj, opts...)
+			},
+		}).
+		Build()
 
-	// Simulate restart: same cluster state, new Applier (empty cache)
-	c2 := fake.NewClientBuilder().WithScheme(scheme).WithObjects(rollingDeploy, node).Build()
-	r2 := makeReconcilerForClient(scheme, c2)
+	r1 := makeReconcilerForClient(scheme, c)
+	_, failedCount1, _, _, _, _ := r1.applyResources(context.Background(), node, sortedNodes, defaultVars())
+	t.Logf("first controller: failedCount=%d, updateCalls=%d", failedCount1, updateCalls)
+	require.Equal(t, 1, updateCalls, "precondition: first apply must call Update once")
+
+	// Simulate restart: new Applier with empty in-memory cache, same shared cluster state.
+	// BUG 2 fix: applied-hash annotation restores cache → no redundant Update triggered.
+	prevUpdates := updateCalls
+	r2 := makeReconcilerForClient(scheme, c)
 	_, failedCount2, _, _, _, _ := r2.applyResources(context.Background(), node, sortedNodes, defaultVars())
-	t.Logf("second controller (after restart): failedCount=%d", failedCount2)
+	restartUpdateCalls := updateCalls - prevUpdates
+	t.Logf("second controller (after restart): failedCount=%d, updateCalls=%d", failedCount2, restartUpdateCalls)
 
 	assert.Equal(t, int32(0), failedCount2,
-		"a rolling Deployment must NOT be immediately marked FAILED after controller restart.\n"+
-			"  Fix: applyStartTime-based timeout → restart no longer worsens the deadlock")
+		"a rolling Deployment must NOT be immediately marked FAILED after controller restart.")
+	assert.Equal(t, 0, restartUpdateCalls,
+		"after restart, BUG 2 fix (annotation-based cache) must prevent redundant Update calls.\n"+
+			"  Without fix: cache cleared → Update called → rolling update re-triggered → BUG 1 fires again.")
 }
 
 // TestRegression_MaxSkewNotSaturatedByFalseFailures verifies that false timeout failures
@@ -516,6 +537,114 @@ func TestRegression_MaxSkewNotSaturatedByFalseFailures(t *testing.T) {
 				"node-%d: rolling Deployment must not be immediately FAILED and waste a maxSkew slot.", i)
 		})
 	}
+}
+
+// =============================================================================
+// HELPER FUNCTION: elapsedSinceApply — direct unit tests
+// =============================================================================
+
+// TestElapsedSinceApply_ReadsAnnotation verifies that elapsedSinceApply reads the
+// apply.AnnotationApplyStartTime annotation when present, not the fallback time.
+func TestElapsedSinceApply_ReadsAnnotation(t *testing.T) {
+	// Stamp 2 seconds ago in the annotation
+	applyTime := time.Now().Add(-2 * time.Second)
+	obj := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test",
+			Annotations: map[string]string{
+				apply.AnnotationApplyStartTime: applyTime.UTC().Format(time.RFC3339Nano),
+			},
+		},
+	}
+	fallback := time.Now() // if used: elapsed ≈ 0, which is < 1s
+
+	elapsed := elapsedSinceApply(obj, fallback)
+
+	assert.GreaterOrEqual(t, elapsed, 1*time.Second,
+		"elapsedSinceApply must read from the annotation (≈2s elapsed), not the fallback (≈0s).")
+}
+
+// TestElapsedSinceApply_FallsBackWhenAnnotationAbsent verifies that when the annotation
+// is missing, elapsedSinceApply uses the fallback time.
+func TestElapsedSinceApply_FallsBackWhenAnnotationAbsent(t *testing.T) {
+	obj := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+	}
+	fallback := time.Now().Add(-5 * time.Second) // 5s ago
+
+	elapsed := elapsedSinceApply(obj, fallback)
+
+	assert.GreaterOrEqual(t, elapsed, 4*time.Second,
+		"without annotation, elapsedSinceApply must fall back to the fallback parameter (≈5s).")
+}
+
+// TestElapsedSinceApply_FallsBackOnInvalidFormat verifies that a malformed annotation
+// is silently ignored and the fallback time is used.
+func TestElapsedSinceApply_FallsBackOnInvalidFormat(t *testing.T) {
+	obj := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{
+				apply.AnnotationApplyStartTime: "not-a-valid-timestamp",
+			},
+		},
+	}
+	fallback := time.Now().Add(-3 * time.Second)
+
+	elapsed := elapsedSinceApply(obj, fallback)
+
+	assert.GreaterOrEqual(t, elapsed, 2*time.Second,
+		"with an invalid annotation, elapsedSinceApply must fall back to the fallback parameter.")
+}
+
+// =============================================================================
+// TIMER PERSISTENCE: apply-start-time annotation must survive across reconcile loops
+// =============================================================================
+
+// TestRegression_TimerPersistsAcrossReconciles verifies that the readiness timeout
+// clock accumulates correctly across multiple reconcile loops.
+//
+// Without the annotation mechanism, applyStartTime resets each reconcile loop, so
+// a resource that needs multiple loops to time out (e.g., a Deployment with a bad image)
+// would never actually time out — its elapsed time would always be ≈0.
+//
+// Test design:
+//   - timeoutSeconds=1, rolling Deployment (not ready)
+//   - 1st reconcile: apply → apply-start-time annotation stamped (≈now)
+//   - sleep 2s (annotation is now 2s old)
+//   - 2nd reconcile (shared client, new reconciler): reads annotation → elapsed≈2s > 1s → FAILED
+//
+// Without the annotation: 2nd reconcile elapsed = time.Since(fresh applyStartTime) ≈ 0 < 1s → NOT failed.
+func TestRegression_TimerPersistsAcrossReconciles(t *testing.T) {
+	scheme := makeBottleneckScheme(t)
+	node := makeTestNode("test-node", "default")
+	// Fresh Deployment (not ready: observedGeneration != generation)
+	rollingDeploy := makeRollingDeployment("rolling-deploy", "default", 0)
+
+	// Very short timeout (1s) to make the test fast
+	resource := makeDeploymentResource("deploy-id", "rolling-deploy", lynqv1.PatchStrategyReplace, true, 1)
+	sortedNodes, err := buildSingleNodeGraph(resource)
+	require.NoError(t, err)
+
+	// Shared fake client: annotation written by r1 is readable by r2
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(rollingDeploy, node).Build()
+
+	// 1st reconcile: applies resource, stamps apply-start-time = now
+	r1 := makeReconcilerForClient(scheme, c)
+	_, failedCount1, _, _, _, _ := r1.applyResources(context.Background(), node, sortedNodes, defaultVars())
+	assert.Equal(t, int32(0), failedCount1,
+		"immediately after apply the 1s timeout has not yet elapsed → failedCount must be 0")
+
+	// Wait for the timeout to elapse (annotation is now ≈2s old, timeout=1s)
+	time.Sleep(2 * time.Second)
+
+	// 2nd reconcile (new reconciler = empty in-memory cache, same cluster state)
+	// elapsedSinceApply reads the annotation (≈2s ago) → elapsed > 1s → timeout fires
+	r2 := makeReconcilerForClient(scheme, c)
+	_, failedCount2, _, _, _, _ := r2.applyResources(context.Background(), node, sortedNodes, defaultVars())
+
+	assert.Equal(t, int32(1), failedCount2,
+		"after 2s with timeoutSeconds=1, apply-start-time annotation must be read to fire the timeout.\n"+
+			"  failedCount=0 means the annotation is not being read and the timer is resetting each reconcile.")
 }
 
 // =============================================================================

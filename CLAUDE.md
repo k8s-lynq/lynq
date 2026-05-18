@@ -780,6 +780,20 @@ make test-e2e
 - Always validate `dependIds` before topological sort
 - SSA requires `fieldManager` and correct content-type
 - `waitForReady=true` blocks the reconciliation pipeline
+- **Readiness timeout is measured from `lynq.sh/apply-start-time` annotation, NOT `creationTimestamp`.**
+  - Using `creationTimestamp` causes pre-existing resources (months old) to immediately exceed the
+    timeout after apply, marking them as FAILED instantly. This is the root cause of the maxSkew deadlock.
+  - `lynq.sh/apply-start-time` is stamped on the child resource by the Applier at apply time and
+    persists across reconcile loops so the timeout clock does not reset every 30 seconds.
+  - `applyStartTime` (local variable) is only a fallback for the very first reconcile before the
+    annotation has been written.
+- **The in-memory `appliedRV` cache in `Applier` is cleared on controller restart.**
+  - Without the cache, the Applier re-applies all resources unconditionally on startup, triggering
+    rolling updates that start the readiness-timeout clock from scratch.
+  - `lynq.sh/applied-hash` annotation is written to child resources after each successful apply.
+    On cache miss after restart, the Applier reads this annotation; if the hash matches the desired
+    spec, the re-apply is skipped, preventing the restart from worsening any ongoing deadlock.
+- `conflictPolicy:Force` has no effect when `patchStrategy:replace` is used. Force only applies to SSA.
 
 ---
 
