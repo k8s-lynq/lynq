@@ -141,7 +141,7 @@ func makeDeploymentResource(id, name string, patchStrategy lynqv1.PatchStrategy,
 // creationTimestamp is set to the given age in the past.
 func makeRollingDeployment(name, namespace string, age time.Duration) *appsv1.Deployment {
 	return &appsv1.Deployment{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
+		TypeMeta: metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              name,
 			Namespace:         namespace,
@@ -168,7 +168,7 @@ func makeRollingDeployment(name, namespace string, age time.Duration) *appsv1.De
 // makeReadyDeployment creates a Deployment that is Ready.
 func makeReadyDeployment(name, namespace string) *appsv1.Deployment {
 	return &appsv1.Deployment{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
+		TypeMeta: metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              name,
 			Namespace:         namespace,
@@ -296,7 +296,6 @@ func TestRegression_Bug1_ResourceStillWithinTimeoutAfterApply(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			scheme := makeBottleneckScheme(t)
 			deploy := makeRollingDeployment("deploy", "default", tc.age)
@@ -500,7 +499,6 @@ func TestRegression_MaxSkewNotSaturatedByFalseFailures(t *testing.T) {
 	scheme := makeBottleneckScheme(t)
 
 	for i := 0; i < 3; i++ {
-		i := i
 		t.Run(fmt.Sprintf("node-%d", i), func(t *testing.T) {
 			node := makeTestNode("test-node", "default")
 			rollingDeploy := makeRollingDeployment("rolling-deploy", "default", 15*time.Minute)
