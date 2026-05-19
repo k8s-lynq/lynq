@@ -93,8 +93,23 @@ help: ## Display this help.
 ##@ Development
 
 .PHONY: manifests
-manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
+manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects (and sync helm chart CRDs).
 	$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
+	@$(MAKE) --no-print-directory sync-helm-crds
+
+.PHONY: sync-helm-crds
+sync-helm-crds: ## Sync helm chart CRDs from config/crd/bases (single source of truth).
+	@# Keep chart/templates/crds/ identical to config/crd/bases/. This prevents the
+	@# helm chart from drifting behind controller-gen output (a v1.1.14-era drift
+	@# bug that caused multiple Status fields to be silently missing from helm-
+	@# installed clusters). controller-gen does not write to chart/, so we copy
+	@# after every regeneration. Always runs as part of `make manifests`; can also
+	@# be invoked standalone (e.g., after a hand-edit to config/crd/bases/).
+	@echo "Syncing helm chart CRDs from config/crd/bases/..."
+	@mkdir -p chart/templates/crds
+	@cp config/crd/bases/operator.lynq.sh_lynqhubs.yaml chart/templates/crds/operator.lynq.sh_lynqhubs.yaml
+	@cp config/crd/bases/operator.lynq.sh_lynqforms.yaml chart/templates/crds/operator.lynq.sh_lynqforms.yaml
+	@cp config/crd/bases/operator.lynq.sh_lynqnodes.yaml chart/templates/crds/operator.lynq.sh_lynqnodes.yaml
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
