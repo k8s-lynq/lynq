@@ -144,25 +144,35 @@ Validates form-hub relationships:
 
 ### LynqNode Controller
 
-The core reconciler. Runs on LynqNode create/update, resource changes, and 30s periodic requeue:
+The core reconciler. Runs on LynqNode create/update, child-resource changes (`Owns()` watches), and 30s periodic requeue:
 
 1. **Finalizer handling** — run cleanup before deletion, then remove finalizer (`lynqnode.operator.lynq.sh/finalizer`)
 2. **Template evaluation** — render all resource specs with node data
 3. **Orphan detection** — compare `status.appliedResources` with current desired set; handle each orphan per its `DeletionPolicy`
 4. **Dependency resolution** — build DAG from `dependIds`; fail fast on cycles
-5. **Resource application** — apply in topological order; skip if dependency failed (respects `skipOnDependencyFailure`)
-6. **Readiness gate** — wait for Ready condition when `waitForReady: true` (default); timeout at `timeoutSeconds` (default: 300)
-7. **Status update** — write `readyResources`, `failedResources`, `desiredResources`, `appliedResources`
+5. **Force-reapply gating** — if `time.Since(status.lastFullReconcileAt) >= ForceReapplyInterval` (default 10 min), set `forceReapply=true` so this cycle bypasses the per-resource skip check. Nil `lastFullReconcileAt` is treated as "stamp now, defer first force by one full interval" — protects against re-apply storms on controller restart.
+6. **Resource application** — apply in topological order; skip if `lynq.sh/applied-hash` on the live resource matches the desired-spec hash and `forceReapply` is false; skip if a dependency failed (respects `skipOnDependencyFailure`)
+7. **Readiness gate** — wait for Ready condition when `waitForReady: true` (default); timeout measured from `lynq.sh/apply-start-time` annotation (stamped at apply, preserved across reconciles when spec is unchanged) at `timeoutSeconds` (default: 300)
+8. **Status update** — write `readyResources`, `failedResources`, `desiredResources`, `appliedResources`; after a successful force-reapply, advance `lastFullReconcileAt` to `now`
 
 ## Key Design Patterns
 
 ### Server-Side Apply (SSA)
 
-All resources use SSA with `fieldManager: lynq`. This means:
-- Operator owns only the fields it sets; other controllers can own other fields
+All resources use SSA with `fieldManager: lynq-operator`. This means:
+- Operator owns only the fields it sets; other controllers (HPA, ESO, Kyverno mutate webhooks, etc.) can own other fields and Lynq preserves them
 - Conflict detection when another manager owns a field Lynq wants to change
-- `ConflictPolicy: Force` overrides with `force=true` flag
-- Drift auto-correction: SSA re-applies the desired spec on every reconcile
+- `ConflictPolicy: Force` overrides with `force=true` flag (SSA only — does not apply to `patchStrategy: merge` or `replace`)
+- Drift correction operates on two channels (see below)
+
+### Drift Correction
+
+Two channels work together:
+
+1. **Watch-driven (immediate).** `Owns()` watches on child resources fire on `metadata.generation` or non-`lynq.sh/*` annotation changes. If the external edit also altered or stripped `lynq.sh/applied-hash`, the next reconcile detects the hash mismatch and re-applies. If the edit preserved `applied-hash`, the skip path short-circuits and the next channel handles it.
+2. **Periodic force-reapply (~10 min, gated by `lastFullReconcileAt`).** Every `ForceReapplyInterval`, the controller bypasses the per-resource skip check and re-applies every child resource unconditionally — the backstop for external mutations that preserved `applied-hash` on a child resource.
+
+`lynq.sh/applied-hash` and `lynq.sh/apply-start-time` are stamped atomically as part of the same SSA / Update payload — there is no follow-up MergePatch. This is the contract that makes the annotation-only skip path race-free.
 
 ### Resource Tracking
 
