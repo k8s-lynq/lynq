@@ -868,6 +868,21 @@ func TestRegression_ExactlyOneApiWritePerReconcile(t *testing.T) {
 			assert.Equal(t, 1, writeCalls,
 				"[%s] phase 3 (reapply): applied-hash was externally stripped, ApplyResource must re-apply once. "+
 					"More than one means a follow-up MergePatch sneaked in — the 7b629e4/3efafeb regression class.", strategy)
+
+			// Phase 4 — periodic force-reapply bypass: the live resource now carries a
+			// matching applied-hash (re-stamped by phase 3), so shouldSkipApply would
+			// normally skip. forceReapply=true is the controller's periodic drift
+			// correction signal (gated by LynqNode.Status.LastFullReconcileAt and
+			// ForceReapplyInterval); it MUST bypass the skip check and re-apply, and
+			// it MUST do so with exactly one API write (no follow-up MergePatch).
+			writeCalls = 0
+			_, failedCount, _, _, _, _ = r.applyResources(context.Background(), node, sortedNodes, defaultVars(), true)
+			require.Equal(t, int32(0), failedCount, "[%s] phase 4 (force) must not fail", strategy)
+			assert.Equal(t, 1, writeCalls,
+				"[%s] phase 4 (force): forceReapply=true must bypass shouldSkipApply even when "+
+					"applied-hash matches the desired hash; exactly ONE API write must follow. "+
+					"Zero writes means the force flag is not threaded through correctly. "+
+					"More than one means a follow-up MergePatch sneaked in.", strategy)
 		})
 	}
 }
