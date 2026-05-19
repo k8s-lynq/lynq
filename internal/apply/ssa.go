@@ -21,7 +21,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"sync"
 	"time"
 
@@ -54,14 +53,6 @@ const (
 	// Without this, applyStartTime resets every reconcile so resources that need multiple
 	// reconcile loops to time out (e.g., Deployments with bad images) would never time out.
 	AnnotationApplyStartTime = "lynq.sh/apply-start-time"
-
-	// AnnotationAppliedGeneration stores the metadata.generation value the live resource
-	// had right after our last successful apply. The Skip-apply check compares this to
-	// the live generation: equal ⇒ no spec changed since we last applied; not equal ⇒
-	// somebody else modified the spec (drift). Without this, the AnnotationAppliedHash
-	// alone cannot distinguish "our spec was last applied and nothing changed" from
-	// "an external actor mutated the spec while leaving applied-hash untouched".
-	AnnotationAppliedGeneration = "lynq.sh/applied-generation"
 
 	// Labels for cross-namespace resource tracking
 	LabelNodeName      = "lynq.sh/node"
@@ -248,23 +239,14 @@ func (a *Applier) ApplyResource(
 
 	// Decide once whether this apply should reset apply-start-time. We're past the
 	// skip checks above, so we're definitely going to write — the question is only
-	// whether the live spec is actually changing or whether we are re-stamping our
-	// spec on top of a resource that already carries it (e.g., orphan re-adoption,
-	// or the cross-restart path where applied-generation was never written).
-	//
-	// "spec actually changing" means EITHER the stored applied-hash doesn't match
-	// our desired hash OR the stored applied-generation doesn't match the live
-	// generation (external drift forces the deployment controller to do a fresh
-	// rolling update). In both cases the readiness-timeout clock should start over.
+	// whether this is a real spec change (reset the readiness-timeout clock) or a
+	// re-stamp of a spec already carried by the resource (preserve the clock so a
+	// resource that's been progressing through a rolling update doesn't get its
+	// timeout reset every reconcile).
 	specChanged := true
 	if existsBeforeApply {
-		anno := existing.GetAnnotations()
-		storedHash, hashOK := anno[AnnotationAppliedHash]
-		storedGenStr, genOK := anno[AnnotationAppliedGeneration]
-		if hashOK && genOK && storedHash == preApplyDesiredHash {
-			if storedGen, err := strconv.ParseInt(storedGenStr, 10, 64); err == nil && storedGen == existing.GetGeneration() {
-				specChanged = false
-			}
+		if stored, ok := existing.GetAnnotations()[AnnotationAppliedHash]; ok && stored == preApplyDesiredHash {
+			specChanged = false
 		}
 	}
 
@@ -300,23 +282,16 @@ func (a *Applier) ApplyResource(
 	afterResourceVersion := obj.GetResourceVersion()
 	changed = beforeResourceVersion != afterResourceVersion
 
-	// Stamp applied-generation on the live resource AFTER the apply so the annotation
-	// reflects the post-apply generation. We need to do this in a separate MergePatch
-	// because we don't know the post-apply generation until the server returns; it
-	// can't be bundled into setLynqTrackingAnnotations above. This is acceptable here
-	// (unlike the original persistAppliedHash race) because applied-generation alone
-	// is enough to break the skip check by itself when stale — a missing or stale
-	// applied-generation forces re-apply rather than incorrectly skipping.
-	afterGeneration := obj.GetGeneration()
-	a.persistAppliedGeneration(ctx, obj, afterGeneration)
-
 	// Store applied state in-memory for fast skip detection within this process.
 	// Use preApplyDesiredHash (computed before Patch mutates obj with server response)
 	// so that the next reconcile's skip check compares like-with-like.
+	// generation is tracked in-memory only: it lets the fast-path skip survive benign
+	// status/finalizer RV bumps without an extra post-apply API write (which would
+	// re-introduce the race that commit 7b629e4 fixed).
 	a.appliedRV.Store(rvKey, &appliedState{
 		desiredHash:     preApplyDesiredHash,
 		resourceVersion: afterResourceVersion,
-		generation:      afterGeneration,
+		generation:      obj.GetGeneration(),
 	})
 
 	return changed, nil
@@ -327,15 +302,19 @@ func (a *Applier) ApplyResource(
 // matches what we previously applied:
 //
 //   - In-memory fast path: the cache says we wrote this hash AND (the RV hasn't been
-//     bumped at all, or the generation hasn't changed since we wrote it). Generation
-//     is the drift-resistant signal — it only bumps on actual spec changes, so
-//     benign status/finalizer/annotation writes don't invalidate the match.
+//     bumped at all, or the metadata.generation hasn't changed since we wrote it).
+//     metadata.generation is the drift-resistant signal — it only bumps on real spec
+//     changes, so benign status/finalizer/annotation writes don't invalidate the match.
+//     This is what protects patchStrategy:replace from the infinite reconcile loop:
+//     the K8s deployment controller's status updates bump RV but not generation, so
+//     the second OR clause keeps us on the skip path.
 //
-//   - Annotation slow path: applied-hash AND applied-generation are both present on
-//     the resource AND match the desired hash AND the live generation. Used for
-//     cross-restart cache restoration. Requires BOTH annotations because hash alone
-//     cannot distinguish "our spec is still applied" from "someone externally edited
-//     the spec but left our tracking annotations alone".
+//   - Annotation slow path (cross-restart cache restoration): applied-hash matches
+//     the desired hash. This is hash-only — we accept that an external `kubectl
+//     edit` that leaves applied-hash untouched will not be self-healed across a
+//     controller restart, until the in-memory generation tracking rebuilds. This
+//     trade-off mirrors main's pre-3efafeb behavior; tightening it requires a
+//     post-apply write that re-introduces the race fixed by 7b629e4.
 //
 // Returns false when we MUST apply: the resource was re-adopted from orphaned state,
 // the hash couldn't be computed, the resource doesn't exist yet, or any of the proofs
@@ -353,66 +332,47 @@ func (a *Applier) shouldSkipApply(
 	if !existsBeforeApply || orphanReadopted || preApplyDesiredHash == "" {
 		return false
 	}
-	liveGeneration := existing.GetGeneration()
 
-	// Fast path: in-memory cache hit.
+	// Fast path: in-memory cache hit. When the cache has an entry whose desiredHash
+	// matches, the in-memory generation tracking is AUTHORITATIVE for this process —
+	// generation mismatch ⇒ drift ⇒ re-apply. Falling through to the slow path on a
+	// cache-hit-with-drift would mask the drift behind the slow path's hash-only
+	// annotation check.
 	if prev, ok := a.appliedRV.Load(rvKey); ok {
 		state := prev.(*appliedState)
-		if state.desiredHash == preApplyDesiredHash &&
-			(state.resourceVersion == beforeResourceVersion || state.generation == liveGeneration) {
-			return true
+		if state.desiredHash != preApplyDesiredHash {
+			// Template hash changed since we last applied — must re-apply.
+			return false
 		}
+		// Hash matches. Skip iff RV matches (no external write at all) OR generation
+		// matches (RV bumped by benign status/finalizer/annotation writes but spec
+		// untouched). The generation comparison is the in-process drift detector.
+		return state.resourceVersion == beforeResourceVersion || state.generation == existing.GetGeneration()
 	}
 
-	// Slow path: annotation fallback. Refreshes the in-memory cache on hit so the next
-	// reconcile within this process can take the fast path.
+	// Slow path: hash-only annotation fallback for cross-restart cache restoration.
+	// Refreshes the in-memory cache so subsequent reconciles in this process can take
+	// the fast path (and benefit from generation-based drift detection).
+	//
+	// Trade-off: an external mutation that bumps live spec but leaves applied-hash
+	// untouched is NOT detected here. It will be caught by the fast path once the
+	// in-memory cache rebuilds (on the next template change or controller activity).
+	// Stamping generation into an annotation would close this gap but requires a
+	// post-apply MergePatch that re-introduces the race fixed by commit 7b629e4.
 	annotations := existing.GetAnnotations()
 	if annotations == nil {
 		return false
 	}
 	storedHash, hashOK := annotations[AnnotationAppliedHash]
-	storedGenStr, genOK := annotations[AnnotationAppliedGeneration]
-	if !hashOK || !genOK || storedHash != preApplyDesiredHash {
-		return false
-	}
-	storedGen, err := strconv.ParseInt(storedGenStr, 10, 64)
-	if err != nil || storedGen != liveGeneration {
+	if !hashOK || storedHash != preApplyDesiredHash {
 		return false
 	}
 	a.appliedRV.Store(rvKey, &appliedState{
 		desiredHash:     preApplyDesiredHash,
 		resourceVersion: beforeResourceVersion,
-		generation:      liveGeneration,
+		generation:      existing.GetGeneration(),
 	})
 	return true
-}
-
-// persistAppliedGeneration writes lynq.sh/applied-generation onto the live resource via
-// a small MergePatch. We can't bundle this into the SSA submission like applied-hash and
-// apply-start-time because metadata.generation is server-assigned and only known AFTER
-// the apply succeeds. Failure is non-fatal: a missing applied-generation simply forces
-// the next reconcile to re-apply, which is correct conservative behavior.
-func (a *Applier) persistAppliedGeneration(ctx context.Context, obj *unstructured.Unstructured, gen int64) {
-	patchObj := &unstructured.Unstructured{}
-	patchObj.SetGroupVersionKind(obj.GroupVersionKind())
-	patchObj.SetName(obj.GetName())
-	patchObj.SetNamespace(obj.GetNamespace())
-
-	patchData, err := json.Marshal(map[string]interface{}{
-		"metadata": map[string]interface{}{
-			"annotations": map[string]string{
-				AnnotationAppliedGeneration: strconv.FormatInt(gen, 10),
-			},
-		},
-	})
-	if err != nil {
-		return
-	}
-	if err := a.client.Patch(ctx, patchObj, client.RawPatch(types.MergePatchType, patchData)); err != nil {
-		log.FromContext(ctx).V(2).Info("Failed to persist applied-generation (non-fatal)",
-			"resource", fmt.Sprintf("%s/%s/%s", obj.GetKind(), obj.GetNamespace(), obj.GetName()),
-			"error", err)
-	}
 }
 
 // applyArgs bundles ApplyResource's per-call state so applyByStrategy can keep a small
@@ -458,13 +418,11 @@ func (a *Applier) applyByStrategy(ctx context.Context, args applyArgs) (bool, bo
 			if err := a.client.Create(ctx, args.obj); err != nil {
 				return true, false, fmt.Errorf("failed to create resource for merge: %w", err)
 			}
-			gen := args.obj.GetGeneration()
 			a.appliedRV.Store(args.rvKey, &appliedState{
 				desiredHash:     args.preApplyDesiredHash,
 				resourceVersion: args.obj.GetResourceVersion(),
-				generation:      gen,
+				generation:      args.obj.GetGeneration(),
 			})
-			a.persistAppliedGeneration(ctx, args.obj, gen)
 			return true, true, nil
 		}
 		if err := a.client.Patch(ctx, args.obj, client.Merge); err != nil {
@@ -477,13 +435,11 @@ func (a *Applier) applyByStrategy(ctx context.Context, args applyArgs) (bool, bo
 			if err := a.client.Create(ctx, args.obj); err != nil {
 				return true, false, fmt.Errorf("failed to create resource: %w", err)
 			}
-			gen := args.obj.GetGeneration()
 			a.appliedRV.Store(args.rvKey, &appliedState{
 				desiredHash:     args.preApplyDesiredHash,
 				resourceVersion: args.obj.GetResourceVersion(),
-				generation:      gen,
+				generation:      args.obj.GetGeneration(),
 			})
-			a.persistAppliedGeneration(ctx, args.obj, gen)
 			return true, true, nil
 		}
 		args.obj.SetResourceVersion(args.existing.GetResourceVersion())
@@ -569,8 +525,8 @@ func sanitizeObjectForHashing(obj map[string]interface{}) map[string]interface{}
 		// Strip every annotation we write ourselves so the desired-spec hash stays
 		// stable across reconciles. Without this, our own annotations would be hashed
 		// alongside the desired spec, the hash would change every time we re-stamp
-		// apply-start-time / applied-generation, and the cache check would never hit.
-		if k == AnnotationAppliedHash || k == AnnotationApplyStartTime || k == AnnotationAppliedGeneration {
+		// apply-start-time, and the cache check would never hit.
+		if k == AnnotationAppliedHash || k == AnnotationApplyStartTime {
 			continue
 		}
 		newAnnos[k] = v

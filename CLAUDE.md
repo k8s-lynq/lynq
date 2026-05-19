@@ -796,9 +796,18 @@ make test-e2e
 - **A cached RV that no longer matches the live resource does NOT imply external drift.**
   - Kubernetes routinely bumps a resource's RV without changing its spec: status updates, finalizer
     edits, controller-managed annotations like `deployment.kubernetes.io/revision`, etc.
-  - When the in-memory cache hash matches but the RV is stale, the Applier MUST consult the
-    `lynq.sh/applied-hash` annotation before re-applying. If the annotation still matches our
-    desired spec, the resource still carries our last apply — skip the Update.
+  - The Applier's in-memory cache stores `{desiredHash, resourceVersion, generation}` after each
+    apply. The fast-path skip check passes when the hash matches AND (RV matches OR
+    `metadata.generation` matches). Generation is the drift-resistant signal because it only bumps
+    on real spec changes — benign RV bumps don't invalidate it.
+  - On cache miss (e.g. controller restart), the slow path falls back to **`lynq.sh/applied-hash`
+    annotation match only**. This is intentional: stamping `metadata.generation` to an annotation
+    requires a post-apply MergePatch, and that follow-up write re-introduces the SSA/MergePatch
+    race that commit `7b629e4` fixed (manifesting as the maxSkew/slow-pod failures and the
+    `gen 2 → 4` jump seen in CI).
+  - Trade-off: external drift that mutates the live spec while leaving `lynq.sh/applied-hash`
+    untouched is **not self-healed across a controller restart** until the in-memory cache
+    rebuilds (next apply that changes the desired hash, or the next cache eviction).
   - Treating every RV mismatch as drift causes `patchStrategy:replace` to call `client.Update()`
     on every reconcile. Each Update bumps the Deployment's `metadata.generation` (because the
     Lynq-rendered spec omits API-server-defaulted fields, so the server sees a "change"). The

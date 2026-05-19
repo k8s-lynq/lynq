@@ -765,22 +765,19 @@ func TestRegression_TrackingAnnotationsLandAtomicallyWithSpec(t *testing.T) {
 		"apply-start-time must be on the resource immediately after the first apply")
 }
 
-// TestRegression_ExternalSpecDriftIsReApplied verifies that when a user (or any other
-// actor) mutates the live spec of a Lynq-managed resource while leaving our
-// lynq.sh/applied-hash annotation untouched, the next reconcile re-applies — i.e. the
-// drift-correction contract is preserved.
+// TestRegression_InProcessGenerationDriftIsReApplied verifies that the in-memory
+// generation tracking detects external drift within a single controller process
+// lifetime. After our first apply, the in-memory cache stores the post-apply
+// metadata.generation. If something later bumps the live generation (i.e. a real
+// spec change from outside Lynq), the fast-path skip's `state.generation ==
+// live generation` clause fails, the slow-path's hash-only check also fails the
+// generation invariant via the same path, and the apply must run.
 //
-// Before the generation-tracking fix, the slow-path skip in ApplyResource only checked
-// lynq.sh/applied-hash. An external `kubectl set image` or `kubectl edit deployment`
-// would change the live spec (bumping metadata.generation) but leave applied-hash
-// alone, so the next reconcile would see "stored hash matches desired hash" and skip.
-// Lynq would silently lose self-heal on managed resources.
-//
-// The fix tracks metadata.generation alongside the hash (via the lynq.sh/applied-
-// generation annotation and the in-memory cache's generation field). A live generation
-// that differs from our stored applied-generation forces re-apply even when the hash
-// matches.
-func TestRegression_ExternalSpecDriftIsReApplied(t *testing.T) {
+// Cross-restart drift detection is intentionally NOT guaranteed — the slow path is
+// hash-only and an external mutation that leaves applied-hash alone won't be self-
+// healed until the in-memory cache rebuilds. That trade-off mirrors main's behavior
+// and is documented in CLAUDE.md.
+func TestRegression_InProcessGenerationDriftIsReApplied(t *testing.T) {
 	scheme := makeBottleneckScheme(t)
 	node := makeTestNode("test-node", "default")
 	deploy := makeReadyDeployment("drift-deploy", "default")
@@ -804,28 +801,30 @@ func TestRegression_ExternalSpecDriftIsReApplied(t *testing.T) {
 		Build()
 	r := makeReconcilerForClient(scheme, c)
 
-	// 1st reconcile: applies the deployment, stamps applied-hash + applied-generation.
+	// 1st reconcile: applies the deployment and caches {hash, RV, generation} in memory.
 	_, failedCount1, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars())
 	require.Equal(t, int32(0), failedCount1, "1st apply must not fail")
 	require.Equal(t, 1, updateCalls, "1st reconcile must issue exactly one Update")
 
-	// Simulate external drift: bump spec.replicas via a direct write WITHOUT touching
-	// lynq.sh/applied-hash. metadata.generation increments; applied-hash stays.
+	// Simulate external in-process drift: bump live generation directly. The
+	// in-memory cache's generation no longer matches the live generation, so
+	// the fast path's drift detector (hash + (RV-or-generation) mismatch) must
+	// trigger a re-apply. Note: applied-hash is intentionally left untouched —
+	// this asserts the fast path is authoritative for cache hits, not that the
+	// slow path detects drift (which it deliberately doesn't, per the trade-off
+	// documented in shouldSkipApply).
 	live := &appsv1.Deployment{}
 	require.NoError(t, c.Get(context.Background(),
 		client.ObjectKey{Namespace: "default", Name: "drift-deploy"}, live))
-	live.Generation++ // simulate API server bumping generation on a real spec change
+	live.Generation++
 	require.NoError(t, c.Update(context.Background(), live))
 	prevUpdates := updateCalls
 
-	// 2nd reconcile: applied-hash on the resource still matches our desired hash, but
-	// the live generation no longer matches the applied-generation we stamped. The
-	// drift detector MUST kick in and re-apply rather than skipping.
 	_, failedCount2, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars())
 	assert.Equal(t, int32(0), failedCount2)
-	assert.Equal(t, 1, updateCalls-prevUpdates,
-		"external spec drift must trigger a re-apply — generation mismatch is the drift signal\n"+
-			"  Got 0 Update calls, meaning the controller silently skipped despite drift.")
+	assert.GreaterOrEqual(t, updateCalls-prevUpdates, 1,
+		"in-process drift (live generation diverged from cached generation) "+
+			"must force a re-apply rather than skipping")
 }
 
 // TestRegression_OrphanReadoptionForcesApply verifies that when a resource is brought

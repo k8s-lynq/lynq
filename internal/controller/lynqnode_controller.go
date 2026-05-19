@@ -2079,15 +2079,11 @@ func elapsedSinceApply(obj client.Object, fallback time.Time) time.Duration {
 // hasNonLynqAnnotationChange reports whether the user-visible annotations on a watched
 // child resource have changed. It deliberately ignores the `lynq.sh/*` annotation
 // namespace, which is reserved for keys the Applier writes (applied-hash,
-// apply-start-time, applied-generation, deletion-policy, orphaned-*). Without this
-// filter, the MergePatch that stamps applied-generation after each apply would
-// re-trigger a reconcile that has no user-visible work to do — a small but real
-// source of self-induced reconcile traffic.
-//
-// Note: applied-hash and apply-start-time are bundled into the apply call itself,
-// so they would not have triggered this watch even without the filter. This filter
-// is what we rely on for applied-generation (which must be written separately because
-// the post-apply generation is not knowable until the server responds to the apply).
+// apply-start-time, deletion-policy, orphaned-*). Defense-in-depth filter: today
+// applied-hash and apply-start-time are bundled into the apply call itself (no
+// follow-up MergePatch), so they wouldn't trigger this watch anyway, but the
+// filter keeps the contract clear that `lynq.sh/*` is an operator-owned namespace
+// not part of user-visible change detection.
 func hasNonLynqAnnotationChange(oldAnno, newAnno map[string]string) bool {
 	return !reflect.DeepEqual(stripLynqAnnotations(oldAnno), stripLynqAnnotations(newAnno))
 }
