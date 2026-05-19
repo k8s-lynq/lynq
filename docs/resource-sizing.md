@@ -1,5 +1,5 @@
 ---
-description: "Right-size the Lynq controller pod with real observed data — CPU 0–600m and memory 10–140MB across 5–220 LynqNodes — and understand why resources scale the way they do."
+description: "Right-size the Lynq controller pod with real observed data — sub-100m CPU and sub-120MB memory at 300+ LynqNodes — and understand why resources scale the way they do."
 ---
 
 # Controller Resource Sizing
@@ -15,14 +15,14 @@ Right-size the Lynq controller pod. This page explains *why* Lynq uses resources
 | Environment | LynqNodes | CPU (observed) | Memory (observed) |
 |-------------|-----------|---------------|-------------------|
 | Small | 5 | **0 – 5 m** | **10 – 60 MB** |
-| Medium | 220 | **500 – 600 m** | **100 – 140 MB** |
+| Large | **300+** | **< 100 m** | **< 120 MB** |
 
-**Benchmark environment for the 220-node data point:**
-- 1 LynqHub, **3 LynqForms** (Form A: 9 resources/node · Form B: 3 resources/node · Form C: 2 resources/node)
-- ~73 active database rows × 3 forms = ~220 LynqNodes
-- Total managed Kubernetes objects in cache: ~1,025
+**Benchmark environment for the 300+ data point:**
+- 1 LynqHub, multiple LynqForms across a few hundred active rows
+- Several thousand managed Kubernetes objects in cache
+- Annotation-driven skip path active (the vast majority of reconciles complete with **zero child-resource API writes** because `lynq.sh/applied-hash` matches the desired-spec hash)
 
-CPU is bursty — it spikes during reconciliation and drops to near-zero between cycles. Memory grows with the number of managed objects and stays roughly flat within a stable cluster.
+CPU is bursty — it spikes briefly during periodic force-reapply cycles (every `ForceReapplyInterval`, default 10 min) and template-change events, then drops to near-idle. Memory grows with the number of managed objects (controller-runtime informer cache) and stays roughly flat within a stable cluster. Steady-state CPU is dominated by watch event processing, not reconciliation. See [Architecture › Drift Correction](architecture.md#drift-correction).
 
 ## Why Lynq Uses Resources This Way
 
@@ -68,11 +68,13 @@ The table below uses the benchmark resource density (avg ~4.7 managed resources 
 
 | LynqNodes | CPU request | CPU limit | Memory request | Memory limit |
 |-----------|------------|-----------|----------------|--------------|
-| < 50 | `50m` | `200m` | `64Mi` | `128Mi` |
-| 50 – 200 | `200m` | `500m` | `128Mi` | `256Mi` |
-| 200 – 500 | `500m` | `1000m` | `256Mi` | `512Mi` |
-| 500 – 1000 | `1000m` | `2000m` | `512Mi` | `1Gi` |
-| 1000+ | `2000m` | `4000m` | `1Gi` | `2Gi` |
+| < 50 | `25m` | `100m` | `64Mi` | `128Mi` |
+| 50 – 200 | `50m` | `200m` | `96Mi` | `192Mi` |
+| 200 – 500 | `100m` | `300m` | `128Mi` | `256Mi` |
+| 500 – 1000 | `200m` | `500m` | `256Mi` | `512Mi` |
+| 1000+ | `500m` | `1000m` | `512Mi` | `1Gi` |
+
+These numbers are anchored to the 300+ node production observation (< 100 m CPU steady-state, < 120 MB memory). Limits are sized 2–3× above steady-state to absorb force-reapply bursts (every `ForceReapplyInterval`, default 10 min) and template-change events.
 
 ::: warning Never set memory limit below memory request
 If the pod is OOMKilled it restarts, losing its cache. On restart it must re-sync everything — causing a CPU spike and temporary reconciliation lag. Leave at least 2× headroom above observed memory.

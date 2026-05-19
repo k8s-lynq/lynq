@@ -55,6 +55,10 @@ status:
                                      # Format: "Kind/namespace/name@id"
                                      # Example: "Deployment/default/acme-app@app"
 
+  lastFullReconcileAt: timestamp     # Baseline used to schedule the next
+                                     # periodic force-reapply (drift correction).
+                                     # See "lastFullReconcileAt" below.
+
   conditions:
   - type: Ready
     status: "True" | "False" | "Unknown"
@@ -116,6 +120,18 @@ Tracks every resource currently under management. Format: `Kind/namespace/name@i
 ```
 
 Lynq compares this list against the current template on each reconcile. Resources in `appliedResources` but not in the current template are treated as orphans and handled per their stored `deletionPolicy` annotation.
+
+## `lastFullReconcileAt`
+
+Timestamp the controller uses to schedule the next periodic force-reapply (drift correction). When `time.Since(lastFullReconcileAt) >= ForceReapplyInterval` (default 10 minutes), the next reconcile bypasses the per-resource skip check and re-applies every child resource unconditionally. This is the backstop for external mutations that preserve `lynq.sh/applied-hash` on a child resource and would therefore not be caught by the annotation-only skip path.
+
+A nil value (absent field) means the controller has not yet established a baseline for this node — either the LynqNode is brand-new or the controller just restarted and observed it for the first time. The controller treats nil as "stamp `now` as the baseline and defer the first force by one full interval". This deferral prevents a re-apply storm across all LynqNodes on every controller restart.
+
+The companion annotations on child resources are:
+- `lynq.sh/applied-hash` — desired-spec hash from the last successful apply. The skip check compares this against the freshly computed hash; equal ⇒ skip.
+- `lynq.sh/apply-start-time` — wall-clock timestamp stamped at the most recent apply (preserved across reconciles when the spec is unchanged). Used as the readiness-timeout reference instead of `creationTimestamp`.
+
+Both annotations are written atomically as part of the SSA / Update payload — no follow-up MergePatch — so the skip check never observes a half-stamped state.
 
 ## Lifecycle
 

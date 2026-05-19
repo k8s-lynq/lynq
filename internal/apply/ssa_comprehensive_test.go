@@ -477,7 +477,7 @@ func TestApplyResource_WithOwnerReference(t *testing.T) {
 			applier := NewApplier(client, scheme)
 
 			ctx := context.Background()
-			changed, err := applier.ApplyResource(ctx, tt.obj, tt.owner, tt.conflictPolicy, tt.patchStrategy, tt.deletionPolicy, nil)
+			changed, err := applier.ApplyResource(ctx, tt.obj, tt.owner, tt.conflictPolicy, tt.patchStrategy, tt.deletionPolicy, nil, false)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -1016,7 +1016,8 @@ func TestApplyResource_WithoutOwner(t *testing.T) {
 		lynqv1.ConflictPolicyStuck,
 		lynqv1.PatchStrategyMerge,
 		lynqv1.DeletionPolicyDelete,
-		nil, // No ignoreFields
+		nil,   // No ignoreFields
+		false, // forceReapply
 	)
 
 	assert.NoError(t, err)

@@ -141,9 +141,10 @@ const (
 	ReasonResourcesFailed              = "ResourcesFailed"
 	ReasonNotAllResourcesReady         = "NotAllResourcesReady"
 
-	// Resource kinds used in template rendering
-	resourceKindConfigMap = "ConfigMap"
-	resourceKindSecret    = "Secret"
+	// Resource kinds used in template rendering and readiness checks
+	resourceKindConfigMap  = "ConfigMap"
+	resourceKindSecret     = "Secret"
+	resourceKindDeployment = "Deployment"
 
 	// Degraded reasons
 	ReasonResourceFailuresAndConflicts = "ResourceFailuresAndConflicts"
@@ -154,6 +155,15 @@ const (
 	// Reconcile results
 	ResultSuccess        = "success"
 	ResultPartialFailure = "partial_failure"
+
+	// ForceReapplyInterval is the cadence of the periodic drift-correction
+	// resync: every reconcile after this duration since the last full reapply
+	// bypasses the apply-skip check and re-applies every child resource. This
+	// is Lynq's external-drift correction mechanism — external edits that
+	// preserve the lynq.sh/applied-hash annotation on a child resource will be
+	// corrected on the next force-reapply cycle, not within seconds of the
+	// edit. The 10-minute default matches Crossplane's periodic resync model.
+	ForceReapplyInterval = 10 * time.Minute
 )
 
 // ReconcileType defines the type of reconciliation to perform
@@ -230,11 +240,21 @@ func (r *LynqNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 // applyResources applies all resources and returns counts for ready, failed, changed, conflicted, and skipped resources
 // skippedIds contains the IDs of resources that were skipped due to dependency failures
-func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.LynqNode, sortedNodes []*graph.Node, vars template.Variables) (readyCount, failedCount, changedCount, conflictedCount, skippedCount int32, skippedIds []string) {
+//
+// forceReapply: when true, every ApplyResource call bypasses the annotation-based
+// skip check and re-applies unconditionally. This is the periodic drift-correction
+// resync gated by LynqNode.Status.LastFullReconcileAt (see ForceReapplyInterval).
+func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.LynqNode, sortedNodes []*graph.Node, vars template.Variables, forceReapply bool) (readyCount, failedCount, changedCount, conflictedCount, skippedCount int32, skippedIds []string) {
 	logger := log.FromContext(ctx)
 	applier := r.getApplier()
 	checker := r.getReadinessChecker()
 	templateEngine := r.getTemplateEngine()
+
+	// Record when this reconcile cycle started applying resources.
+	// Timeout for each resource is measured from this point, not from the resource's
+	// creationTimestamp. A pre-existing resource being updated should not be immediately
+	// timed out just because it was created long before this reconcile cycle started.
+	applyStartTime := time.Now()
 
 	totalResources := int32(len(sortedNodes))
 	progressingSet := false
@@ -386,7 +406,7 @@ func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.Ly
 			ignoreFields = nil
 		}
 
-		changed, applyErr := applier.ApplyResource(ctx, obj, node, resource.ConflictPolicy, resource.PatchStrategy, deletionPolicy, ignoreFields)
+		changed, applyErr := applier.ApplyResource(ctx, obj, node, resource.ConflictPolicy, resource.PatchStrategy, deletionPolicy, ignoreFields, forceReapply)
 
 		// Track changes and emit events on first change
 		if changed {
@@ -470,9 +490,15 @@ func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.Ly
 					timeoutSeconds = 300 // Default 5 minutes
 				}
 
-				// Check resource creation time to determine if timeout expired
-				creationTime := current.GetCreationTimestamp().Time
-				elapsed := time.Since(creationTime)
+				// Compute elapsed time since we first applied this resource.
+				// We read lynq.sh/apply-start-time from the resource annotation, which is
+				// stamped at apply time and persists across reconcile loops. This ensures:
+				//   - Pre-existing resources are not immediately timed out (BUG 1 fix).
+				//   - Resources that need multiple reconciles to time out accumulate elapsed
+				//     time correctly (regression fix: applyStartTime reset each reconcile).
+				// applyStartTime is used as fallback only for the very first reconcile of a
+				// resource, before the annotation has been persisted.
+				elapsed := elapsedSinceApply(current, applyStartTime)
 				timeoutDuration := time.Duration(timeoutSeconds) * time.Second
 
 				if elapsed >= timeoutDuration {
@@ -1261,8 +1287,15 @@ func (r *LynqNodeReconciler) SetupWithManager(mgr ctrl.Manager, concurrency int)
 				return true
 			}
 
-			// Always reconcile on annotation change
-			if !reflect.DeepEqual(oldObj.GetAnnotations(), newObj.GetAnnotations()) {
+			// Reconcile on annotation change, BUT ignore annotations we manage ourselves
+			// (the `lynq.sh/*` prefix is reserved for operator-owned annotation keys —
+			// applied-hash, apply-start-time, applied-generation, deletion-policy,
+			// orphaned-*). lynq.sh/applied-generation in particular is stamped by a
+			// separate MergePatch after each apply and would otherwise re-trigger
+			// reconcile cascades that don't reflect any user-visible spec change.
+			// Real user annotation changes (e.g., deployment.kubernetes.io/revision
+			// written by the Deployment controller) still fire this predicate.
+			if hasNonLynqAnnotationChange(oldObj.GetAnnotations(), newObj.GetAnnotations()) {
 				return true
 			}
 
@@ -1623,7 +1656,7 @@ func (r *LynqNodeReconciler) getAPIVersionForKind(kind string) string {
 	switch kind {
 	case "Namespace", "ServiceAccount", "Service", resourceKindConfigMap, resourceKindSecret, "PersistentVolumeClaim":
 		return "v1"
-	case "Deployment", "StatefulSet", "DaemonSet":
+	case resourceKindDeployment, "StatefulSet", "DaemonSet":
 		return "apps/v1"
 	case "Job", "CronJob":
 		return "batch/v1"
@@ -1824,9 +1857,39 @@ func (r *LynqNodeReconciler) reconcileSpec(ctx context.Context, node *lynqv1.Lyn
 		}
 	}
 
+	// Decide whether this reconcile should force a full reapply (bypassing the
+	// annotation-based apply-skip in shouldSkipApply). This is Lynq's drift-correction
+	// mechanism: every ForceReapplyInterval (default ~10 min), we re-apply every child
+	// resource unconditionally to repair any external mutation that preserved the
+	// lynq.sh/applied-hash annotation and would therefore not be detected by the
+	// annotation-only skip check.
+	//
+	// Nil LastFullReconcileAt means we've never recorded one for this node — either it
+	// is brand new or the controller just restarted. Treat nil as "defer the first
+	// force by one full interval": stamp `now` as the baseline, set forceReapply=false
+	// for this reconcile. Without this defer, every controller restart would force-
+	// reapply every LynqNode on the next tick, producing a re-apply storm that could
+	// regress the post-restart Ready window guarded by Bottleneck BUG 2.
+	forceReapply := false
+	if node.Status.LastFullReconcileAt == nil {
+		now := metav1.Now()
+		r.StatusManager.PublishLastFullReconcileAt(node, now)
+	} else if time.Since(node.Status.LastFullReconcileAt.Time) >= ForceReapplyInterval {
+		forceReapply = true
+	}
+
 	// Apply resources and track changes
-	readyCount, failedCount, changedCount, conflictedCount, skippedCount, skippedIds := r.applyResources(ctx, node, sortedNodes, vars)
+	readyCount, failedCount, changedCount, conflictedCount, skippedCount, skippedIds := r.applyResources(ctx, node, sortedNodes, vars, forceReapply)
 	totalResources := int32(len(sortedNodes))
+
+	// If we just completed a force-reapply pass, advance the LastFullReconcileAt
+	// timestamp so the next force fires one interval later. We update unconditionally
+	// (regardless of failedCount) because the point of this timestamp is "we just ran
+	// the full reconcile loop with skip disabled" — failure handling is orthogonal.
+	if forceReapply {
+		now := metav1.Now()
+		r.StatusManager.PublishLastFullReconcileAt(node, now)
+	}
 
 	// Build applied resource keys
 	appliedResourceKeys := make([]string, 0, len(currentKeys))
@@ -2046,4 +2109,53 @@ func (r *LynqNodeReconciler) checkResourcesReadiness(
 	}
 
 	return readyCount, failedCount, conflictedCount
+}
+
+// elapsedSinceApply returns how long it has been since the operator last applied obj.
+// It reads lynq.sh/apply-start-time from the resource's annotations — set by the Applier
+// at apply time and preserved across reconcile loops. This gives a stable reference for
+// readiness-timeout calculations that would otherwise reset with applyStartTime every reconcile.
+// fallback is used on the very first reconcile of a resource, before the annotation is set.
+func elapsedSinceApply(obj client.Object, fallback time.Time) time.Duration {
+	if annotations := obj.GetAnnotations(); annotations != nil {
+		if raw := annotations[apply.AnnotationApplyStartTime]; raw != "" {
+			if t, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+				return time.Since(t)
+			}
+		}
+	}
+	return time.Since(fallback)
+}
+
+// hasNonLynqAnnotationChange reports whether the user-visible annotations on a watched
+// child resource have changed. It deliberately ignores the `lynq.sh/*` annotation
+// namespace, which is reserved for keys the Applier writes (applied-hash,
+// apply-start-time, deletion-policy, orphaned-*). Defense-in-depth filter: today
+// applied-hash and apply-start-time are bundled into the apply call itself (no
+// follow-up MergePatch), so they wouldn't trigger this watch anyway, but the
+// filter keeps the contract clear that `lynq.sh/*` is an operator-owned namespace
+// not part of user-visible change detection.
+func hasNonLynqAnnotationChange(oldAnno, newAnno map[string]string) bool {
+	return !reflect.DeepEqual(stripLynqAnnotations(oldAnno), stripLynqAnnotations(newAnno))
+}
+
+// stripLynqAnnotations returns a copy of m with all lynq.sh/* keys removed.
+// Returns nil for nil input AND for results that are empty after stripping, so
+// DeepEqual compares two "no user-visible annotations" cases as equal regardless
+// of whether one map was nil and the other contained only lynq.sh keys.
+func stripLynqAnnotations(m map[string]string) map[string]string {
+	if len(m) == 0 {
+		return nil
+	}
+	var out map[string]string
+	for k, v := range m {
+		if strings.HasPrefix(k, "lynq.sh/") {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]string, len(m))
+		}
+		out[k] = v
+	}
+	return out
 }

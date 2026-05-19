@@ -45,6 +45,10 @@ const (
 
 	// EventMetricsUpdate indicates metrics should be updated
 	EventMetricsUpdate EventType = "MetricsUpdate"
+
+	// EventLastFullReconcileAtUpdated indicates the LastFullReconcileAt timestamp
+	// should be updated (used to gate the periodic drift-correction force-reapply)
+	EventLastFullReconcileAtUpdated EventType = "LastFullReconcileAtUpdated"
 )
 
 // StatusEvent represents a status change event for a LynqNode
@@ -95,6 +99,11 @@ type ObservedGenerationPayload struct {
 	ObservedGeneration int64
 }
 
+// LastFullReconcileAtPayload contains the timestamp of the most recent force-reapply
+type LastFullReconcileAtPayload struct {
+	Timestamp metav1.Time
+}
+
 // MetricsPayload contains metrics update information
 type MetricsPayload struct {
 	Ready          int32
@@ -135,6 +144,9 @@ type StatusUpdate struct {
 
 	// Metrics to update
 	Metrics *MetricsPayload
+
+	// LastFullReconcileAt to update (nil means no update)
+	LastFullReconcileAt *metav1.Time
 
 	// Timestamp of the last event in this update
 	LastEventTime time.Time
@@ -183,6 +195,11 @@ func (u *StatusUpdate) Apply(event StatusEvent) {
 	case EventMetricsUpdate:
 		payload := event.Payload.(MetricsPayload)
 		u.Metrics = &payload
+
+	case EventLastFullReconcileAtUpdated:
+		payload := event.Payload.(LastFullReconcileAtPayload)
+		ts := payload.Timestamp
+		u.LastFullReconcileAt = &ts
 	}
 }
 
@@ -196,5 +213,6 @@ func (u *StatusUpdate) HasChanges() bool {
 		u.SkippedResources != nil ||
 		u.SkippedResourceIds != nil ||
 		len(u.Conditions) > 0 ||
-		u.Metrics != nil
+		u.Metrics != nil ||
+		u.LastFullReconcileAt != nil
 }

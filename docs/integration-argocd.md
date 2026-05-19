@@ -243,6 +243,17 @@ Lynq only manages the `Application` object lifecycle. Argo CD sync failures (wro
 - **Application name length**: Argo CD Application names must be ≤ 63 characters. Always use `trunc63` in `nameTemplate`.
 - **Cross-namespace tracking**: Because the `Application` lives in `argocd` (not the LynqNode namespace), Lynq uses label-based tracking (`lynq.sh/node`, `lynq.sh/node-namespace`) rather than ownerReferences.
 
+## Co-Management Rules (Lynq + Argo CD on the same resource)
+
+When Lynq manages the `Application` CR and Argo CD writes back to it (e.g., `status.sync`, `status.health`, operationState), follow these rules:
+
+1. **Use `patchStrategy: apply` (SSA)** on Lynq's template for the `Application` resource. Lynq's `fieldManager` is `lynq-operator`; Argo CD writes status as its own manager. SSA preserves each manager's owned fields automatically.
+2. **Argo CD's status updates are status-subresource writes** and do not bump `metadata.generation`. Lynq's watch predicate ignores status-only and `lynq.sh/*` annotation-only changes, so Argo CD's normal activity does not trigger spurious Lynq reconciles.
+3. **Never strip Lynq's tracking annotations** from the `Application` resource — `lynq.sh/applied-hash`, `lynq.sh/apply-start-time`, `lynq.sh/deletion-policy`, `lynq.sh/node`, `lynq.sh/node-namespace`. These are written atomically with the spec and removing them forces Lynq to re-apply on every reconcile.
+4. **Do NOT use `patchStrategy: replace`** for the `Application` resource — it wipes every field not in Lynq's template, including Argo CD's `operation` and `status` blocks, on every apply.
+
+If Lynq and Argo CD appear to fight over the same field, run `kubectl get application <name> -n argocd -o yaml --show-managed-fields` to identify the owner and update Lynq's template to either declare the field (Lynq owns it) or omit it and list it in `ignoreFields` (Argo CD owns it).
+
 ## See Also
 
 - [Templates](templates.md) – Advanced templating and function usage.

@@ -140,25 +140,29 @@ Controls how resources are updated.
 
 ### `apply` (Default — Server-Side Apply)
 
-Declarative, field-manager-aware updates. Preserves fields owned by other controllers (e.g., HPA-managed `replicas`).
+Declarative, field-manager-aware updates. Lynq's `fieldManager` is `lynq-operator`. Fields owned by other managers (HPA `replicas`, ESO `data`, Kyverno mutate webhooks, etc.) are preserved automatically — Lynq only writes the fields its template declares. **Recommended for any resource that is co-managed with another controller.**
 
 ```yaml
 deployments:
   - id: app
-    patchStrategy: apply  # default; field manager: "lynq"
+    patchStrategy: apply  # default; fieldManager: "lynq-operator"
 ```
+
+`ConflictPolicy: Force` (SSA-only) overrides another manager's ownership of a conflicting field. Use sparingly — it silently strips the other manager's intent.
 
 ### `merge` (Strategic Merge Patch)
 
-Merges changes with the existing resource. Preserves unspecified fields. Less precise conflict detection than SSA.
+Merges changes with the existing resource. Preserves unspecified fields (so external annotations/labels added by other controllers are kept), but has no per-field ownership tracking — multiple controllers writing to the same map can fight back.
 
-Use for partial updates or compatibility with legacy systems.
+Use for partial updates or compatibility with legacy systems. `ConflictPolicy: Force` has no effect on this strategy.
 
 ### `replace` (Full Replacement)
 
-Completely replaces the resource. Removes any fields not in the template.
+Completely replaces the resource via `client.Update()`. Removes any fields not in the template.
 
-Use only when exact resource state is required and no other controller manages the resource.
+Use only when exact resource state is required and **no other controller manages the resource** — Replace will wipe externally-added labels, annotations, or spec fields on every apply, which may trigger a fight-back cycle with controllers like ESO, Kyverno (mutate webhooks), or admission injectors. `ConflictPolicy: Force` has no effect on Replace.
+
+Lynq's `replace` path uses optimistic concurrency: the live `resourceVersion` is copied into the submitted object so benign external RV bumps (status writes, finalizers) do not cause spurious 409 retries.
 
 ## Defaults
 

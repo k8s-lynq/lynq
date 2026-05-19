@@ -166,6 +166,22 @@ func (m *Manager) PublishMetrics(node *lynqv1.LynqNode, ready, failed, desired, 
 	})
 }
 
+// PublishLastFullReconcileAt is a helper to publish the LastFullReconcileAt timestamp.
+// Used by the controller to gate the periodic drift-correction force-reapply: this
+// timestamp marks when the most recent unconditional re-apply completed (or, on first
+// observation of a node, when the controller started tracking it — to defer the first
+// force by one full interval and avoid a re-apply storm on controller restart).
+func (m *Manager) PublishLastFullReconcileAt(node *lynqv1.LynqNode, timestamp metav1.Time) {
+	m.Publish(StatusEvent{
+		Type:    EventLastFullReconcileAtUpdated,
+		NodeKey: client.ObjectKeyFromObject(node),
+		Payload: LastFullReconcileAtPayload{
+			Timestamp: timestamp,
+		},
+		Timestamp: time.Now(),
+	})
+}
+
 // PublishFullStatus is a helper to publish all status updates at once
 // This is useful at the end of reconciliation to update everything together
 func (m *Manager) PublishFullStatus(node *lynqv1.LynqNode, ready, failed, desired, conflicted int32, conditions []metav1.Condition, appliedKeys []string, isDegraded bool, degradedReason string) {
