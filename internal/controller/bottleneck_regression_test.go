@@ -765,6 +765,127 @@ func TestRegression_TrackingAnnotationsLandAtomicallyWithSpec(t *testing.T) {
 		"apply-start-time must be on the resource immediately after the first apply")
 }
 
+// TestRegression_ExternalSpecDriftIsReApplied verifies that when a user (or any other
+// actor) mutates the live spec of a Lynq-managed resource while leaving our
+// lynq.sh/applied-hash annotation untouched, the next reconcile re-applies — i.e. the
+// drift-correction contract is preserved.
+//
+// Before the generation-tracking fix, the slow-path skip in ApplyResource only checked
+// lynq.sh/applied-hash. An external `kubectl set image` or `kubectl edit deployment`
+// would change the live spec (bumping metadata.generation) but leave applied-hash
+// alone, so the next reconcile would see "stored hash matches desired hash" and skip.
+// Lynq would silently lose self-heal on managed resources.
+//
+// The fix tracks metadata.generation alongside the hash (via the lynq.sh/applied-
+// generation annotation and the in-memory cache's generation field). A live generation
+// that differs from our stored applied-generation forces re-apply even when the hash
+// matches.
+func TestRegression_ExternalSpecDriftIsReApplied(t *testing.T) {
+	scheme := makeBottleneckScheme(t)
+	node := makeTestNode("test-node", "default")
+	deploy := makeReadyDeployment("drift-deploy", "default")
+
+	resource := makeDeploymentResource("deploy-id", "drift-deploy", lynqv1.PatchStrategyReplace, true, 300)
+	sortedNodes, err := buildSingleNodeGraph(resource)
+	require.NoError(t, err)
+
+	updateCalls := 0
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(deploy, node).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+				if obj.GetObjectKind().GroupVersionKind().Kind == resourceKindDeployment {
+					updateCalls++
+				}
+				return c.Update(ctx, obj, opts...)
+			},
+		}).
+		Build()
+	r := makeReconcilerForClient(scheme, c)
+
+	// 1st reconcile: applies the deployment, stamps applied-hash + applied-generation.
+	_, failedCount1, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars())
+	require.Equal(t, int32(0), failedCount1, "1st apply must not fail")
+	require.Equal(t, 1, updateCalls, "1st reconcile must issue exactly one Update")
+
+	// Simulate external drift: bump spec.replicas via a direct write WITHOUT touching
+	// lynq.sh/applied-hash. metadata.generation increments; applied-hash stays.
+	live := &appsv1.Deployment{}
+	require.NoError(t, c.Get(context.Background(),
+		client.ObjectKey{Namespace: "default", Name: "drift-deploy"}, live))
+	live.Generation++ // simulate API server bumping generation on a real spec change
+	require.NoError(t, c.Update(context.Background(), live))
+	prevUpdates := updateCalls
+
+	// 2nd reconcile: applied-hash on the resource still matches our desired hash, but
+	// the live generation no longer matches the applied-generation we stamped. The
+	// drift detector MUST kick in and re-apply rather than skipping.
+	_, failedCount2, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars())
+	assert.Equal(t, int32(0), failedCount2)
+	assert.Equal(t, 1, updateCalls-prevUpdates,
+		"external spec drift must trigger a re-apply — generation mismatch is the drift signal\n"+
+			"  Got 0 Update calls, meaning the controller silently skipped despite drift.")
+}
+
+// TestRegression_OrphanReadoptionForcesApply verifies that when a resource is brought
+// back into management from an orphaned state, the apply path always runs even if the
+// applied-hash on the resource happens to match the desired hash. This is required
+// because ownerReferences and tracking labels MUST be re-stamped during re-adoption,
+// and the skip path would otherwise short-circuit on hash match alone.
+func TestRegression_OrphanReadoptionForcesApply(t *testing.T) {
+	scheme := makeBottleneckScheme(t)
+	node := makeTestNode("test-node", "default")
+	deploy := makeReadyDeployment("orphan-deploy", "default")
+	// Pre-mark the resource as orphaned with markers that ApplyResource is supposed
+	// to detect-and-remove before deciding whether to skip.
+	if deploy.Labels == nil {
+		deploy.Labels = map[string]string{}
+	}
+	deploy.Labels[apply.LabelOrphaned] = apply.OrphanedLabelValue
+	if deploy.Annotations == nil {
+		deploy.Annotations = map[string]string{}
+	}
+	deploy.Annotations[apply.AnnotationOrphanedAt] = "2026-05-18T00:00:00Z"
+	deploy.Annotations[apply.AnnotationOrphanedReason] = "TestOrphan"
+
+	resource := makeDeploymentResource("deploy-id", "orphan-deploy", lynqv1.PatchStrategyReplace, true, 300)
+	sortedNodes, err := buildSingleNodeGraph(resource)
+	require.NoError(t, err)
+
+	updateCalls := 0
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(deploy, node).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+				if obj.GetObjectKind().GroupVersionKind().Kind == resourceKindDeployment {
+					updateCalls++
+				}
+				return c.Update(ctx, obj, opts...)
+			},
+		}).
+		Build()
+	r := makeReconcilerForClient(scheme, c)
+
+	_, failedCount, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars())
+	require.Equal(t, int32(0), failedCount, "apply must not fail")
+	// Updates here include the orphan-marker removal AND the re-apply. Both come
+	// through the same Update interceptor. Important: the count must be ≥ 1, meaning
+	// the apply actually ran rather than being skipped on a spurious hash match.
+	assert.GreaterOrEqual(t, updateCalls, 1,
+		"orphan re-adoption must force apply so ownerRef/tracking labels get re-stamped")
+
+	// Confirm that orphan markers are gone after the apply.
+	live := &appsv1.Deployment{}
+	require.NoError(t, c.Get(context.Background(),
+		client.ObjectKey{Namespace: "default", Name: "orphan-deploy"}, live))
+	assert.NotContains(t, live.Labels, apply.LabelOrphaned,
+		"orphan label must be removed during re-adoption")
+	assert.NotContains(t, live.Annotations, apply.AnnotationOrphanedAt,
+		"orphan annotations must be removed during re-adoption")
+}
+
 // TestRegression_StaleRVDoesNotCauseInfiniteUpdateLoop verifies that when something
 // (other than us) has bumped the resource's resourceVersion since our last apply, we
 // fall back to the lynq.sh/applied-hash annotation instead of unconditionally re-applying.

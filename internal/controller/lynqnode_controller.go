@@ -1275,13 +1275,13 @@ func (r *LynqNodeReconciler) SetupWithManager(mgr ctrl.Manager, concurrency int)
 			}
 
 			// Reconcile on annotation change, BUT ignore annotations we manage ourselves
-			// (lynq.sh/applied-hash, lynq.sh/apply-start-time, lynq.sh/deletion-policy,
-			// lynq.sh/orphaned-*). Without this filter, every successful apply writes those
-			// annotations via persistAppliedHash → watch fires → reconcile → no spec change
-			// but a fresh apply happens anyway because the cache RV is stale → writes
-			// annotations again → infinite cascade. The cascade inflates Deployment generation
-			// (gen 2 → 4 in a single update window) and starves the hub's maxSkew enforcement
-			// (which uses cache lag-prone LynqNode state to decide who's "updating").
+			// (the `lynq.sh/*` prefix is reserved for operator-owned annotation keys —
+			// applied-hash, apply-start-time, applied-generation, deletion-policy,
+			// orphaned-*). lynq.sh/applied-generation in particular is stamped by a
+			// separate MergePatch after each apply and would otherwise re-trigger
+			// reconcile cascades that don't reflect any user-visible spec change.
+			// Real user annotation changes (e.g., deployment.kubernetes.io/revision
+			// written by the Deployment controller) still fire this predicate.
 			if hasNonLynqAnnotationChange(oldObj.GetAnnotations(), newObj.GetAnnotations()) {
 				return true
 			}
@@ -2077,18 +2077,17 @@ func elapsedSinceApply(obj client.Object, fallback time.Time) time.Duration {
 }
 
 // hasNonLynqAnnotationChange reports whether the user-visible annotations on a watched
-// child resource have changed. It deliberately ignores annotations we manage ourselves
-// (lynq.sh/* keys written by the Applier), so the watch predicate does not fire on the
-// MergePatch that persistAppliedHash performs after every successful apply.
+// child resource have changed. It deliberately ignores the `lynq.sh/*` annotation
+// namespace, which is reserved for keys the Applier writes (applied-hash,
+// apply-start-time, applied-generation, deletion-policy, orphaned-*). Without this
+// filter, the MergePatch that stamps applied-generation after each apply would
+// re-trigger a reconcile that has no user-visible work to do — a small but real
+// source of self-induced reconcile traffic.
 //
-// Without this filter, each apply triggers a self-reconcile cascade:
-//
-//	apply → persistAppliedHash MergePatches lynq.sh/applied-hash + apply-start-time →
-//	  Owns watch sees an annotation change → LynqNode re-reconciles → apply skipped via
-//	  hash cache → but the next apply (e.g., spec change) collides with the in-flight
-//	  cascade, doubling the SSA work and inflating Deployment generation. The hub's
-//	  maxSkew enforcement loses track of "who is currently updating" because the cache
-//	  it inspects is being churned by these cascades.
+// Note: applied-hash and apply-start-time are bundled into the apply call itself,
+// so they would not have triggered this watch even without the filter. This filter
+// is what we rely on for applied-generation (which must be written separately because
+// the post-apply generation is not knowable until the server responds to the apply).
 func hasNonLynqAnnotationChange(oldAnno, newAnno map[string]string) bool {
 	return !reflect.DeepEqual(stripLynqAnnotations(oldAnno), stripLynqAnnotations(newAnno))
 }
