@@ -155,6 +155,15 @@ const (
 	// Reconcile results
 	ResultSuccess        = "success"
 	ResultPartialFailure = "partial_failure"
+
+	// ForceReapplyInterval is the cadence of the periodic drift-correction
+	// resync: every reconcile after this duration since the last full reapply
+	// bypasses the apply-skip check and re-applies every child resource. This
+	// is Lynq's external-drift correction mechanism — external edits that
+	// preserve the lynq.sh/applied-hash annotation on a child resource will be
+	// corrected on the next force-reapply cycle, not within seconds of the
+	// edit. The 10-minute default matches Crossplane's periodic resync model.
+	ForceReapplyInterval = 10 * time.Minute
 )
 
 // ReconcileType defines the type of reconciliation to perform
@@ -231,7 +240,11 @@ func (r *LynqNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 // applyResources applies all resources and returns counts for ready, failed, changed, conflicted, and skipped resources
 // skippedIds contains the IDs of resources that were skipped due to dependency failures
-func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.LynqNode, sortedNodes []*graph.Node, vars template.Variables) (readyCount, failedCount, changedCount, conflictedCount, skippedCount int32, skippedIds []string) {
+//
+// forceReapply: when true, every ApplyResource call bypasses the annotation-based
+// skip check and re-applies unconditionally. This is the periodic drift-correction
+// resync gated by LynqNode.Status.LastFullReconcileAt (see ForceReapplyInterval).
+func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.LynqNode, sortedNodes []*graph.Node, vars template.Variables, forceReapply bool) (readyCount, failedCount, changedCount, conflictedCount, skippedCount int32, skippedIds []string) {
 	logger := log.FromContext(ctx)
 	applier := r.getApplier()
 	checker := r.getReadinessChecker()
@@ -393,7 +406,7 @@ func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.Ly
 			ignoreFields = nil
 		}
 
-		changed, applyErr := applier.ApplyResource(ctx, obj, node, resource.ConflictPolicy, resource.PatchStrategy, deletionPolicy, ignoreFields)
+		changed, applyErr := applier.ApplyResource(ctx, obj, node, resource.ConflictPolicy, resource.PatchStrategy, deletionPolicy, ignoreFields, forceReapply)
 
 		// Track changes and emit events on first change
 		if changed {
@@ -1836,9 +1849,39 @@ func (r *LynqNodeReconciler) reconcileSpec(ctx context.Context, node *lynqv1.Lyn
 		}
 	}
 
+	// Decide whether this reconcile should force a full reapply (bypassing the
+	// annotation-based apply-skip in shouldSkipApply). This is Lynq's drift-correction
+	// mechanism: every ForceReapplyInterval (default ~10 min), we re-apply every child
+	// resource unconditionally to repair any external mutation that preserved the
+	// lynq.sh/applied-hash annotation and would therefore not be detected by the
+	// annotation-only skip check.
+	//
+	// Nil LastFullReconcileAt means we've never recorded one for this node — either it
+	// is brand new or the controller just restarted. Treat nil as "defer the first
+	// force by one full interval": stamp `now` as the baseline, set forceReapply=false
+	// for this reconcile. Without this defer, every controller restart would force-
+	// reapply every LynqNode on the next tick, producing a re-apply storm that could
+	// regress the post-restart Ready window guarded by Bottleneck BUG 2.
+	forceReapply := false
+	if node.Status.LastFullReconcileAt == nil {
+		now := metav1.Now()
+		r.StatusManager.PublishLastFullReconcileAt(node, now)
+	} else if time.Since(node.Status.LastFullReconcileAt.Time) >= ForceReapplyInterval {
+		forceReapply = true
+	}
+
 	// Apply resources and track changes
-	readyCount, failedCount, changedCount, conflictedCount, skippedCount, skippedIds := r.applyResources(ctx, node, sortedNodes, vars)
+	readyCount, failedCount, changedCount, conflictedCount, skippedCount, skippedIds := r.applyResources(ctx, node, sortedNodes, vars, forceReapply)
 	totalResources := int32(len(sortedNodes))
+
+	// If we just completed a force-reapply pass, advance the LastFullReconcileAt
+	// timestamp so the next force fires one interval later. We update unconditionally
+	// (regardless of failedCount) because the point of this timestamp is "we just ran
+	// the full reconcile loop with skip disabled" — failure handling is orthogonal.
+	if forceReapply {
+		now := metav1.Now()
+		r.StatusManager.PublishLastFullReconcileAt(node, now)
+	}
 
 	// Build applied resource keys
 	appliedResourceKeys := make([]string, 0, len(currentKeys))

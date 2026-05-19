@@ -274,7 +274,7 @@ func TestRegression_Bug1_OldResourceNotImmediatelyFailed(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(deploy, node).Build()
 	r := makeReconcilerForClient(scheme, c)
 
-	_, failedCount, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars())
+	_, failedCount, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars(), false)
 
 	assert.Equal(t, int32(0), failedCount,
 		"immediately after apply the timeout has not elapsed, so failedCount must be 0.\n"+
@@ -308,7 +308,7 @@ func TestRegression_Bug1_ResourceStillWithinTimeoutAfterApply(t *testing.T) {
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(deploy, node).Build()
 			r := makeReconcilerForClient(scheme, c)
 
-			_, failedCount, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars())
+			_, failedCount, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars(), false)
 
 			assert.Equal(t, int32(0), failedCount,
 				"[%s] failedCount must be 0 immediately after apply.", tc.name)
@@ -331,7 +331,7 @@ func TestRegression_Bug1_NewlyCreatedResourceShouldNotFail(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(freshDeploy, node).Build()
 	r := makeReconcilerForClient(scheme, c)
 
-	_, failedCount, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars())
+	_, failedCount, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars(), false)
 
 	assert.Equal(t, int32(0), failedCount,
 		"failedCount must be 0 immediately after apply even with patchStrategy:replace + fake client.\n"+
@@ -376,13 +376,13 @@ func TestRegression_Bug2_UnchangedResourceNotReappliedAfterRestart(t *testing.T)
 		Build()
 
 	r1 := makeReconcilerForClient(scheme, c)
-	r1.applyResources(context.Background(), node, sortedNodes, defaultVars())
+	r1.applyResources(context.Background(), node, sortedNodes, defaultVars(), false)
 	require.Equal(t, 1, totalUpdateCalls, "precondition: first apply must call Update once")
 
 	// New controller instance (simulated restart): fresh Applier with empty in-memory cache, same cluster state
 	prevCount := totalUpdateCalls
 	r2 := makeReconcilerForClient(scheme, c)
-	r2.applyResources(context.Background(), node, sortedNodes, defaultVars())
+	r2.applyResources(context.Background(), node, sortedNodes, defaultVars(), false)
 	restartUpdateCalls := totalUpdateCalls - prevCount
 
 	assert.Equal(t, 0, restartUpdateCalls,
@@ -457,7 +457,7 @@ func TestRegression_Bug2_ChangedResourceMustBeReapplied(t *testing.T) {
 		}).
 		Build()
 	r := makeReconcilerForClient(scheme, c)
-	r.applyResources(context.Background(), node, sortedNodes, defaultVars())
+	r.applyResources(context.Background(), node, sortedNodes, defaultVars(), false)
 
 	assert.Equal(t, 1, updateCalls, "when spec has changed, client.Update() must be called.")
 }
@@ -495,7 +495,7 @@ func TestRegression_RestartDoesNotWorsenMaxSkewDeadlock(t *testing.T) {
 		Build()
 
 	r1 := makeReconcilerForClient(scheme, c)
-	_, failedCount1, _, _, _, _ := r1.applyResources(context.Background(), node, sortedNodes, defaultVars())
+	_, failedCount1, _, _, _, _ := r1.applyResources(context.Background(), node, sortedNodes, defaultVars(), false)
 	t.Logf("first controller: failedCount=%d, updateCalls=%d", failedCount1, updateCalls)
 	require.Equal(t, 1, updateCalls, "precondition: first apply must call Update once")
 
@@ -503,7 +503,7 @@ func TestRegression_RestartDoesNotWorsenMaxSkewDeadlock(t *testing.T) {
 	// BUG 2 fix: applied-hash annotation restores cache → no redundant Update triggered.
 	prevUpdates := updateCalls
 	r2 := makeReconcilerForClient(scheme, c)
-	_, failedCount2, _, _, _, _ := r2.applyResources(context.Background(), node, sortedNodes, defaultVars())
+	_, failedCount2, _, _, _, _ := r2.applyResources(context.Background(), node, sortedNodes, defaultVars(), false)
 	restartUpdateCalls := updateCalls - prevUpdates
 	t.Logf("second controller (after restart): failedCount=%d, updateCalls=%d", failedCount2, restartUpdateCalls)
 
@@ -531,7 +531,7 @@ func TestRegression_MaxSkewNotSaturatedByFalseFailures(t *testing.T) {
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(rollingDeploy, node).Build()
 			r := makeReconcilerForClient(scheme, c)
 
-			_, failedCount, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars())
+			_, failedCount, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars(), false)
 
 			assert.Equal(t, int32(0), failedCount,
 				"node-%d: rolling Deployment must not be immediately FAILED and waste a maxSkew slot.", i)
@@ -630,7 +630,7 @@ func TestRegression_TimerPersistsAcrossReconciles(t *testing.T) {
 
 	// 1st reconcile: applies resource, stamps apply-start-time = now
 	r1 := makeReconcilerForClient(scheme, c)
-	_, failedCount1, _, _, _, _ := r1.applyResources(context.Background(), node, sortedNodes, defaultVars())
+	_, failedCount1, _, _, _, _ := r1.applyResources(context.Background(), node, sortedNodes, defaultVars(), false)
 	assert.Equal(t, int32(0), failedCount1,
 		"immediately after apply the 1s timeout has not yet elapsed → failedCount must be 0")
 
@@ -640,7 +640,7 @@ func TestRegression_TimerPersistsAcrossReconciles(t *testing.T) {
 	// 2nd reconcile (new reconciler = empty in-memory cache, same cluster state)
 	// elapsedSinceApply reads the annotation (≈2s ago) → elapsed > 1s → timeout fires
 	r2 := makeReconcilerForClient(scheme, c)
-	_, failedCount2, _, _, _, _ := r2.applyResources(context.Background(), node, sortedNodes, defaultVars())
+	_, failedCount2, _, _, _, _ := r2.applyResources(context.Background(), node, sortedNodes, defaultVars(), false)
 
 	assert.Equal(t, int32(1), failedCount2,
 		"after 2s with timeoutSeconds=1, apply-start-time annotation must be read to fire the timeout.\n"+
@@ -748,7 +748,7 @@ func TestRegression_TrackingAnnotationsLandAtomicallyWithSpec(t *testing.T) {
 	r := makeReconcilerForClient(scheme, c)
 
 	// 1st apply
-	_, failedCount1, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars())
+	_, failedCount1, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars(), false)
 	require.Equal(t, int32(0), failedCount1, "1st apply must not fail")
 
 	// Immediately after the apply returns, the live resource must already carry both
@@ -765,66 +765,111 @@ func TestRegression_TrackingAnnotationsLandAtomicallyWithSpec(t *testing.T) {
 		"apply-start-time must be on the resource immediately after the first apply")
 }
 
-// TestRegression_InProcessGenerationDriftIsReApplied verifies that the in-memory
-// generation tracking detects external drift within a single controller process
-// lifetime. After our first apply, the in-memory cache stores the post-apply
-// metadata.generation. If something later bumps the live generation (i.e. a real
-// spec change from outside Lynq), the fast-path skip's `state.generation ==
-// live generation` clause fails, the slow-path's hash-only check also fails the
-// generation invariant via the same path, and the apply must run.
+// TestRegression_ExactlyOneApiWritePerReconcile is the STRUCTURAL GUARD against
+// reintroducing the side-channel-write race that produced the `7b629e4`, `3efafeb`,
+// and `b458eda` regression chain.
 //
-// Cross-restart drift detection is intentionally NOT guaranteed — the slow path is
-// hash-only and an external mutation that leaves applied-hash alone won't be self-
-// healed until the in-memory cache rebuilds. That trade-off mirrors main's behavior
-// and is documented in CLAUDE.md.
-func TestRegression_InProcessGenerationDriftIsReApplied(t *testing.T) {
-	scheme := makeBottleneckScheme(t)
-	node := makeTestNode("test-node", "default")
-	deploy := makeReadyDeployment("drift-deploy", "default")
+// The contract is: every successful ApplyResource invocation must issue EXACTLY
+// ONE API write to the live resource (Create, Update, or Patch — one of them).
+// Any follow-up MergePatch (to stamp generation, observed-version, or any other
+// piece of "what we just applied" state) re-introduces the race the commit
+// 7b629e4 fix established: the API server's status/finalizer/admission writes
+// land in the window between our first and second API call, the second call's
+// optimistic concurrency check fails, and the controller falls into an
+// infinite reconcile / generation-bump loop.
+//
+// This test runs each patch strategy through three phases:
+//  1. Create: resource doesn't exist → exactly 1 write call.
+//  2. Skip:   resource exists with matching applied-hash → 0 write calls.
+//  3. Reapply: applied-hash absent (external mutation) → exactly 1 write call.
+//
+// Future PRs that bundle a post-apply MergePatch into ApplyResource (under any
+// disguise — different fieldManager, different annotation key, "just one quick
+// status fix-up") will fail Phase 1 and/or Phase 3 with writeCalls > 1.
+func TestRegression_ExactlyOneApiWritePerReconcile(t *testing.T) {
+	// SSA (PatchStrategyApply) is intentionally excluded from this table. The
+	// controller-runtime fake client has limited SSA support, so we cannot
+	// reliably observe the exact Patch flow under SSA here. SSA has its own
+	// branch in applyByStrategy; a regression that introduced a follow-up
+	// MergePatch GENERICALLY (after applyByStrategy returns) WOULD still be
+	// caught by Merge/Replace runs of this test, but an SSA-ONLY side-channel
+	// write would slip through. An envtest-based companion that exercises real
+	// SSA would close that gap — tracked as follow-up.
+	strategies := []lynqv1.PatchStrategy{
+		lynqv1.PatchStrategyReplace,
+		lynqv1.PatchStrategyMerge,
+	}
 
-	resource := makeDeploymentResource("deploy-id", "drift-deploy", lynqv1.PatchStrategyReplace, true, 300)
-	sortedNodes, err := buildSingleNodeGraph(resource)
-	require.NoError(t, err)
+	for _, strategy := range strategies {
+		t.Run(string(strategy), func(t *testing.T) {
+			scheme := makeBottleneckScheme(t)
+			node := makeTestNode("test-node", "default")
 
-	updateCalls := 0
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(deploy, node).
-		WithInterceptorFuncs(interceptor.Funcs{
-			Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
-				if obj.GetObjectKind().GroupVersionKind().Kind == resourceKindDeployment {
-					updateCalls++
-				}
-				return c.Update(ctx, obj, opts...)
-			},
-		}).
-		Build()
-	r := makeReconcilerForClient(scheme, c)
+			resource := makeDeploymentResource("deploy-id", "guard-deploy", strategy, false, 300)
+			sortedNodes, err := buildSingleNodeGraph(resource)
+			require.NoError(t, err)
 
-	// 1st reconcile: applies the deployment and caches {hash, RV, generation} in memory.
-	_, failedCount1, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars())
-	require.Equal(t, int32(0), failedCount1, "1st apply must not fail")
-	require.Equal(t, 1, updateCalls, "1st reconcile must issue exactly one Update")
+			writeCalls := 0
+			c := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(node). // resource does NOT exist yet; first apply creates
+				WithInterceptorFuncs(interceptor.Funcs{
+					Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+						if obj.GetObjectKind().GroupVersionKind().Kind == resourceKindDeployment {
+							writeCalls++
+						}
+						return c.Create(ctx, obj, opts...)
+					},
+					Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+						if obj.GetObjectKind().GroupVersionKind().Kind == resourceKindDeployment {
+							writeCalls++
+						}
+						return c.Update(ctx, obj, opts...)
+					},
+					Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+						if obj.GetObjectKind().GroupVersionKind().Kind == resourceKindDeployment {
+							writeCalls++
+						}
+						return c.Patch(ctx, obj, patch, opts...)
+					},
+				}).
+				Build()
+			r := makeReconcilerForClient(scheme, c)
 
-	// Simulate external in-process drift: bump live generation directly. The
-	// in-memory cache's generation no longer matches the live generation, so
-	// the fast path's drift detector (hash + (RV-or-generation) mismatch) must
-	// trigger a re-apply. Note: applied-hash is intentionally left untouched —
-	// this asserts the fast path is authoritative for cache hits, not that the
-	// slow path detects drift (which it deliberately doesn't, per the trade-off
-	// documented in shouldSkipApply).
-	live := &appsv1.Deployment{}
-	require.NoError(t, c.Get(context.Background(),
-		client.ObjectKey{Namespace: "default", Name: "drift-deploy"}, live))
-	live.Generation++
-	require.NoError(t, c.Update(context.Background(), live))
-	prevUpdates := updateCalls
+			// Phase 1 — creation: resource doesn't exist, applyResources must Create exactly once.
+			writeCalls = 0
+			_, failedCount, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars(), false)
+			require.Equal(t, int32(0), failedCount, "[%s] phase 1 (create) must not fail", strategy)
+			assert.Equal(t, 1, writeCalls,
+				"[%s] phase 1 (create): must issue exactly ONE API write call (the Create itself). "+
+					"More than one means a follow-up write was re-introduced — the 3efafeb regression class.", strategy)
 
-	_, failedCount2, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars())
-	assert.Equal(t, int32(0), failedCount2)
-	assert.GreaterOrEqual(t, updateCalls-prevUpdates, 1,
-		"in-process drift (live generation diverged from cached generation) "+
-			"must force a re-apply rather than skipping")
+			// Phase 2 — idempotent re-apply: applied-hash now matches; skip path must elide the apply entirely.
+			writeCalls = 0
+			_, failedCount, _, _, _, _ = r.applyResources(context.Background(), node, sortedNodes, defaultVars(), false)
+			require.Equal(t, int32(0), failedCount, "[%s] phase 2 (skip) must not fail", strategy)
+			assert.Equal(t, 0, writeCalls,
+				"[%s] phase 2 (skip): applied-hash matches desired hash; ApplyResource must issue ZERO API writes "+
+					"(shouldSkipApply short-circuits). Any write here means the skip path is broken.", strategy)
+
+			// Phase 3 — reapply forced by absent applied-hash: simulate an external actor stripping
+			// the annotation. Next reconcile must re-apply the spec, issuing exactly ONE write.
+			live := &appsv1.Deployment{}
+			require.NoError(t, c.Get(context.Background(),
+				client.ObjectKey{Namespace: "default", Name: "guard-deploy"}, live))
+			annotations := live.GetAnnotations()
+			delete(annotations, apply.AnnotationAppliedHash)
+			live.SetAnnotations(annotations)
+			require.NoError(t, c.Update(context.Background(), live))
+
+			writeCalls = 0
+			_, failedCount, _, _, _, _ = r.applyResources(context.Background(), node, sortedNodes, defaultVars(), false)
+			require.Equal(t, int32(0), failedCount, "[%s] phase 3 (reapply) must not fail", strategy)
+			assert.Equal(t, 1, writeCalls,
+				"[%s] phase 3 (reapply): applied-hash was externally stripped, ApplyResource must re-apply once. "+
+					"More than one means a follow-up MergePatch sneaked in — the 7b629e4/3efafeb regression class.", strategy)
+		})
+	}
 }
 
 // TestRegression_OrphanReadoptionForcesApply verifies that when a resource is brought
@@ -867,7 +912,7 @@ func TestRegression_OrphanReadoptionForcesApply(t *testing.T) {
 		Build()
 	r := makeReconcilerForClient(scheme, c)
 
-	_, failedCount, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars())
+	_, failedCount, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars(), false)
 	require.Equal(t, int32(0), failedCount, "apply must not fail")
 	// Updates here include the orphan-marker removal AND the re-apply. Both come
 	// through the same Update interceptor. Important: the count must be ≥ 1, meaning
@@ -886,8 +931,9 @@ func TestRegression_OrphanReadoptionForcesApply(t *testing.T) {
 }
 
 // TestRegression_StaleRVDoesNotCauseInfiniteUpdateLoop verifies that when something
-// (other than us) has bumped the resource's resourceVersion since our last apply, we
-// fall back to the lynq.sh/applied-hash annotation instead of unconditionally re-applying.
+// (other than us) has bumped the resource's resourceVersion since our last apply,
+// the annotation-based skip path correctly elides the apply instead of unconditionally
+// re-Updating.
 //
 // Background — the infinite loop this prevents:
 //
@@ -895,19 +941,19 @@ func TestRegression_OrphanReadoptionForcesApply(t *testing.T) {
 // Deployment's metadata.generation because our desired obj lacks fields the API server
 // adds via defaulters (spec.strategy, progressDeadlineSeconds, imagePullPolicy, etc.).
 // The controller watches Deployments and triggers a fresh reconcile on every
-// generation change. If the in-memory cache's resourceVersion no longer matches
-// (because Kubernetes updated status/finalizers/managed-annotations between our
-// previous apply and now), and the cache-hit-with-stale-RV path falls through to
-// re-apply, we get:
+// generation change. If skip-decision treated every external RV bump (status writes,
+// finalizer edits, K8s system annotations) as drift and re-applied unconditionally,
+// we would get:
 //
 //	apply → generation bump → watch fires → reconcile → apply → … (forever)
 //
 // observedGeneration permanently lags behind generation, isDeploymentReady stays
 // false, and the LynqNode never becomes Ready.
 //
-// The fix: when the in-memory cache hash matches but the RV is stale, check the
-// lynq.sh/applied-hash annotation before re-applying. If the annotation matches,
-// the resource still carries our last-applied spec → skip the Update.
+// The fix: shouldSkipApply checks the lynq.sh/applied-hash annotation on the live
+// resource. If the annotation matches the desired hash, the resource still carries
+// our last-applied spec → skip the Update, even though the RV has been bumped by
+// benign external writes.
 func TestRegression_StaleRVDoesNotCauseInfiniteUpdateLoop(t *testing.T) {
 	scheme := makeBottleneckScheme(t)
 	node := makeTestNode("test-node", "default")
@@ -936,7 +982,7 @@ func TestRegression_StaleRVDoesNotCauseInfiniteUpdateLoop(t *testing.T) {
 	r := makeReconcilerForClient(scheme, c)
 
 	// 1st reconcile: applies the deployment, populates cache, stamps annotation
-	_, failedCount1, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars())
+	_, failedCount1, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars(), false)
 	require.Equal(t, int32(0), failedCount1, "1st apply must not fail")
 	require.Equal(t, 1, updateCalls, "precondition: 1st reconcile must issue exactly one Update")
 
@@ -954,7 +1000,7 @@ func TestRegression_StaleRVDoesNotCauseInfiniteUpdateLoop(t *testing.T) {
 
 	// 2nd reconcile: same Applier, same hash, but the cached RV is now stale.
 	// The annotation fallback must kick in and skip the apply.
-	_, failedCount2, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars())
+	_, failedCount2, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars(), false)
 	assert.Equal(t, int32(0), failedCount2, "2nd apply must not fail")
 	assert.Equal(t, 0, updateCalls-prevUpdates,
 		"after a benign external RV bump, the controller must NOT re-issue client.Update() — "+
@@ -1053,7 +1099,7 @@ func TestRegression_ConflictPolicyForceIgnoredForReplaceStrategy(t *testing.T) {
 		Build()
 	r := makeReconcilerForClient(scheme, c)
 
-	_, failedCount, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars())
+	_, failedCount, _, _, _, _ := r.applyResources(context.Background(), node, sortedNodes, defaultVars(), false)
 
 	assert.Equal(t, int32(0), failedCount,
 		"patchStrategy:replace uses client.Update(), so the conflictPolicy:Force flag is never passed.\n"+

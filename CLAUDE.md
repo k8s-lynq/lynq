@@ -380,20 +380,29 @@ spec:
 2. **Creation/Deletion**:
    - `desired \ current` -> Create new LynqNodes (naming: `{uid}-{template-name}`)
    - `current \ desired` -> Delete LynqNodes (respect `deletionPolicy`)
-3. **Drift Detection** ✅ (Implemented & Optimized):
-   - **Event-driven**: `Owns()` watches on 11 resource types + `Watches()` on Namespaces
+3. **Drift Detection** ✅ (two channels):
+   - **Watch-driven (immediate)**: `Owns()` watches on 11 resource types + `Watches()` on
+     Namespaces fire when a child resource's `metadata.generation` changes.
      - ServiceAccounts, Deployments, StatefulSets, DaemonSets
      - Services, ConfigMaps, Secrets, PersistentVolumeClaims
      - Jobs, CronJobs, Ingresses
      - **Namespaces**: Tracked via labels (cannot use ownerReferences)
-   - **Watch Predicates**: Only trigger on Generation/Annotation changes (not status-only updates)
-     - Reduces unnecessary reconciliation overhead
-     - Filters out noisy status updates from watched resources
-   - **Fast Requeue**: 30-second periodic requeue (changed from 5 minutes)
-     - Ensures child resource status changes are reflected quickly in LynqNode status
-     - Balances responsiveness with cluster load
-   - **Auto-correction**: Automatically reverts manual changes to node resources
-   - **Location**: `internal/controller/lynqnode_controller.go` (SetupWithManager, line ~930)
+   - **Watch Predicates**: Only trigger on Generation/Annotation changes (not status-only
+     updates). Reduces unnecessary reconciliation overhead. The watch correctly fires on
+     external edits that change spec; `shouldSkipApply` then sees `applied-hash` either
+     stripped or stale and re-applies. If the external editor preserved `applied-hash`,
+     drift correction defers to the second channel.
+   - **Periodic force-reapply (~10 min, configurable)**: every `ForceReapplyInterval`,
+     the LynqNode controller bypasses `shouldSkipApply` and re-applies every child
+     resource unconditionally. Tracked via `LynqNode.Status.LastFullReconcileAt`. This is
+     the drift-correction backstop for external mutations that preserve the
+     `applied-hash` annotation. **Nil-handling**: nil `LastFullReconcileAt` is treated as
+     "stamp-now, defer first force by one full interval" to prevent a re-apply storm on
+     controller restart.
+   - **Fast Requeue**: 30-second periodic requeue for status reflection (independent
+     of the 10-minute force-reapply cycle).
+   - **Location**: `internal/controller/lynqnode_controller.go` (`reconcileSpec`,
+     `SetupWithManager`); `internal/apply/ssa.go` (`shouldSkipApply`).
 4. **Naming/Scope**: Use `nameTemplate` (63-char limit via `trunc63`). All resources are created in the same namespace as the LynqNode CR.
 5. **Ordering**: Topological sort by `dependIds`, `waitForReady` enforces readiness gates
 
@@ -787,33 +796,45 @@ make test-e2e
     persists across reconcile loops so the timeout clock does not reset every 30 seconds.
   - `applyStartTime` (local variable) is only a fallback for the very first reconcile before the
     annotation has been written.
-- **The in-memory `appliedRV` cache in `Applier` is cleared on controller restart.**
-  - Without the cache, the Applier re-applies all resources unconditionally on startup, triggering
-    rolling updates that start the readiness-timeout clock from scratch.
-  - `lynq.sh/applied-hash` annotation is written to child resources after each successful apply.
-    On cache miss after restart, the Applier reads this annotation; if the hash matches the desired
-    spec, the re-apply is skipped, preventing the restart from worsening any ongoing deadlock.
-- **A cached RV that no longer matches the live resource does NOT imply external drift.**
-  - Kubernetes routinely bumps a resource's RV without changing its spec: status updates, finalizer
-    edits, controller-managed annotations like `deployment.kubernetes.io/revision`, etc.
-  - The Applier's in-memory cache stores `{desiredHash, resourceVersion, generation}` after each
-    apply. The fast-path skip check passes when the hash matches AND (RV matches OR
-    `metadata.generation` matches). Generation is the drift-resistant signal because it only bumps
-    on real spec changes — benign RV bumps don't invalidate it.
-  - On cache miss (e.g. controller restart), the slow path falls back to **`lynq.sh/applied-hash`
-    annotation match only**. This is intentional: stamping `metadata.generation` to an annotation
-    requires a post-apply MergePatch, and that follow-up write re-introduces the SSA/MergePatch
-    race that commit `7b629e4` fixed (manifesting as the maxSkew/slow-pod failures and the
-    `gen 2 → 4` jump seen in CI).
-  - Trade-off: external drift that mutates the live spec while leaving `lynq.sh/applied-hash`
-    untouched is **not self-healed across a controller restart** until the in-memory cache
-    rebuilds (next apply that changes the desired hash, or the next cache eviction).
-  - Treating every RV mismatch as drift causes `patchStrategy:replace` to call `client.Update()`
-    on every reconcile. Each Update bumps the Deployment's `metadata.generation` (because the
-    Lynq-rendered spec omits API-server-defaulted fields, so the server sees a "change"). The
-    watch on Deployments fires, the controller reconciles again, RV is stale again → infinite
-    reconcile loop. `observedGeneration` permanently lags `generation`, `isDeploymentReady`
-    stays false, and the LynqNode never becomes Ready.
+- **Skip-decision is annotation-driven only — there is no in-memory cache.**
+  - `shouldSkipApply` reads `lynq.sh/applied-hash` from the live resource. If it matches the
+    desired hash, the apply is elided. There is no fast-path / slow-path divergence and no
+    in-memory state to invalidate on restart. Restart behavior is identical to warm behavior.
+  - This design (single annotation-driven skip path) was adopted to eliminate the recurring
+    side-channel-write bug class (commits `d099b63`, `7b629e4`, `b458eda`). The contract is
+    "every successful apply issues EXACTLY ONE API write call" — any follow-up MergePatch
+    re-introduces the race the `7b629e4` fix established. The unit test
+    `TestRegression_ExactlyOneApiWritePerReconcile` is the structural guard.
+- **External drift correction has two channels with documented windows.**
+  - **Watch-driven (immediate)**: when an external edit bumps `metadata.generation` AND
+    strips or alters `lynq.sh/applied-hash`, the Owns watch fires and `shouldSkipApply`
+    re-applies on the next reconcile (~30s requeue).
+  - **Periodic force-reapply (~10 min)**: when an external edit preserves `applied-hash`
+    (e.g. `kubectl edit` that doesn't touch annotations), the annotation-only skip path
+    matches and elides the apply. Drift is then corrected on the next periodic
+    force-reapply cycle gated by `LynqNode.Status.LastFullReconcileAt` and
+    `ForceReapplyInterval`. This window is intentional: it matches Crossplane's periodic
+    resync model and trades drift-detection latency for structural elimination of the
+    post-apply write race.
+  - **Nil-handling on `LastFullReconcileAt`**: the controller treats `nil` as "stamp-now,
+    defer first force by one full interval". Eagerly forcing on nil would cause a re-apply
+    storm on every controller restart and could regress the BUG 2 restart canary.
+- **Why we don't track `metadata.generation` in an annotation.**
+  - Stamping live generation back into an annotation requires a follow-up MergePatch after
+    the apply. That second API call races against the K8s status subresource, finalizer
+    controllers, and admission webhooks — the exact race that commit `b458eda` reverted.
+    The cost of accepting the ~10min drift-correction window is far smaller than the
+    cost of every regression that the dual-write pattern produces.
+- **patchStrategy:replace and the infinite-loop trap.**
+  - Each `client.Update()` bumps the Deployment's `metadata.generation` because the
+    Lynq-rendered spec omits API-server-defaulted fields (spec.strategy,
+    progressDeadlineSeconds, imagePullPolicy, etc.). If `shouldSkipApply` treated every
+    benign RV bump as drift, the watch on Deployments would fire, the controller would
+    reconcile, RV would be "stale" again → infinite reconcile loop. `observedGeneration`
+    permanently lags `generation`, `isDeploymentReady` stays false, and the LynqNode never
+    becomes Ready. The annotation-driven skip path correctly avoids this: as long as the
+    `applied-hash` annotation on the live resource matches the desired hash, the apply
+    is elided regardless of RV.
 - `conflictPolicy:Force` has no effect when `patchStrategy:replace` is used. Force only applies to SSA.
 
 ---

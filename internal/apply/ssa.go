@@ -21,7 +21,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -88,23 +87,20 @@ func (e *ConflictError) Unwrap() error {
 	return e.Err
 }
 
-// appliedState tracks the last successful apply for a resource to skip no-op PATCHes.
-type appliedState struct {
-	desiredHash     string // hash of the desired spec we last applied
-	resourceVersion string // post-apply resourceVersion from API server
-	// generation is the spec-version-counter the API server assigned after our last apply.
-	// It only increments on spec changes (status/finalizer/annotation-only writes don't bump
-	// it), so it is the right signal to detect external drift while ignoring benign RV bumps.
-	// We compare cached generation against the live generation; mismatch ⇒ external spec
-	// change ⇒ must re-apply.
-	generation int64
-}
-
-// Applier handles Server-Side Apply operations
+// Applier handles Server-Side Apply operations.
+//
+// Apply skip-decision is intentionally stateless: it relies ONLY on the
+// `lynq.sh/applied-hash` annotation that we stamp atomically as part of every
+// successful apply. There is no in-memory cache. This eliminates the entire
+// class of bug where an in-memory state diverged from the live resource (the
+// `7b629e4` / `3efafeb` / `b458eda` regression chain).
+//
+// Drift correction is handled at the controller layer via a periodic
+// force-reapply (see `LynqNode.Status.LastFullReconcileAt`) — not by attempting
+// continuous in-process drift detection here.
 type Applier struct {
-	client    client.Client
-	scheme    *runtime.Scheme
-	appliedRV sync.Map // key: "kind/ns/name" → *appliedState
+	client client.Client
+	scheme *runtime.Scheme
 }
 
 // NewApplier creates a new Applier
@@ -115,9 +111,19 @@ func NewApplier(c client.Client, scheme *runtime.Scheme) *Applier {
 	}
 }
 
-// ApplyResource applies a resource using the specified patch strategy
-// Returns true if the resource was changed, false if no change was needed
-// ignoreFields: JSONPath expressions for fields to ignore (only effective on existing resources, not initial creation)
+// ApplyResource applies a resource using the specified patch strategy.
+//
+// Returns true if the resource was changed (server-side resourceVersion bumped),
+// false if no change was needed.
+//
+// ignoreFields: JSONPath expressions for fields to ignore (only effective on existing
+// resources, not initial creation).
+//
+// forceReapply: when true, bypass the annotation-based skip check and unconditionally
+// re-apply. The LynqNode controller sets this on the periodic drift-correction resync
+// (every ~10 minutes — see LynqNode.Status.LastFullReconcileAt). It also triggers a
+// re-apply when the caller explicitly wants to repair external drift even if the
+// applied-hash annotation happens to match the desired hash.
 func (a *Applier) ApplyResource(
 	ctx context.Context,
 	obj *unstructured.Unstructured,
@@ -126,6 +132,7 @@ func (a *Applier) ApplyResource(
 	patchStrategy lynqv1.PatchStrategy,
 	deletionPolicy lynqv1.DeletionPolicy,
 	ignoreFields []string,
+	forceReapply bool,
 ) (bool, error) {
 	// Set owner reference or tracking labels based on namespace and deletion policy
 	if owner != nil {
@@ -231,9 +238,8 @@ func (a *Applier) ApplyResource(
 
 	// Check if we can skip the apply (desired spec unchanged AND resource not externally modified).
 	// The hash is computed from the PRE-patch desired object (before server mutations).
-	rvKey := fmt.Sprintf("%s/%s/%s", obj.GetKind(), obj.GetNamespace(), obj.GetName())
 	preApplyDesiredHash := a.computeDesiredHash(obj)
-	if a.shouldSkipApply(existsBeforeApply, orphanReadopted, preApplyDesiredHash, beforeResourceVersion, rvKey, existing) {
+	if a.shouldSkipApply(existsBeforeApply, orphanReadopted, forceReapply, preApplyDesiredHash, existing) {
 		return false, nil
 	}
 
@@ -269,7 +275,6 @@ func (a *Applier) ApplyResource(
 		patchStrategy:       patchStrategy,
 		conflictPolicy:      conflictPolicy,
 		existsBeforeApply:   existsBeforeApply,
-		rvKey:               rvKey,
 		preApplyDesiredHash: preApplyDesiredHash,
 	})
 	if err != nil || earlyReturn {
@@ -279,100 +284,43 @@ func (a *Applier) ApplyResource(
 	// Check if resource was actually changed by comparing resourceVersion.
 	// Patch/Update/Create responses update obj in-place with the server response,
 	// so obj.GetResourceVersion() reflects the post-apply state without an extra GET.
-	afterResourceVersion := obj.GetResourceVersion()
-	changed = beforeResourceVersion != afterResourceVersion
-
-	// Store applied state in-memory for fast skip detection within this process.
-	// Use preApplyDesiredHash (computed before Patch mutates obj with server response)
-	// so that the next reconcile's skip check compares like-with-like.
-	// generation is tracked in-memory only: it lets the fast-path skip survive benign
-	// status/finalizer RV bumps without an extra post-apply API write (which would
-	// re-introduce the race that commit 7b629e4 fixed).
-	a.appliedRV.Store(rvKey, &appliedState{
-		desiredHash:     preApplyDesiredHash,
-		resourceVersion: afterResourceVersion,
-		generation:      obj.GetGeneration(),
-	})
+	changed = beforeResourceVersion != obj.GetResourceVersion()
 
 	return changed, nil
 }
 
 // shouldSkipApply decides whether the desired spec is already on the resource (so the
-// apply call can be elided). It returns true only when we can prove the live spec
-// matches what we previously applied:
+// apply call can be elided). It returns true only when the live resource carries an
+// applied-hash annotation that matches the hash of the desired spec we are about to
+// apply.
 //
-//   - In-memory fast path: the cache says we wrote this hash AND (the RV hasn't been
-//     bumped at all, or the metadata.generation hasn't changed since we wrote it).
-//     metadata.generation is the drift-resistant signal — it only bumps on real spec
-//     changes, so benign status/finalizer/annotation writes don't invalidate the match.
-//     This is what protects patchStrategy:replace from the infinite reconcile loop:
-//     the K8s deployment controller's status updates bump RV but not generation, so
-//     the second OR clause keeps us on the skip path.
+// There is exactly one skip path: the annotation. The annotation is stamped atomically
+// inside the same API call as the spec (the commit-7b629e4 contract), so it is always
+// consistent with the spec we last applied. Cross-restart behavior is identical to
+// warm behavior — there is no in-memory state to invalidate.
 //
-//   - Annotation slow path (cross-restart cache restoration): applied-hash matches
-//     the desired hash. This is hash-only — we accept that an external `kubectl
-//     edit` that leaves applied-hash untouched will not be self-healed across a
-//     controller restart, until the in-memory generation tracking rebuilds. This
-//     trade-off mirrors main's pre-3efafeb behavior; tightening it requires a
-//     post-apply write that re-introduces the race fixed by 7b629e4.
+// Drift correction for external mutations that preserve the annotation is handled at
+// the controller layer via periodic force-reapply (LynqNode.Status.LastFullReconcileAt,
+// default interval ~10 minutes). When the controller decides to force a reapply, it
+// passes forceReapply=true and this function returns false unconditionally.
 //
-// Returns false when we MUST apply: the resource was re-adopted from orphaned state,
-// the hash couldn't be computed, the resource doesn't exist yet, or any of the proofs
-// above failed.
+// Returns false when we MUST apply:
+//   - the resource doesn't exist yet (caller must create),
+//   - we just re-adopted from an orphaned state (must re-stamp owner/labels),
+//   - hash computation failed (force apply; an empty hash would spuriously match
+//     a missing applied-hash annotation),
+//   - the controller requested a force-reapply (periodic drift correction),
+//   - the annotation is missing or its value doesn't match the desired hash.
 func (a *Applier) shouldSkipApply(
-	existsBeforeApply, orphanReadopted bool,
-	preApplyDesiredHash, beforeResourceVersion, rvKey string,
+	existsBeforeApply, orphanReadopted, forceReapply bool,
+	preApplyDesiredHash string,
 	existing *unstructured.Unstructured,
 ) bool {
-	// Bail out of all skip paths when:
-	//   - the resource doesn't exist yet (must create),
-	//   - we just re-adopted from an orphaned state (must re-stamp owner/labels),
-	//   - hash computation failed (force apply; an empty hash would otherwise
-	//     spuriously match a missing applied-hash annotation).
-	if !existsBeforeApply || orphanReadopted || preApplyDesiredHash == "" {
+	if !existsBeforeApply || orphanReadopted || forceReapply || preApplyDesiredHash == "" {
 		return false
 	}
-
-	// Fast path: in-memory cache hit. When the cache has an entry whose desiredHash
-	// matches, the in-memory generation tracking is AUTHORITATIVE for this process —
-	// generation mismatch ⇒ drift ⇒ re-apply. Falling through to the slow path on a
-	// cache-hit-with-drift would mask the drift behind the slow path's hash-only
-	// annotation check.
-	if prev, ok := a.appliedRV.Load(rvKey); ok {
-		state := prev.(*appliedState)
-		if state.desiredHash != preApplyDesiredHash {
-			// Template hash changed since we last applied — must re-apply.
-			return false
-		}
-		// Hash matches. Skip iff RV matches (no external write at all) OR generation
-		// matches (RV bumped by benign status/finalizer/annotation writes but spec
-		// untouched). The generation comparison is the in-process drift detector.
-		return state.resourceVersion == beforeResourceVersion || state.generation == existing.GetGeneration()
-	}
-
-	// Slow path: hash-only annotation fallback for cross-restart cache restoration.
-	// Refreshes the in-memory cache so subsequent reconciles in this process can take
-	// the fast path (and benefit from generation-based drift detection).
-	//
-	// Trade-off: an external mutation that bumps live spec but leaves applied-hash
-	// untouched is NOT detected here. It will be caught by the fast path once the
-	// in-memory cache rebuilds (on the next template change or controller activity).
-	// Stamping generation into an annotation would close this gap but requires a
-	// post-apply MergePatch that re-introduces the race fixed by commit 7b629e4.
-	annotations := existing.GetAnnotations()
-	if annotations == nil {
-		return false
-	}
-	storedHash, hashOK := annotations[AnnotationAppliedHash]
-	if !hashOK || storedHash != preApplyDesiredHash {
-		return false
-	}
-	a.appliedRV.Store(rvKey, &appliedState{
-		desiredHash:     preApplyDesiredHash,
-		resourceVersion: beforeResourceVersion,
-		generation:      existing.GetGeneration(),
-	})
-	return true
+	storedHash, ok := existing.GetAnnotations()[AnnotationAppliedHash]
+	return ok && storedHash == preApplyDesiredHash
 }
 
 // applyArgs bundles ApplyResource's per-call state so applyByStrategy can keep a small
@@ -383,16 +331,23 @@ type applyArgs struct {
 	patchStrategy       lynqv1.PatchStrategy
 	conflictPolicy      lynqv1.ConflictPolicy
 	existsBeforeApply   bool
-	rvKey               string
 	preApplyDesiredHash string
 }
 
 // applyByStrategy dispatches the actual API write based on patchStrategy.
+//
 // Returns (earlyReturn, changed, error):
 //   - earlyReturn=true when the strategy did a Create (resource didn't exist before).
-//     The caller should propagate (changed, error) without computing RV diff or storing
-//     the cache twice — applyByStrategy already populated the cache in that path.
-//   - earlyReturn=false on Patch/Update; the caller computes RV diff and stores cache.
+//     The caller propagates (changed, error) without computing the post-apply RV diff
+//     (Create always means changed=true).
+//   - earlyReturn=false on Patch/Update; the caller computes RV diff to determine
+//     whether the API call actually mutated the resource.
+//
+// IMPORTANT: each branch must issue EXACTLY ONE API write per invocation. The
+// commit-7b629e4 contract ("no API call after the apply touches the resource") is
+// what makes the annotation-based skip-decision in shouldSkipApply race-free. A
+// post-apply MergePatch under any guise re-introduces the 3efafeb regression — that
+// is what TestRegression_ExactlyOneApiWritePerReconcile guards against.
 func (a *Applier) applyByStrategy(ctx context.Context, args applyArgs) (bool, bool, error) {
 	switch args.patchStrategy {
 	case lynqv1.PatchStrategyApply, "":
@@ -418,11 +373,6 @@ func (a *Applier) applyByStrategy(ctx context.Context, args applyArgs) (bool, bo
 			if err := a.client.Create(ctx, args.obj); err != nil {
 				return true, false, fmt.Errorf("failed to create resource for merge: %w", err)
 			}
-			a.appliedRV.Store(args.rvKey, &appliedState{
-				desiredHash:     args.preApplyDesiredHash,
-				resourceVersion: args.obj.GetResourceVersion(),
-				generation:      args.obj.GetGeneration(),
-			})
 			return true, true, nil
 		}
 		if err := a.client.Patch(ctx, args.obj, client.Merge); err != nil {
@@ -435,11 +385,6 @@ func (a *Applier) applyByStrategy(ctx context.Context, args applyArgs) (bool, bo
 			if err := a.client.Create(ctx, args.obj); err != nil {
 				return true, false, fmt.Errorf("failed to create resource: %w", err)
 			}
-			a.appliedRV.Store(args.rvKey, &appliedState{
-				desiredHash:     args.preApplyDesiredHash,
-				resourceVersion: args.obj.GetResourceVersion(),
-				generation:      args.obj.GetGeneration(),
-			})
 			return true, true, nil
 		}
 		args.obj.SetResourceVersion(args.existing.GetResourceVersion())
