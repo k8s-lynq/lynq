@@ -259,6 +259,55 @@ deployments:
 
 **The `Degraded` condition clears automatically** once all resources reach ready state. Status updates every 30 seconds (plus immediately on child resource changes).
 
+### Symptom: `Resource not ready after timeout` with `elapsed` much larger than the resource has been actually unhealthy
+
+```
+Resource not ready after timeout, marking as failed
+  id=core-api  name=acme-api-123  elapsed=38m18s  timeout=1m0s
+```
+
+The readiness timeout is measured from `lynq.sh/apply-start-time` on the child resource (not `creationTimestamp`). This annotation is stamped at the last actual apply and **preserved across reconciles when the spec is unchanged** (so a rolling update accumulates elapsed time correctly).
+
+The trade-off: if a resource has been stable for hours/days and then becomes unhealthy due to an external event (pod eviction, node replacement, downstream dependency failure), `elapsed` reflects the time since the last spec change — not the time since the resource became unhealthy. With a short `timeoutSeconds`, the resource is marked FAILED on the very next reconcile after going unhealthy.
+
+**Diagnose:**
+
+```bash
+# Compare apply-start-time vs. when the resource actually went unhealthy
+kubectl get deploy <name> -o jsonpath='{.metadata.annotations.lynq\.sh/apply-start-time}{"\n"}'
+kubectl get deploy <name> -o jsonpath='{range .status.conditions[*]}{.type}={.status} ({.reason}) lastTransitionTime={.lastTransitionTime}{"\n"}{end}'
+
+# Are pods actually unhealthy now?
+kubectl get pods -l app=<name> -o wide
+kubectl describe pod <unhealthy-pod>
+```
+
+If pods are restarting (CrashLoopBackOff, liveness-probe failure, image pull failure, OOMKilled), fix the underlying issue. The Lynq timeout is a faithful signal that *something is wrong now*, not a Lynq bug.
+
+**If the resource is large or rolling slowly**, raise `timeoutSeconds`:
+
+```yaml
+deployments:
+  - id: app
+    timeoutSeconds: 600  # default is 300
+```
+
+### Symptom: Burst of reconcile activity after every controller restart
+
+On restart, every LynqNode the controller observes has `status.lastFullReconcileAt == nil` (from its first observation in this process). The controller treats nil as **"stamp `now` as the baseline; defer the first force-reapply by one full `ForceReapplyInterval`"** — explicitly so it does NOT force-reapply every node at once.
+
+You'll briefly see one stamp-only status update per LynqNode during the warm-up window (status writes only — no child-resource writes). This is expected and harmless.
+
+### Symptom: `kubectl edit` to a child resource doesn't auto-revert immediately
+
+If your edit changes `metadata.generation` or alters `lynq.sh/applied-hash`, the next reconcile (within ~30s) re-applies the desired spec.
+
+If your edit preserved `lynq.sh/applied-hash` (e.g. modified a field that Lynq doesn't manage), the annotation-based skip path matches and elides the apply. Drift is corrected on the next periodic force-reapply (`ForceReapplyInterval`, default 10 minutes). To trigger correction sooner, also strip `lynq.sh/applied-hash`:
+
+```bash
+kubectl annotate <kind>/<name> -n <ns> lynq.sh/applied-hash- --overwrite
+```
+
 ## Stuck Finalizer
 
 **Symptom:** LynqNode stuck in `Terminating`.

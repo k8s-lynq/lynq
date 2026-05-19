@@ -68,24 +68,26 @@ skipOnDependencyFailure: true        # Skip this resource if any dependency fail
 # Optional — lifecycle policies (all have defaults)
 creationPolicy: WhenNeeded           # WhenNeeded | Once
 deletionPolicy: Delete               # Delete | Retain
-conflictPolicy: Stuck                # Stuck | Force
+conflictPolicy: Stuck                # Stuck | Force  (SSA-only — no effect on merge/replace)
 patchStrategy: apply                 # apply | merge | replace
 
 # Optional — readiness
 waitForReady: true                   # Wait for resource ready condition (default: true)
 timeoutSeconds: 300                  # Readiness timeout in seconds (default: 300, max: 3600)
+                                     # Measured from lynq.sh/apply-start-time annotation
+                                     # (preserved across reconciles when spec is unchanged)
 ```
 
 ### Policy defaults
 
 All policies default to the safest option. Only specify what differs:
 
-| Policy | Default | Options |
-|--------|---------|---------|
-| `creationPolicy` | `WhenNeeded` | `WhenNeeded`, `Once` |
-| `deletionPolicy` | `Delete` | `Delete`, `Retain` |
-| `conflictPolicy` | `Stuck` | `Stuck`, `Force` |
-| `patchStrategy` | `apply` | `apply`, `merge`, `replace` |
+| Policy | Default | Options | Notes |
+|--------|---------|---------|-------|
+| `creationPolicy` | `WhenNeeded` | `WhenNeeded`, `Once` | |
+| `deletionPolicy` | `Delete` | `Delete`, `Retain` | |
+| `conflictPolicy` | `Stuck` | `Stuck`, `Force` | `Force` is SSA-only; ignored by `merge` / `replace` |
+| `patchStrategy` | `apply` | `apply`, `merge`, `replace` | `apply` (SSA) is the only strategy that preserves fields owned by other controllers |
 
 → [Policies reference](policies.md) for detailed behavior.
 

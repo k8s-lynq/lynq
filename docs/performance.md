@@ -8,13 +8,17 @@ Practical optimization strategies for scaling Lynq to hundreds of nodes.
 
 ## Understanding Performance
 
-Lynq uses three reconciliation layers:
+Lynq uses four reconciliation layers:
 
-1. **Event-Driven (Immediate)**: Reacts to resource changes instantly
-2. **Periodic (30 seconds)**: Fast status updates and drift detection
-3. **Database Sync (Configurable)**: Syncs node data at defined intervals
+1. **Event-Driven (Immediate)**: Reacts to spec or non-`lynq.sh/*` annotation changes on watched child resources via `Owns()` watches, and to LynqNode CR changes.
+2. **Periodic (30 seconds)**: Refreshes child-resource status into LynqNode status (so `readyResources` / `failedResources` reflect cluster reality quickly).
+3. **Force-Reapply (`ForceReapplyInterval`, default 10 minutes)**: Per-LynqNode periodic resync that bypasses the per-resource skip check and re-applies every child resource unconditionally. This is Lynq's drift-correction backstop.
+4. **Database Sync (Configurable)**: Syncs node data at defined intervals (default: 1 minute).
 
-This architecture means drift is corrected within 30 seconds of detection, database changes are picked up at the configured `syncInterval` (default: 1 minute), and resource changes trigger immediate reconciliation.
+Drift correction operates on two channels:
+
+- **Immediate (watch-driven)** — external mutations that bump `metadata.generation` or alter the `lynq.sh/applied-hash` annotation are caught on the next reconcile cycle (sub-30s typical).
+- **~10 minute (periodic force-reapply)** — external mutations that preserved `applied-hash` are caught on the next `ForceReapplyInterval`-gated cycle. This trades a longer correction window for a structurally race-free apply path (no post-apply MergePatch).
 
 ## Configuration Tuning
 
@@ -140,15 +144,20 @@ spec:
 
 ### Resource Limits
 
-Quick reference based on real benchmark data (5 nodes: 0–5 m CPU / 10–60 MB RAM; 220 nodes: 500–600 m CPU / 100–140 MB RAM):
+Quick reference based on real benchmark data:
+
+- 5 nodes: **0 – 5 m** CPU / 10 – 60 MB RAM
+- **300+ nodes: < 100 m CPU / < 120 MB RAM** — annotation-driven skip path eliminates the per-reconcile API-write cost; the vast majority of reconciles are no-op (hash match ⇒ skip)
 
 | Node count | CPU request | CPU limit | Memory request | Memory limit |
 |-----------|------------|-----------|----------------|--------------|
-| < 50 | `50m` | `200m` | `64Mi` | `128Mi` |
-| 50–200 | `200m` | `500m` | `128Mi` | `256Mi` |
-| 200–500 | `500m` | `1000m` | `256Mi` | `512Mi` |
-| 500–1000 | `1000m` | `2000m` | `512Mi` | `1Gi` |
-| 1000+ | `2000m` | `4000m` | `1Gi` | `2Gi` |
+| < 50 | `25m` | `100m` | `64Mi` | `128Mi` |
+| 50–200 | `50m` | `200m` | `96Mi` | `192Mi` |
+| 200–500 | `100m` | `300m` | `128Mi` | `256Mi` |
+| 500–1000 | `200m` | `500m` | `256Mi` | `512Mi` |
+| 1000+ | `500m` | `1000m` | `512Mi` | `1Gi` |
+
+CPU is bursty: steady-state is near-idle, with brief spikes during periodic force-reapply (every `ForceReapplyInterval`, default 10 min) and template-change events. Memory is stable once the controller-runtime informer cache warms up.
 
 For the explanation of *why* resources scale this way (cache model, reconciliation burst pattern, concurrency trade-offs), see [Resource Sizing](resource-sizing.md).
 
@@ -328,17 +337,19 @@ kubectl edit deployment -n lynq-system lynq-controller-manager
 ### Symptom: Memory Growth
 
 **Possible causes:**
-1. Too many cached resources
-2. Large template outputs
+1. Controller-runtime informer caches scale with total watched-resource count (12 native kinds × cluster-wide scope) — proportional to node count and template breadth
+2. Large rendered template outputs held briefly during reconcile
 3. Memory leak (file an issue)
+
+Note: Lynq's apply path itself holds **no in-memory per-resource cache** — skip decisions read the `lynq.sh/applied-hash` annotation on each live resource. Restarting the operator does not free any Lynq-specific cache.
 
 **Solution:**
 ```bash
-# Restart operator to clear cache
-kubectl rollout restart deployment -n lynq-system lynq-controller-manager
-
 # Monitor memory over time
 kubectl top pods -n lynq-system --watch
+
+# If growth correlates with node count, tune watch scope or shard concurrency
+#   --node-concurrency=N  (lower = lower steady-state memory)
 ```
 
 ## Best Practices Summary

@@ -248,6 +248,20 @@ sequenceDiagram
 - **Flux State**: Stored in Kubernetes CRs (GitRepository, Kustomization status)
 - **No Local State**: Flux is stateless, can be redeployed without data loss
 
+### Co-Management Rules (Lynq + Flux on the same resource)
+
+When Lynq and Flux apply to the same resource, follow these rules to avoid drift fights:
+
+1. **Use `patchStrategy: apply` (SSA)** on Lynq's template. Lynq's `fieldManager` is `lynq-operator`; Flux's Kustomization controller uses its own field manager. SSA preserves each manager's owned fields automatically.
+2. **Never delete Lynq's tracking annotations from a Flux-managed manifest.** The following are Lynq-owned and must not be stripped or overridden by Flux Kustomization:
+   - `lynq.sh/applied-hash` — removing this triggers a re-apply on every reconcile.
+   - `lynq.sh/apply-start-time` — removing this resets the readiness-timeout clock.
+   - `lynq.sh/deletion-policy`, `lynq.sh/node`, `lynq.sh/node-namespace` — internal tracking.
+3. **Partition fields explicitly.** Decide which controller owns which fields and reflect that in templates. For fields you intentionally cede to Flux, list them in Lynq's `ignoreFields` so Lynq preserves the existing live value instead of asserting its own.
+4. **Avoid `patchStrategy: replace`** on co-managed resources — it wipes every field not in Lynq's template, including Flux-added labels/annotations and any other manager's spec fields, on every apply.
+
+If you see oscillation (Flux and Lynq alternately reverting each other), check `kubectl get <resource> -o yaml --show-managed-fields` to see which manager owns the disputed field, then adjust ownership boundaries in the templates.
+
 ## Advanced Examples
 
 ### Example 1: Helm Chart Deployment per Node

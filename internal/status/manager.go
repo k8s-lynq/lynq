@@ -312,6 +312,11 @@ func (m *Manager) applyUpdate(ctx context.Context, update *StatusUpdate) error {
 			statusChanged = true
 		}
 
+		if update.LastFullReconcileAt != nil {
+			node.Status.LastFullReconcileAt = update.LastFullReconcileAt
+			statusChanged = true
+		}
+
 		// Update conditions
 		for _, cond := range update.Conditions {
 			if m.updateCondition(&node.Status, cond) {

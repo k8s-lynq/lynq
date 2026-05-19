@@ -2097,6 +2097,24 @@ spec:
                 description: FailedResources is the number of resources that failed
                 format: int32
                 type: integer
+              lastFullReconcileAt:
+                description: |-
+                  LastFullReconcileAt is the baseline timestamp used to schedule the next
+                  periodic force-reapply (drift-correction resync). The LynqNode controller
+                  compares `time.Since(LastFullReconcileAt)` against `ForceReapplyInterval`
+                  (default 10 minutes) and, when the interval has elapsed, bypasses the
+                  apply-skip check and re-applies every child resource unconditionally.
+                  External edits that preserve the lynq.sh/applied-hash annotation on a
+                  child resource will not be caught by the annotation-only skip path; the
+                  next force-reapply cycle corrects them.
+
+                  A nil value means the controller has not yet established a baseline for
+                  this LynqNode (brand-new node, or freshly restarted controller observing
+                  the node for the first time). The controller treats nil as "stamp `now`
+                  as the baseline and defer the first force by one full interval". Eagerly
+                  forcing on nil would cause a re-apply storm on every controller restart.
+                format: date-time
+                type: string
               observedGeneration:
                 description: ObservedGeneration is the generation observed by the
                   controller

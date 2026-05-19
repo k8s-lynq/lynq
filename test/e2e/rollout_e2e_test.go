@@ -1120,6 +1120,11 @@ spec:
 
 					// Assert no violations occurred during the monitoring period
 					// maxViolations should be 1 (only 1 Deployment should have started/be rolling at any time)
+					if maxViolations > 1 {
+						dumpSlowPodDebugState(formName, []string{
+							"slow-pod-node-1", "slow-pod-node-2", "slow-pod-node-3",
+						})
+					}
 					Expect(maxViolations).To(BeNumerically("<=", 1),
 						"maxSkew=1 violation detected! Multiple updates started or rolling simultaneously:\n%s",
 						strings.Join(violationDetails, "\n"))
@@ -1367,4 +1372,42 @@ func containsViolation(violations []string, violation string) bool {
 		}
 	}
 	return false
+}
+
+// dumpSlowPodDebugState prints LynqNode/Deployment/managedFields/controller-logs/events
+// so that maxSkew violations in CI are debuggable from the artifact alone. It is
+// intentionally only invoked on failure to keep happy-path output quiet.
+func dumpSlowPodDebugState(formName string, uids []string) {
+	writeDebug := func(label string, cmd *exec.Cmd) {
+		By(label)
+		if out, err := utils.Run(cmd); err == nil {
+			_, _ = fmt.Fprintln(GinkgoWriter, out)
+		} else {
+			_, _ = fmt.Fprintf(GinkgoWriter, "%s failed: %v\n", label, err)
+		}
+	}
+
+	for _, uid := range uids {
+		nodeName := fmt.Sprintf("%s-%s", uid, formName)
+		deployName := uid + "-nginx"
+
+		writeDebug(fmt.Sprintf("=== DEBUG: LynqNode %s ===", nodeName),
+			exec.Command("kubectl", "get", "lynqnode", nodeName, "-n", policyTestNamespace, "-o", "yaml"))
+		// Show managed-fields so we can see who owns which annotations (SSA field manager churn
+		// is one suspected cause of repeated Deployment generation bumps).
+		writeDebug(fmt.Sprintf("=== DEBUG: Deployment %s (with managedFields) ===", deployName),
+			exec.Command("kubectl", "get", "deployment", deployName, "-n", policyTestNamespace,
+				"-o", "yaml", "--show-managed-fields=true"))
+		writeDebug(fmt.Sprintf("=== DEBUG: ReplicaSets for app=%s ===", deployName),
+			exec.Command("kubectl", "get", "rs", "-n", policyTestNamespace, "-l", "app="+deployName, "-o", "wide"))
+		writeDebug(fmt.Sprintf("=== DEBUG: Pods app=%s ===", deployName),
+			exec.Command("kubectl", "get", "pods", "-n", policyTestNamespace, "-l", "app="+deployName, "-o", "wide"))
+		writeDebug(fmt.Sprintf("=== DEBUG: Events for %s ===", nodeName),
+			exec.Command("kubectl", "get", "events", "-n", policyTestNamespace,
+				"--field-selector", "involvedObject.name="+nodeName, "--sort-by=.lastTimestamp"))
+	}
+
+	writeDebug("=== DEBUG: Recent controller logs (last 400 lines) ===",
+		exec.Command("kubectl", "logs", "-n", "lynq-system",
+			"deployment/lynq-controller-manager", "--tail=400"))
 }

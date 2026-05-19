@@ -1223,7 +1223,7 @@ func (r *LynqHubReconciler) isNodeResourcesActuallyReady(ctx context.Context, no
 		}
 
 		switch kind {
-		case "Deployment":
+		case resourceKindDeployment:
 			var deploy appsv1.Deployment
 			if err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &deploy); err != nil {
 				if errors.IsNotFound(err) {
