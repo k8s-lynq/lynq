@@ -350,9 +350,11 @@ While ignored fields won't trigger reconciliation, monitor them separately:
 
 ```promql
 # Alert if replicas drift significantly from template
+# Compare cluster state against the desired replicas value carried in the
+# rendered LynqNode spec (kube-state-metrics on Deployments + an exporter
+# that surfaces the LynqForm's templated replica count).
 abs(
-  kube_deployment_spec_replicas -
-  tenant_template_spec_replicas
+  kube_deployment_spec_replicas - 3
 ) > 10
 ```
 

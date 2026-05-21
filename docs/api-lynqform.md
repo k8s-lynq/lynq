@@ -42,6 +42,7 @@ spec:
   podDisruptionBudgets: []
   networkPolicies: []
   horizontalPodAutoscalers: []
+  namespaces: []                     # Cluster-scoped; tracked via labels (no ownerReference)
   manifests: []                      # Raw unstructured resources (CRDs, custom kinds)
 ```
 
@@ -165,6 +166,10 @@ status:
   - type: Valid
     status: "True" | "False"
     reason: ValidationSucceeded | ValidationFailed
+    message: string
+  - type: Applied
+    status: "True" | "False"
+    reason: string
     message: string
 ```
 

@@ -249,7 +249,7 @@ For each resource in the LynqForm:
 
 ### 3. Resource Application
 
-The rendered resource is applied to Kubernetes using Server-Side Apply with `fieldManager: lynq`.
+The rendered resource is applied to Kubernetes using Server-Side Apply with `fieldManager: lynq-operator`.
 
 ---
 

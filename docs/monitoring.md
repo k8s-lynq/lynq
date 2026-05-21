@@ -64,16 +64,12 @@ kubectl get servicemonitor -n lynq-system
 
 ### Grafana Dashboard
 
-Import `config/monitoring/grafana-dashboard.json` via **Dashboards → Import** in the Grafana UI. Select your Prometheus datasource. The dashboard includes 10 panels:
+Import `config/monitoring/grafana-dashboard.json` via **Dashboards → Import** in the Grafana UI. Select your Prometheus datasource. The dashboard ships 17 panels grouped into four categories:
 
-1. Reconciliation Duration (P50 / P95 / P99)
-2. Reconciliation Rate (success vs error)
-3. Error Rate gauge
-4. Total Desired / Ready / Failed LynqNodes
-5. Resource Counts by LynqNode
-6. Hub Health table
-7. Apply Rate by resource kind
-8. Work Queue Depth
+- **Top-line stat panels**: Total Desired / Ready / Failed Nodes, Total Conflicted Resources
+- **Reconciliation health**: Reconciliation Duration percentiles, Reconciliation Rate, Error Rate, LynqNode Ready Status, Degraded Nodes
+- **Resource & conflict breakdowns**: Resource Counts by Node and Total, Conflicted Resources by Node and Total, Conflicts Rate by Node
+- **Hub & runtime internals**: Hub Health, Apply Rate by Kind, Work Queue Depth
 
 ## Metrics Catalog
 

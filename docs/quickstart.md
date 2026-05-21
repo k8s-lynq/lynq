@@ -163,17 +163,19 @@ kubectl get lynqnodes -n lynq-system
 kubectl get deployments,services -n lynq-test -l lynq.sh/node
 
 # 3. Live lifecycle: insert a row → resource appears within 30s
+# The deploy-mysql.sh script seeds the `tenant_registry.tenants` table
+# (default; override via MYSQL_DATABASE).
 kubectl exec -it deployment/mysql -n lynq-test -- \
-  mysql -u root -p"$(kubectl get secret mysql-root-password -n lynq-test -o jsonpath='{.data.password}' | base64 -d)" \
-  -e "INSERT INTO nodes.node_configs (node_id, node_url, is_active, subscription_plan) VALUES ('delta-co', 'https://delta.example.com', 1, 'starter');"
+  mysql -u root -p"$(kubectl get secret mysql-credentials -n lynq-test -o jsonpath='{.data.password}' | base64 -d)" \
+  -e "INSERT INTO tenant_registry.tenants (uid, host_or_url, activate, deploy_image, plan_id) VALUES ('delta-co', 'https://delta.example.com', TRUE, 'nginx:stable', 'starter');"
 
 sleep 35
 kubectl get lynqnode delta-co-test-template -n lynq-system
 
 # 4. Deactivate → resources clean up within 30s
 kubectl exec -it deployment/mysql -n lynq-test -- \
-  mysql -u root -p"$(kubectl get secret mysql-root-password -n lynq-test -o jsonpath='{.data.password}' | base64 -d)" \
-  -e "UPDATE nodes.node_configs SET is_active = 0 WHERE node_id = 'delta-co';"
+  mysql -u root -p"$(kubectl get secret mysql-credentials -n lynq-test -o jsonpath='{.data.password}' | base64 -d)" \
+  -e "UPDATE tenant_registry.tenants SET activate = FALSE WHERE uid = 'delta-co';"
 
 sleep 35
 kubectl get lynqnode delta-co-test-template -n lynq-system  # Not found
@@ -187,12 +189,12 @@ kubectl get pods -n cert-manager
 kubectl logs -n lynq-system -l control-plane=controller-manager
 ```
 
-**Nodes not created** — check the hub sync and confirm `is_active = 1` in the database:
+**Nodes not created** — check the hub sync and confirm `activate = TRUE` in the database:
 ```bash
 kubectl get lynqhub test-hub -n lynq-system -o yaml
 kubectl exec -it deployment/mysql -n lynq-test -- \
   mysql -u node_reader -p"$(kubectl get secret mysql-credentials -n lynq-test -o jsonpath='{.data.password}' | base64 -d)" \
-  -e "SELECT node_id, is_active FROM nodes.node_configs;"
+  -e "SELECT uid, activate FROM tenant_registry.tenants;"
 ```
 
 **Resources missing** — inspect the LynqNode status for failures:

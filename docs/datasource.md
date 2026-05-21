@@ -45,7 +45,7 @@ spec:
 | `passwordRef` | Secret containing the password | — |
 | `database` | Database name | — |
 | `table` | Table or view name | — |
-| `syncInterval` | Poll frequency (`30s`, `1m`, `5m`) | `1m` |
+| `syncInterval` | Poll frequency (`30s`, `1m`, `5m`) | `30s` |
 
 **Kubernetes Secret:**
 

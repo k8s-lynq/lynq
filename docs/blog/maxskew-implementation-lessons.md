@@ -27,7 +27,7 @@ In the RecordOps pattern, a single LynqForm (template) applies to hundreds or th
 
 ```yaml
 # What if this single template applies to hundreds of nodes?
-apiVersion: lynq.sh/v1
+apiVersion: operator.lynq.sh/v1
 kind: LynqForm
 spec:
   deployments:
@@ -57,11 +57,13 @@ And if there's a bug in the new version, you have no time to react. By the time 
 Just as Kubernetes Deployments use `maxSurge` and `maxUnavailable` to control rolling updates, Lynq uses `maxSkew` to limit the number of nodes updating concurrently.
 
 ```yaml
-apiVersion: lynq.sh/v1
-kind: LynqHub
+apiVersion: operator.lynq.sh/v1
+kind: LynqForm
 spec:
+  hubId: production-hub
   rollout:
     maxSkew: 10  # Update at most 10 nodes simultaneously
+  # ... resource arrays
 ```
 
 The implementation logic is simple: only start the next node update when the current updating node count is below maxSkew. This is essentially a sliding window approach.
@@ -279,7 +281,7 @@ Asynchronous behavior, timing issues, and multi-component interactions are hard 
 Deployment, StatefulSet, and DaemonSet have standardized status fields provided by Kubernetes. But what about Custom Resources (CRs)?
 
 ```yaml
-apiVersion: lynq.sh/v1
+apiVersion: operator.lynq.sh/v1
 kind: LynqForm
 spec:
   manifests:
@@ -321,8 +323,9 @@ Currently, Lynq treats CRs as "Apply success = Ready". But this is risky. Applyi
 The simplest approach is to enforce a minimum delay between node updates:
 
 ```yaml
-apiVersion: lynq.sh/v1
-kind: LynqHub
+# Hypothetical future API — not yet implemented
+apiVersion: operator.lynq.sh/v1
+kind: LynqForm
 spec:
   rollout:
     maxSkew: 10
@@ -338,7 +341,8 @@ The downside is clear: even resources that only need 10 seconds must wait 60 sec
 Let users define their own Ready detection logic:
 
 ```yaml
-apiVersion: lynq.sh/v1
+# Hypothetical future API — not yet implemented
+apiVersion: operator.lynq.sh/v1
 kind: LynqForm
 spec:
   manifests:

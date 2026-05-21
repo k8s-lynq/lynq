@@ -44,11 +44,18 @@ Same-namespace resources with `deletionPolicy: Delete` (the default) use Kuberne
 
 ### Annotations Set on LynqNode CRs
 
+The LynqHub controller stamps these annotations on every LynqNode CR it creates. The LynqNode controller reads them when rendering templates.
+
 | Annotation | Value | Purpose |
 |-----------|-------|---------|
-| `lynq.sh/uid` | Row UID | Template variable |
-| `lynq.sh/activate` | `"true"`/`"false"` | Template variable |
-| `lynq.sh/<key>` | Column value | One entry per `extraValueMappings` key |
+| `lynq.sh/hubId` | LynqHub name | Source hub for this node |
+| `lynq.sh/activate` | `"true"`/`"false"` | Activation column value (string form) |
+| `lynq.sh/hostOrUrl` | URL/host column | Deprecated `.hostOrUrl` template variable (removed in v1.3.0) |
+| `lynq.sh/extra` | JSON-encoded object | All `extraValueMappings` keys/values packed into a single annotation |
+| `lynq.sh/template-generation` | int (from `LynqForm.metadata.generation`) | Used by rollout tracking to detect template changes |
+| `lynq.sh/rollout-update-start` | RFC3339 timestamp | Stamped each time the hub re-renders the node spec |
+
+(The `.uid` template variable comes from the LynqNode's `lynq.sh/uid` **label**, not an annotation.)
 
 ---
 
@@ -183,7 +190,7 @@ The LynqNode controller uses two watch mechanisms:
 | `Owns()` | Same namespace | Any generation or annotation change |
 | `Watches()` (label selector) | All namespaces | Generation or annotation change on labeled resources |
 
-**Smart filtering:** Both watches use predicates that filter out status-only updates (no `generation` or `resourceVersion` change). This avoids unnecessary reconciliation when, for example, a Deployment updates its `status.availableReplicas`.
+**Smart filtering:** Both watches use a predicate that fires on (a) `metadata.generation` changes, (b) annotation changes outside the `lynq.sh/*` namespace, and (c) targeted status fields needed for real-time readiness propagation — `availableReplicas` / `readyReplicas` / conditions on Deployments, StatefulSets, DaemonSets, Jobs, the load-balancer status on Ingresses, and `currentReplicas` / `desiredReplicas` on HPAs. Updates that don't touch any of those (pure `resourceVersion` bumps, internal `lynq.sh/*` annotation rewrites, status fields on resource types not enumerated above) are filtered.
 
 **Requeue interval:** In addition to event-driven reconciliation, LynqNodes are requeued every 30 seconds to pick up status changes in child resources (e.g., a Deployment becoming ready).
 

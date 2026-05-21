@@ -172,8 +172,9 @@ kubectl apply -f config/samples/
 kubectl get lynqnodes --watch
 
 # Terminal 3: View database changes
+# deploy-mysql.sh seeds tenant_registry.tenants (override via MYSQL_DATABASE).
 kubectl exec -it deployment/mysql -n lynq-test -- \
-  mysql -u node_reader -p nodes -e "SELECT * FROM node_configs;"
+  mysql -u node_reader -p tenant_registry -e "SELECT * FROM tenants;"
 ```
 
 ## Debugging
@@ -281,16 +282,16 @@ kubectl get deployments,services -l lynq.sh/node
 
 # 5. Test lifecycle: Add node
 kubectl exec -it deployment/mysql -n lynq-test -- \
-  mysql -u root -p nodes -e \
-  "INSERT INTO node_configs VALUES ('delta-co', 'https://delta.example.com', 1, 'enterprise');"
+  mysql -u root -p tenant_registry -e \
+  "INSERT INTO tenants (uid, host_or_url, activate, deploy_image, plan_id) VALUES ('delta-co', 'https://delta.example.com', TRUE, 'nginx:stable', 'enterprise');"
 
 # Wait 30s, then verify
 kubectl get lynqnode delta-co-test-template
 
 # 6. Test lifecycle: Deactivate node
 kubectl exec -it deployment/mysql -n lynq-test -- \
-  mysql -u root -p nodes -e \
-  "UPDATE node_configs SET is_active = 0 WHERE node_id = 'acme-corp';"
+  mysql -u root -p tenant_registry -e \
+  "UPDATE tenants SET activate = FALSE WHERE uid = 'acme-corp';"
 
 # Wait 30s, then verify deletion
 kubectl get lynqnode acme-corp-test-template
@@ -332,10 +333,10 @@ watch kubectl get lynqnode acme-corp-test-template -o yaml
 Create aliases:
 
 ```bash
-alias mysql-test='kubectl exec -it deployment/mysql -n lynq-test -- mysql -u node_reader -p$(kubectl get secret mysql-credentials -n lynq-test -o jsonpath="{.data.password}" | base64 -d) nodes'
+alias mysql-test='kubectl exec -it deployment/mysql -n lynq-test -- mysql -u node_reader -p$(kubectl get secret mysql-credentials -n lynq-test -o jsonpath="{.data.password}" | base64 -d) tenant_registry'
 
 # Then use:
-mysql-test -e "SELECT * FROM node_configs;"
+mysql-test -e "SELECT * FROM tenants;"
 ```
 
 ### 5. Fast Context Switching
@@ -380,7 +381,7 @@ vim internal/controller/lynqhub_controller.go
 ./scripts/deploy-to-minikube.sh
 
 # 3. Change database and watch sync
-mysql-test -e "UPDATE node_configs SET subscription_plan = 'premium' WHERE node_id = 'acme-corp';"
+mysql-test -e "UPDATE tenants SET plan_id = 'premium' WHERE uid = 'acme-corp';"
 
 # 4. Verify LynqNode CR updated
 kubectl get lynqnode acme-corp-test-template -o yaml | grep planId

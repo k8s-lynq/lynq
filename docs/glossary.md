@@ -28,7 +28,7 @@ Quick-reference definitions. For deeper explanations, follow the linked pages.
 
 **ConflictPolicy** — Per-resource policy controlling behavior when SSA detects a field owner conflict. `Stuck` (default) stops reconciliation and marks the node Degraded; `Force` takes ownership with `force=true`. → [Policies](policies.md)
 
-**CreationPolicy** — Per-resource policy controlling update behavior. `WhenNeeded` (default) re-applies on every reconcile; `Once` creates the resource once and never updates it again. → [Policies](policies.md)
+**CreationPolicy** — Per-resource policy controlling update behavior. `WhenNeeded` (default) re-applies only when the rendered spec changes (and during periodic drift-correction); `Once` creates the resource once and never updates it again. → [Policies](policies.md)
 
 **CRD (Custom Resource Definition)** — Kubernetes extension that adds new resource types. Lynq installs three: `lynqhubs.operator.lynq.sh`, `lynqforms.operator.lynq.sh`, `lynqnodes.operator.lynq.sh`.
 
@@ -54,7 +54,7 @@ Quick-reference definitions. For deeper explanations, follow the linked pages.
 
 ## F
 
-**fieldManager** — SSA identifier marking which controller owns which fields. Lynq uses `lynq` as its field manager. Other controllers retain ownership of their own fields.
+**fieldManager** — SSA identifier marking which controller owns which fields. Lynq uses `lynq-operator` as its field manager. Other controllers retain ownership of their own fields.
 
 **finalizer** — Kubernetes mechanism preventing resource deletion until cleanup completes. Lynq adds `lynqnode.operator.lynq.sh/finalizer` to every LynqNode CR to ensure managed resources are cleaned up before the CR is removed.
 
@@ -135,7 +135,7 @@ Quick-reference definitions. For deeper explanations, follow the linked pages.
 
 **skipOnDependencyFailure** — Boolean field on `TResource` (default: `true`). When `true`, a resource is skipped if any of its dependencies failed. When `false`, it's applied regardless.
 
-**syncInterval** — LynqHub field setting the database poll frequency. Format: Go duration (`30s`, `1m`, `5m`). Default: `1m`. → [Datasource](datasource.md)
+**syncInterval** — LynqHub field setting the database poll frequency. Format: Go duration (`30s`, `1m`, `5m`). Default: `30s`. → [Datasource](datasource.md)
 
 ---
 

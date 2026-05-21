@@ -45,8 +45,10 @@ spec:
 kubectl apply -f updated-lynqform.yaml
 
 # Force reconciliation on all nodes for this form
-kubectl get lynqnodes -n lynq-system -l lynq.sh/form=my-form -o name | \
-  xargs -I{} kubectl annotate {} -n lynq-system \
+# (LynqNode has no lynq.sh/form label; filter by spec.templateRef instead.)
+kubectl get lynqnodes -n lynq-system -o json | \
+  jq -r '.items[] | select(.spec.templateRef == "my-form") | .metadata.name' | \
+  xargs -I{} kubectl annotate lynqnode {} -n lynq-system \
     lynq.sh/force-reconcile=$(date +%s) --overwrite
 ```
 

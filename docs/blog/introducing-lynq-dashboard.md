@@ -40,8 +40,8 @@ kubectl get lynqhubs -A
 # Find Forms referencing this Hub
 kubectl get lynqforms -A -o json | jq '.items[] | select(.spec.hubId == "my-hub")'
 
-# Find Nodes created from this Form
-kubectl get lynqnodes -A -l lynq.sh/form=my-form
+# Find Nodes created from this Form (the form name lives on spec.templateRef)
+kubectl get lynqnodes -A -o json | jq '.items[] | select(.spec.templateRef == "my-form") | .metadata.name'
 ```
 
 To answer "What Forms are connected to this Hub, and what Nodes were created from them?" requires three commands.

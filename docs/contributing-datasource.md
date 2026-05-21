@@ -31,7 +31,7 @@ flowchart LR
     class MySQL,Postgres,Custom adapter
 ```
 
-The interface requires two methods: `FetchNodes` (query active rows) and `Close` (release connections). The MySQL adapter in `pkg/datasource/mysql/` is the canonical reference implementation.
+The interface requires two methods: `QueryNodes` (query active rows) and `Close` (release connections). The MySQL adapter in `internal/datasource/mysql.go` is the canonical reference implementation.
 
 ## Prerequisites
 
@@ -495,8 +495,7 @@ Update main datasource docs (`docs/datasource.md`):
 | Datasource | Status | Version | Guide |
 |------------|--------|---------|-------|
 | MySQL | ✅ Stable | v1.0+ | [MySQL Guide](#mysql-connection) |
-| PostgreSQL | ✅ Stable | v1.2+ | [PostgreSQL Guide](datasource-postgresql.md) |
-| [Yours] | ✅ Stable | v1.X+ | [[Yours] Guide](datasource-yours.md) |
+| [Yours] | ✅ Stable | vX.Y+ | [[Yours] Guide](datasource-yours.md) |
 ```
 
 ### Step 10: Update Release Documentation
@@ -508,7 +507,6 @@ Update relevant documentation files:
 ## Supported Datasources
 
 - ✅ MySQL 5.7+ / 8.0+
-- ✅ PostgreSQL 12+
 - ✅ [YourDatasource] X.X+
 ```
 

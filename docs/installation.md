@@ -84,17 +84,17 @@ kubectl describe pod -n lynq-system -l control-plane=controller-manager
 ### Resource Limits
 
 ```yaml
-# config/manager/manager.yaml
+# config/manager/manager.yaml (shipped defaults)
 resources:
   limits:
     cpu: 500m
-    memory: 512Mi
-  requests:
-    cpu: 100m
     memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
 ```
 
-Increase limits for clusters with many LynqNodes (100+).
+Increase memory before scaling beyond a few hundred LynqNodes. See [Resource Sizing](resource-sizing.md) for benchmarks and a CPU/memory model.
 
 ### Concurrency
 
@@ -123,7 +123,7 @@ helm upgrade lynq lynq/lynq --namespace lynq-system
 # or:
 kubectl set image -n lynq-system \
   deployment/lynq-controller-manager \
-  manager=ghcr.io/k8s-lynq/lynq:v1.2.0
+  manager=ghcr.io/k8s-lynq/lynq:v1.1.20
 ```
 
 To roll back:

@@ -28,8 +28,8 @@ spec:
       port: 3306                     # MySQL port (default: 3306)
       username: string               # Database username (required)
       passwordRef:
-        name: string                 # Kubernetes Secret name (required)
-        key: string                  # Secret key containing password (required)
+        name: string                 # Kubernetes Secret name (optional; omit for passwordless)
+        key: string                  # Secret key containing password
       database: string               # Database name (required)
       table: string                  # Table or view name (required)
     syncInterval: "1m"               # Poll frequency, e.g. 30s, 1m, 5m (required)
@@ -51,18 +51,18 @@ spec:
 | `host` | string | ✓ | MySQL hostname or IP address |
 | `port` | integer | | MySQL port (default: `3306`) |
 | `username` | string | ✓ | Database username |
-| `passwordRef.name` | string | ✓ | Kubernetes Secret name |
-| `passwordRef.key` | string | ✓ | Key within the Secret |
+| `passwordRef.name` | string | | Kubernetes Secret name (omit for passwordless connections) |
+| `passwordRef.key` | string | | Key within the Secret |
 | `database` | string | ✓ | Database name |
 | `table` | string | ✓ | Table or view to query |
 
 ### `spec.source.syncInterval`
 
-Duration string format: `<number><unit>` where unit is `s`, `m`, or `h`.
+Duration string format: `<number><unit>` where unit is `s`, `m`, or `h`. Defaults to `30s` when omitted.
 
 | Value | Meaning |
 |-------|---------|
-| `30s` | Every 30 seconds |
+| `30s` | Every 30 seconds (default) |
 | `1m` | Every minute (recommended for production) |
 | `5m` | Every 5 minutes (for large deployments) |
 
@@ -98,7 +98,6 @@ status:
   desired: int32                     # referencingTemplates × activeRows
   ready: int32                       # LynqNodes with Ready=True
   failed: int32                      # LynqNodes with reconciliation failures
-  lastSyncTime: timestamp            # Last successful database sync
   conditions:
   - type: Ready
     status: "True" | "False" | "Unknown"

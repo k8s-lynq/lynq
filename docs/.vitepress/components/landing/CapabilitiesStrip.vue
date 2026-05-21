@@ -13,11 +13,11 @@
 
 <script setup>
 const caps = [
-  { value: '15', label: 'resource types' },
+  { value: '16', label: 'resource types' },
   { value: '3', label: 'lifecycle policies' },
-  { value: 'MySQL & PostgreSQL', label: 'built-in datasources' },
+  { value: 'MySQL', label: 'built-in datasource' },
   { value: 'Kubernetes 1.28+', label: 'cluster requirement' },
-  { value: 'MIT', label: 'open source license' },
+  { value: 'Apache 2.0', label: 'open source license' },
 ]
 </script>
 

@@ -239,7 +239,7 @@ kubectl get lynqnodes -n lynq-system -w
 
 - **cert-manager must be installed** for TLS to work. Without it, the Ingress will be created but the certificate will never issue. For non-TLS previews, remove the `tls:` block and the cert-manager annotation.
 - **Image must be pushed before the INSERT** — Lynq will attempt to start the pod immediately. If the image doesn't exist yet, the pod will fail with `ImagePullBackOff` until it appears.
-- **`syncInterval: 30s` increases database query frequency** compared to the default 1 minute. For 100+ open PRs this is negligible, but factor it in if your database connection pool is small.
+- **`syncInterval: 30s`** matches the default cadence. If you tune it lower (e.g. `10s`) for faster PR-environment provisioning, factor in the increased database query rate when your connection pool is small.
 
 ## See Also
 

@@ -293,15 +293,15 @@ When a LynqForm template changes, Lynq reconciles all LynqNodes using that templ
 ### The Solution: `maxSkew`
 
 ```yaml
-apiVersion: lynq.sh/v1
-kind: LynqHub
+apiVersion: operator.lynq.sh/v1
+kind: LynqForm
 metadata:
-  name: production-hub
+  name: production-form
 spec:
+  hubId: production-hub
   rollout:
     maxSkew: 10  # Only 10 nodes updating at any time
-  source:
-    # ...
+  # ... resource arrays
 ```
 
 With `maxSkew: 10`, Lynq updates at most 10 nodes concurrently. It waits for each batch's Pods to reach Ready state before starting the next batch.

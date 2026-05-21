@@ -4,7 +4,7 @@ description: "Real-world Lynq patterns: custom domains, blue-green deployments, 
 
 # Advanced Use Cases
 
-Seven production-proven patterns. Each has a full guide with working YAML.
+Seven reference patterns. Each has a full guide with working YAML.
 
 ## Which Pattern Do I Need?
 

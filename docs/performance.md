@@ -13,7 +13,7 @@ Lynq uses four reconciliation layers:
 1. **Event-Driven (Immediate)**: Reacts to spec or non-`lynq.sh/*` annotation changes on watched child resources via `Owns()` watches, and to LynqNode CR changes.
 2. **Periodic (30 seconds)**: Refreshes child-resource status into LynqNode status (so `readyResources` / `failedResources` reflect cluster reality quickly).
 3. **Force-Reapply (`ForceReapplyInterval`, default 10 minutes)**: Per-LynqNode periodic resync that bypasses the per-resource skip check and re-applies every child resource unconditionally. This is Lynq's drift-correction backstop.
-4. **Database Sync (Configurable)**: Syncs node data at defined intervals (default: 1 minute).
+4. **Database Sync (Configurable)**: Syncs node data at defined intervals (default: 30 seconds).
 
 Drift correction operates on two channels:
 
@@ -33,7 +33,7 @@ metadata:
   name: my-hub
 spec:
   source:
-    syncInterval: 1m  # Default: 1 minute
+    syncInterval: 1m  # Default: 30 seconds
 ```
 
 **Recommendations:**

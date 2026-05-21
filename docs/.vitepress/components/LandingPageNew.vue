@@ -38,7 +38,6 @@
         <div class="float-item float-11 k8s"><code>CronJob</code></div>
         <div class="float-item float-12 k8s"><code>PVC</code></div>
         <div class="float-item float-13 k8s"><code>Namespace</code></div>
-        <div class="float-item float-14 db"><code>PostgreSQL</code></div>
       </div>
       <div class="cta-container">
         <div class="cta-content fade-up">

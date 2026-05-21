@@ -47,17 +47,19 @@ For more tuning options, see [Performance](performance.md).
 
 ## Resource Limits
 
+The shipped manifests and chart use conservative defaults:
+
 ```yaml
 resources:
   requests:
-    cpu: 200m
-    memory: 256Mi
+    cpu: 10m
+    memory: 64Mi
   limits:
-    cpu: 1000m
-    memory: 1Gi
+    cpu: 500m
+    memory: 128Mi
 ```
 
-These defaults suit clusters up to ~200 LynqNodes. For observed benchmarks, a sizing table, and a CPU/memory model, see [Resource Sizing](resource-sizing.md).
+Increase memory before scaling beyond a few hundred LynqNodes — the controller-runtime cache grows with total managed object count. For observed benchmarks, a sizing table, and a CPU/memory model, see [Resource Sizing](resource-sizing.md).
 
 ## Configuration by Topic
 

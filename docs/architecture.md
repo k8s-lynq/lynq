@@ -30,7 +30,7 @@ flowchart TB
         end
 
         subgraph Engine["Apply Engine"]
-            SSA["SSA Apply Engine<br/>(fieldManager: lynq)"]
+            SSA["SSA Apply Engine<br/>(fieldManager: lynq-operator)"]
         end
 
         subgraph Resources["Kubernetes Resources"]
@@ -90,7 +90,7 @@ sequenceDiagram
     participant TNC as LynqNode Controller
     participant SSA as SSA Engine
 
-    Note over DB,SSA: Hub Sync Cycle (default: every 1 minute)
+    Note over DB,SSA: Hub Sync Cycle (default: every 30 seconds)
 
     RC->>DB: SELECT * FROM nodes WHERE activate=TRUE
     DB-->>RC: Active node rows
@@ -126,7 +126,7 @@ sequenceDiagram
 
 ### LynqHub Controller
 
-Syncs the database on `spec.source.syncInterval` (default: 1m):
+Syncs the database on `spec.source.syncInterval` (default: 30s):
 
 1. Queries external datasource; filters rows where `activate` is truthy
 2. Calculates desired LynqNode set: `referencingForms × activeRows`
@@ -226,7 +226,7 @@ kubectl get all -A -l lynq.sh/orphaned=true
 
 ### Watch Predicates
 
-Lynq watches 12 resource types via `Owns()` (same-namespace) and `Watches()` (cross-namespace, label-based). Predicates filter out status-only updates — only generation or annotation changes trigger reconciliation.
+Lynq watches 12 resource types via `Owns()` (same-namespace) and `Watches()` (cross-namespace, label-based). The shared predicate fires on generation changes, non-`lynq.sh/*` annotation changes, and on a curated set of status fields needed for real-time readiness propagation (Deployment / StatefulSet / DaemonSet replica & condition counts, Job success/failure counts, Ingress load-balancer status, HPA current/desired replicas). Other status-only updates and internal `lynq.sh/*` annotation rewrites are filtered.
 
 ### Requeue Strategy
 

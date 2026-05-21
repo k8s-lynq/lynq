@@ -7,7 +7,7 @@ description: "Database boolean columns as infrastructure switches — flip a col
 Enabling a feature for 50 customers the traditional way means 50 Helm upgrades or 50 kubectl edits. With Lynq, a feature flag is a database column. Update the column and the infrastructure follows — resources appear for nodes where the flag is on, disappear when it's off.
 
 ::: tip Time to working
-~5 minutes to configure. Flag changes propagate within the hub's `syncInterval` (default: 1 minute).
+~5 minutes to configure. Flag changes propagate within the hub's `syncInterval` (default: 30 seconds).
 :::
 
 ## How It Works

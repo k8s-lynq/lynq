@@ -58,7 +58,7 @@ UPDATE nodes SET feature_ai_assistant = TRUE WHERE node_id = 'acme-corp';
 UPDATE deployments SET active_color = 'green' WHERE node_id = 'acme-corp';
 ```
 
-The cluster syncs within the hub's `syncInterval` (default: 1 minute). No new tooling, no context switching — operations your application already knows how to do.
+The cluster syncs within the hub's `syncInterval` (default: 30 seconds). No new tooling, no context switching — operations your application already knows how to do.
 
 ::: tip Combine IaD with GitOps
 Use GitOps for cluster-level infrastructure (CRDs, operators, system config) and Lynq for application-level nodes (per-customer stacks, per-device configs, ephemeral environments). They complement each other.

@@ -26,7 +26,7 @@ Examples: `30s`, `1m`, `2h`
 
 | Value | Behavior |
 |-------|----------|
-| `WhenNeeded` (default) | Create and re-apply on every reconcile |
+| `WhenNeeded` (default) | Create, then re-apply only when the rendered spec changes (annotation-based skip) or during periodic drift-correction |
 | `Once` | Create once; never update even if spec changes |
 
 ### DeletionPolicy

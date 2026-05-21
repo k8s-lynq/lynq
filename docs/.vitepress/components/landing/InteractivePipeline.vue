@@ -27,7 +27,7 @@
               </svg>
             </div>
             <div class="step-label">Database</div>
-            <div class="step-sublabel">MySQL / PostgreSQL</div>
+            <div class="step-sublabel">MySQL</div>
           </div>
 
           <!-- Connection 1 -->
@@ -170,7 +170,7 @@ const pipelineVisible = ref(false)
 const steps = [
   {
     title: 'Connect Your Database',
-    description: 'LynqHub polls your MySQL or PostgreSQL table at the configured syncInterval (default: 1 minute). Any row where the activate column is truthy gets a corresponding LynqNode CR. Existing infrastructure keeps running if the database goes temporarily offline.',
+    description: 'LynqHub polls your MySQL table at the configured syncInterval (default: 30 seconds). Any row where the activate column is truthy gets a corresponding LynqNode CR. Existing infrastructure keeps running if the database goes temporarily offline.',
     filename: 'lynqhub.yaml',
     code: `apiVersion: operator.lynq.sh/v1
 kind: LynqHub
