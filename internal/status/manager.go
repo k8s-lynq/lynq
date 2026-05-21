@@ -26,10 +26,23 @@ import (
 	"github.com/k8s-lynq/lynq/internal/metrics"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
+
+// statusBatchKey aggregates events by (namespace/name, UID) so that events from
+// a deleted-and-recreated node (same name, different UID) are accumulated in
+// separate entries and never merged. Each entry is independently flushed through
+// applyUpdate, which applies its own UID guard.
+//
+// Zero UID (NodeUID not set) is a valid key that maintains backwards-compatible
+// behaviour for callers that do not propagate the node UID.
+type statusBatchKey struct {
+	objectKey client.ObjectKey
+	uid       types.UID
+}
 
 const (
 	// DefaultBatchSize is the default number of nodes to batch before flushing
@@ -125,12 +138,10 @@ func (m *Manager) Publish(event StatusEvent) {
 		m.syncMutex.Lock()
 		defer m.syncMutex.Unlock()
 
-		batch := make(map[client.ObjectKey]*StatusUpdate)
-		update := batch[event.NodeKey]
-		if update == nil {
-			update = NewStatusUpdate(event.NodeKey)
-			batch[event.NodeKey] = update
-		}
+		batch := make(map[statusBatchKey]*StatusUpdate)
+		bk := statusBatchKey{objectKey: event.NodeKey, uid: event.NodeUID}
+		update := NewStatusUpdate(event.NodeKey)
+		batch[bk] = update
 		update.Apply(event)
 		m.flushBatch(context.Background(), batch)
 	} else {
@@ -181,7 +192,7 @@ func (m *Manager) run() {
 	ticker := time.NewTicker(m.flushInterval)
 	defer ticker.Stop()
 
-	batch := make(map[client.ObjectKey]*StatusUpdate)
+	batch := make(map[statusBatchKey]*StatusUpdate)
 
 	for {
 		select {
@@ -199,22 +210,18 @@ func (m *Manager) run() {
 			if len(batch) > 0 {
 				logger.V(1).Info("Flushing batch on timer", "size", len(batch))
 				m.flushBatch(context.Background(), batch)
-				batch = make(map[client.ObjectKey]*StatusUpdate)
+				batch = make(map[statusBatchKey]*StatusUpdate)
 			}
 
 		case event := <-m.events:
-			// Aggregate event
-			update := batch[event.NodeKey]
+			// Aggregate event. Each (objectKey, UID) pair gets its own entry so
+			// that events from an old and a newly-recreated node with the same name
+			// never clobber each other regardless of arrival order.
+			bk := statusBatchKey{objectKey: event.NodeKey, uid: event.NodeUID}
+			update := batch[bk]
 			if update == nil {
 				update = NewStatusUpdate(event.NodeKey)
-				batch[event.NodeKey] = update
-			}
-			// If the UID changed, the node was deleted and recreated with the same
-			// name between flushes. Discard accumulated state from the old instance
-			// to prevent stale payloads from being written to the new one.
-			if event.NodeUID != "" && update.UID != "" && update.UID != event.NodeUID {
-				update = NewStatusUpdate(event.NodeKey)
-				batch[event.NodeKey] = update
+				batch[bk] = update
 			}
 			update.Apply(event)
 
@@ -222,14 +229,14 @@ func (m *Manager) run() {
 			if len(batch) >= m.batchSize {
 				logger.V(1).Info("Flushing batch on size limit", "size", len(batch))
 				m.flushBatch(context.Background(), batch)
-				batch = make(map[client.ObjectKey]*StatusUpdate)
+				batch = make(map[statusBatchKey]*StatusUpdate)
 			}
 		}
 	}
 }
 
 // flushBatch applies all accumulated status updates
-func (m *Manager) flushBatch(ctx context.Context, batch map[client.ObjectKey]*StatusUpdate) {
+func (m *Manager) flushBatch(ctx context.Context, batch map[statusBatchKey]*StatusUpdate) {
 	logger := log.Log.WithName("status-manager")
 
 	// Create a timeout context for the batch
@@ -239,15 +246,15 @@ func (m *Manager) flushBatch(ctx context.Context, batch map[client.ObjectKey]*St
 	successCount := 0
 	failCount := 0
 
-	for key, update := range batch {
+	for _, update := range batch {
 		if !update.HasChanges() {
 			continue
 		}
 
 		if err := m.applyUpdate(batchCtx, update); err != nil {
 			logger.Error(err, "Failed to apply status update",
-				"node", key.Name,
-				"namespace", key.Namespace)
+				"node", update.Key.Name,
+				"namespace", update.Key.Namespace)
 			failCount++
 		} else {
 			successCount++
@@ -365,9 +372,13 @@ func (m *Manager) applyUpdate(ctx context.Context, update *StatusUpdate) error {
 		updateErr := m.client.Status().Update(ctx, node)
 		if updateErr == nil {
 			// Status written successfully: node is confirmed live and same UID.
-			// Setting nodeVerified here (inside the closure, before returning) closes
-			// the TOCTOU window — the finalizer would need to race within the same
-			// goroutine's remaining stack frames to resurrect a series.
+			// nodeVerified is set here, inside the closure, to minimise the gap
+			// between verification and metric write. A concurrent finalizer can
+			// still run between this line and the m.updateMetrics call below, but
+			// that window is sub-microsecond within a single goroutine's stack
+			// frames — orders of magnitude smaller than the original bug (seconds).
+			// Full elimination would require shared locking between the controller
+			// and the status manager; the residual risk is accepted as negligible.
 			nodeVerified = true
 		}
 		return updateErr

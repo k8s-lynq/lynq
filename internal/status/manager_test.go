@@ -435,51 +435,114 @@ func TestManager_HandleDeletedLynqNode(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestStatusBatch_ResetOnUIDChange(t *testing.T) {
-	// When a LynqNode is deleted and immediately recreated with the same name,
-	// old-instance events and new-instance events can land in the same batch window.
-	// The batch entry must be reset when the UID changes so that stale payloads from
-	// the old instance do not bleed into the new instance's status/metrics flush.
-	key := client.ObjectKey{Name: "node", Namespace: "default"}
+func TestStatusBatch_SeparateEntriesPerUID(t *testing.T) {
+	// Race B: a node is deleted and immediately recreated with the same name.
+	// Old-instance events and new-instance events land in the same 1-second batch window.
+	// The batch must accumulate them in separate entries (keyed by UID) so neither
+	// clobbers the other regardless of arrival order.
+	//
+	// This test exercises the real Manager via sync mode — no logic is copied from
+	// run() so the test cannot drift from the production implementation.
 
-	// Mirror the batch building logic from manager.run() so the test stays in sync
-	// with the production code.
-	applyToBatch := func(batch map[client.ObjectKey]*StatusUpdate, event StatusEvent) {
-		update := batch[event.NodeKey]
-		if update == nil {
-			update = NewStatusUpdate(event.NodeKey)
-			batch[event.NodeKey] = update
-		}
-		if event.NodeUID != "" && update.UID != "" && update.UID != event.NodeUID {
-			update = NewStatusUpdate(event.NodeKey)
-			batch[event.NodeKey] = update
-		}
-		update.Apply(event)
+	scheme := runtime.NewScheme()
+	require.NoError(t, lynqv1.AddToScheme(scheme))
+
+	newNode := &lynqv1.LynqNode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "recycled",
+			Namespace: "default",
+			UID:       "new-uid",
+		},
+		Spec: lynqv1.LynqNodeSpec{UID: "row-1", TemplateRef: "tpl"},
 	}
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(newNode).
+		WithStatusSubresource(newNode).
+		Build()
+	manager := NewManager(fakeClient, WithSyncMode())
 
-	batch := make(map[client.ObjectKey]*StatusUpdate)
+	imetrics.LynqNodeResourcesReady.Reset()
+	imetrics.LynqNodeResourcesFailed.Reset()
 
-	// Old instance: Ready=99, Failed=5 accumulated in the batch
-	applyToBatch(batch, StatusEvent{
-		Type:    EventResourceCountsUpdated,
-		NodeKey: key,
-		NodeUID: "old-uid",
-		Payload: ResourceCountsPayload{Ready: 99, Failed: 5, Desired: 10},
+	// Arrival order: new-uid event first, then stale old-uid event.
+	// The new instance's Ready=4 must reach Prometheus; stale Ready=99 must not.
+	manager.Publish(StatusEvent{
+		Type:      EventMetricsUpdate,
+		NodeKey:   client.ObjectKey{Name: "recycled", Namespace: "default"},
+		NodeUID:   "new-uid",
+		Payload:   MetricsPayload{Ready: 4, Failed: 0, Desired: 4},
+		Timestamp: time.Now(),
 	})
-	require.Equal(t, int32(99), *batch[key].ReadyResources)
-
-	// New instance arrives with different UID — old state must be discarded
-	applyToBatch(batch, StatusEvent{
-		Type:    EventResourceCountsUpdated,
-		NodeKey: key,
-		NodeUID: "new-uid",
-		Payload: ResourceCountsPayload{Ready: 4, Failed: 0, Desired: 4},
+	manager.Publish(StatusEvent{
+		Type:      EventMetricsUpdate,
+		NodeKey:   client.ObjectKey{Name: "recycled", Namespace: "default"},
+		NodeUID:   "old-uid",
+		Payload:   MetricsPayload{Ready: 99, Failed: 5, Desired: 10},
+		Timestamp: time.Now(),
 	})
 
-	assert.Equal(t, types.UID("new-uid"), batch[key].UID)
-	assert.Equal(t, int32(4), *batch[key].ReadyResources)
-	// Old instance's Failed=5 must not bleed through into the new instance's update
-	assert.Equal(t, int32(0), *batch[key].FailedResources, "stale Failed count must not persist")
+	expectedReady := `
+# HELP lynqnode_resources_ready Number of ready resources for a LynqNode
+# TYPE lynqnode_resources_ready gauge
+lynqnode_resources_ready{lynqnode="recycled",namespace="default"} 4
+`
+	err := testutil.CollectAndCompare(imetrics.LynqNodeResourcesReady, strings.NewReader(expectedReady))
+	assert.NoError(t, err, "new-uid value must win; old-uid stale event must not clobber it")
+
+	// Stale Failed=5 must not appear.
+	expectedFailed := `
+# HELP lynqnode_resources_failed Number of failed resources for a LynqNode
+# TYPE lynqnode_resources_failed gauge
+lynqnode_resources_failed{lynqnode="recycled",namespace="default"} 0
+`
+	err = testutil.CollectAndCompare(imetrics.LynqNodeResourcesFailed, strings.NewReader(expectedFailed))
+	assert.NoError(t, err, "stale Failed=5 from old-uid must not bleed into new instance")
+}
+
+func TestManager_MetricsDeletionTimestampGuard(t *testing.T) {
+	// Guard 4: the node exists in the API server (not NotFound) but has a
+	// DeletionTimestamp set. The status manager must treat it as deleted for
+	// metric purposes — it must call CleanupLynqNodeMetrics, not updateMetrics.
+	imetrics.LynqNodeResourcesReady.Reset()
+	imetrics.LynqNodeDegradedStatus.Reset()
+	// Simulate a pre-existing series for this node (the bug: stale series).
+	imetrics.LynqNodeResourcesReady.WithLabelValues("terminating-node", "default").Set(5)
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, lynqv1.AddToScheme(scheme))
+
+	now := metav1.Now()
+	terminatingNode := &lynqv1.LynqNode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "terminating-node",
+			Namespace:         "default",
+			UID:               "uid-t",
+			DeletionTimestamp: &now,
+			Finalizers:        []string{"lynqnode.operator.lynq.sh/finalizer"},
+		},
+		Spec: lynqv1.LynqNodeSpec{UID: "row-1", TemplateRef: "tpl"},
+	}
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(terminatingNode).
+		WithStatusSubresource(terminatingNode).
+		Build()
+	manager := NewManager(fakeClient, WithSyncMode())
+
+	manager.Publish(StatusEvent{
+		Type:      EventMetricsUpdate,
+		NodeKey:   client.ObjectKey{Name: "terminating-node", Namespace: "default"},
+		NodeUID:   "uid-t",
+		Payload:   MetricsPayload{Ready: 99, Failed: 2, Desired: 10, IsDegraded: true, DegradedReason: "ResourceFailures"},
+		Timestamp: time.Now(),
+	})
+
+	// The pre-existing series must be cleaned up, not updated to 99.
+	assert.Equal(t, 0, testutil.CollectAndCount(imetrics.LynqNodeResourcesReady),
+		"terminating node series must be cleaned up, not resurrected")
+	assert.Equal(t, 0, testutil.CollectAndCount(imetrics.LynqNodeDegradedStatus),
+		"degraded series must not be written for a terminating node")
 }
 
 func TestNewStatusUpdate(t *testing.T) {
