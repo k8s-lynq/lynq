@@ -175,6 +175,7 @@ func (m *Manager) PublishLastFullReconcileAt(node *lynqv1.LynqNode, timestamp me
 	m.Publish(StatusEvent{
 		Type:    EventLastFullReconcileAtUpdated,
 		NodeKey: client.ObjectKeyFromObject(node),
+		NodeUID: node.UID,
 		Payload: LastFullReconcileAtPayload{
 			Timestamp: timestamp,
 		},

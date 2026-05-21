@@ -266,7 +266,7 @@ func (m *Manager) flushBatch(ctx context.Context, batch map[client.ObjectKey]*St
 func (m *Manager) applyUpdate(ctx context.Context, update *StatusUpdate) error {
 	logger := log.Log.WithName("status-manager")
 
-	var nodeDeleted, uidMismatch bool
+	var nodeDeleted, uidMismatch, nodeVerified bool
 
 	// Update Kubernetes status
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -356,17 +356,29 @@ func (m *Manager) applyUpdate(ctx context.Context, update *StatusUpdate) error {
 
 		// Only call Update if something changed
 		if !statusChanged {
+			// Node is confirmed live and same UID; status is already current.
+			nodeVerified = true
 			return nil
 		}
 
 		// Update status subresource
-		return m.client.Status().Update(ctx, node)
+		updateErr := m.client.Status().Update(ctx, node)
+		if updateErr == nil {
+			// Status written successfully: node is confirmed live and same UID.
+			// Setting nodeVerified here (inside the closure, before returning) closes
+			// the TOCTOU window — the finalizer would need to race within the same
+			// goroutine's remaining stack frames to resurrect a series.
+			nodeVerified = true
+		}
+		return updateErr
 	})
 
-	// Only update metrics when the LynqNode we observed is the same instance
-	// that produced this event. Guards against two races:
-	//   nodeDeleted: flush-after-deletion — series resurrection prevention.
-	//   uidMismatch: same-name recreation — stale event must not touch the new instance.
+	// Gate metrics on which path we took:
+	//   uidMismatch  → stale event from a deleted-and-recreated node; do not touch new instance.
+	//   nodeDeleted  → node is gone or terminating; clean up to prevent series resurrection.
+	//   nodeVerified → node confirmed live, same UID, status written (or unchanged); safe to update.
+	//   none set     → retry loop returned a non-NotFound error; skip metrics to avoid
+	//                  writing stale values when the node's state is uncertain.
 	if update.Metrics != nil {
 		switch {
 		case uidMismatch:
@@ -374,7 +386,7 @@ func (m *Manager) applyUpdate(ctx context.Context, update *StatusUpdate) error {
 		case nodeDeleted:
 			// Prevent resurrection. The finalizer path already cleaned up, but idempotent.
 			metrics.CleanupLynqNodeMetrics(update.Key.Name, update.Key.Namespace)
-		default:
+		case nodeVerified:
 			m.updateMetrics(update.Key, update.Metrics)
 		}
 	}

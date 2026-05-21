@@ -18,6 +18,7 @@ package status
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func TestStatusUpdate_Apply(t *testing.T) {
@@ -601,4 +603,49 @@ lynqnode_resources_ready{lynqnode="my-node",namespace="default"} 4
 `
 	err := testutil.CollectAndCompare(imetrics.LynqNodeResourcesReady, strings.NewReader(expected))
 	assert.NoError(t, err, "matching UID should result in metrics being updated")
+}
+
+func TestManager_MetricsSkippedOnAPIError(t *testing.T) {
+	// When the status manager's Get call fails with a non-NotFound error (e.g. API
+	// server unavailable), neither nodeDeleted nor nodeVerified is set. The metrics
+	// dispatch must skip updateMetrics in that case to avoid writing stale values.
+	imetrics.LynqNodeResourcesReady.Reset()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, lynqv1.AddToScheme(scheme))
+
+	node := &lynqv1.LynqNode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "api-err-node",
+			Namespace: "default",
+			UID:       "uid-1",
+		},
+		Spec: lynqv1.LynqNodeSpec{UID: "row-1", TemplateRef: "tpl"},
+	}
+
+	// Inject an internal-server-error on every Get to simulate a transient API failure.
+	errClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(node).
+		WithStatusSubresource(node).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				return fmt.Errorf("simulated API server error")
+			},
+		}).
+		Build()
+
+	manager := NewManager(errClient, WithSyncMode())
+
+	manager.Publish(StatusEvent{
+		Type:      EventMetricsUpdate,
+		NodeKey:   client.ObjectKey{Name: "api-err-node", Namespace: "default"},
+		NodeUID:   "uid-1",
+		Payload:   MetricsPayload{Ready: 99, Failed: 0, Desired: 99},
+		Timestamp: time.Now(),
+	})
+
+	// No series should exist — metrics must not be written when Get fails.
+	err := testutil.CollectAndCompare(imetrics.LynqNodeResourcesReady, strings.NewReader(""))
+	assert.NoError(t, err, "metrics must not be written when the API Get fails")
 }
