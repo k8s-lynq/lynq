@@ -81,6 +81,13 @@ var _ = Describe("Resource Phases", Ordered, func() {
 			// event and report a false failure. 180s is well over typical
 			// nginx pull + readiness, while leaving the steady-state-doesn't-
 			// fail-after-X-seconds guarantee intact (Suite 1.4 covers that).
+			// minReadySeconds: 15 guarantees a Degraded observation window:
+			// when pods are force-deleted, new pods reach Ready quickly
+			// (~2-3s on cached nginx), but K8s does NOT count them in
+			// availableReplicas until they've been Ready for minReadySeconds.
+			// That gives the controller's watch + reconcile a 15s window to
+			// observe availableReplicas < spec.replicas and classify the
+			// resource as Degraded.
 			createForm(formName, hubName, `
   deployments:
     - id: app-deployment
@@ -92,6 +99,7 @@ var _ = Describe("Resource Phases", Ordered, func() {
         kind: Deployment
         spec:
           replicas: 3
+          minReadySeconds: 15
           progressDeadlineSeconds: 600
           selector:
             matchLabels:
