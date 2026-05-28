@@ -184,27 +184,16 @@ var _ = Describe("Resource Phases", Ordered, func() {
 				"--wait=false", "--grace-period=0", "--force"))
 			Expect(err).NotTo(HaveOccurred())
 
-			By("LynqNode.Ready condition stays True throughout the disruption — Lynq does NOT attribute failure")
-			// Consistently assert Ready=True over a window long enough to span the eviction + restart.
-			Consistently(func() string {
-				out, _ := utils.Run(exec.Command("kubectl", "get", "lynqnode", nodeName, "-n", policyTestNamespace,
-					"-o", "jsonpath={.status.conditions[?(@.type==\"Ready\")].status}"))
-				return strings.TrimSpace(out)
-			}, 60*time.Second, 3*time.Second).Should(Equal("True"))
-
-			By("failedResources stays at 0 — no ReadinessTimeout escalation")
-			Consistently(func() string {
-				out, _ := utils.Run(exec.Command("kubectl", "get", "lynqnode", nodeName, "-n", policyTestNamespace,
-					"-o", "jsonpath={.status.failedResources}"))
-				return strings.TrimSpace(out)
-			}, 60*time.Second, 3*time.Second).Should(Or(Equal(""), Equal("0")))
+			// IMPORTANT ORDERING: assert the Degraded transition observations
+			// FIRST (Eventually with tight polling), THEN run the long-window
+			// Consistently checks. The Degraded window is transient (~40s
+			// total — 25s container sleep + 15s minReadySeconds), so it
+			// closes before two back-to-back 60s Consistently blocks would
+			// finish. Polling for Degraded immediately after pod deletion
+			// catches the dip; Ready / failedResources are stable so their
+			// Consistently checks can run afterward without window pressure.
 
 			By("degradedResources reaches >=1 at some point during the disruption window")
-			// Eventually-window: the workload is briefly Degraded between
-			// force-deletion and new pods reaching Available. Poll fast
-			// (500ms) to catch the transient state — controller reconcile +
-			// status manager batched flush is ~1s, so a 2s window risks
-			// missing the dip on CI runners where pods recover quickly.
 			Eventually(func() string {
 				out, _ := utils.Run(exec.Command("kubectl", "get", "lynqnode", nodeName, "-n", policyTestNamespace,
 					"-o", "jsonpath={.status.degradedResources}"))
@@ -227,6 +216,23 @@ var _ = Describe("Resource Phases", Ordered, func() {
 				return strings.TrimSpace(out)
 			}, 90*time.Second, 500*time.Millisecond).Should(Equal("Degraded"),
 				"Per-resource phase should transition Available→Degraded post-eviction")
+
+			By("LynqNode.Ready condition stays True throughout the disruption — Lynq does NOT attribute failure")
+			// Stable property — can run after the transient observations.
+			// 30s window covers the remaining tail of the disruption + a few
+			// reconcile cycles after recovery.
+			Consistently(func() string {
+				out, _ := utils.Run(exec.Command("kubectl", "get", "lynqnode", nodeName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.status.conditions[?(@.type==\"Ready\")].status}"))
+				return strings.TrimSpace(out)
+			}, 30*time.Second, 3*time.Second).Should(Equal("True"))
+
+			By("failedResources stays at 0 — no ReadinessTimeout escalation")
+			Consistently(func() string {
+				out, _ := utils.Run(exec.Command("kubectl", "get", "lynqnode", nodeName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.status.failedResources}"))
+				return strings.TrimSpace(out)
+			}, 30*time.Second, 3*time.Second).Should(Or(Equal(""), Equal("0")))
 
 			By("no ReadinessTimeout event was emitted during the disruption (filtered to events AFTER the pod eviction)")
 			// Filter to events newer than the disruption start. Events
