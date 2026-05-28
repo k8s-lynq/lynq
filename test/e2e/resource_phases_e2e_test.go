@@ -137,13 +137,15 @@ var _ = Describe("Resource Phases", Ordered, func() {
 			By("recording wall-clock timestamp before disruption — filters out any spurious initial-rollout events")
 			disruptionStart := time.Now().UTC()
 
-			By("simulating pod eviction by deleting one pod")
-			out, err := utils.Run(exec.Command("kubectl", "get", "pods", "-n", policyTestNamespace,
-				"-l", "app=phase-test-degraded", "-o", "jsonpath={.items[0].metadata.name}"))
-			Expect(err).NotTo(HaveOccurred())
-			podName := strings.TrimSpace(out)
-			Expect(podName).NotTo(BeEmpty())
-			_, err = utils.Run(exec.Command("kubectl", "delete", "pod", podName, "-n", policyTestNamespace, "--wait=false"))
+			By("simulating pod eviction by force-deleting ALL pods simultaneously")
+			// Deleting one pod recovers too quickly when the nginx image is
+			// cached on the node — availableReplicas barely dips before
+			// climbing back. Force-deleting all 3 pods with grace-period=0
+			// drops availableReplicas to 0 long enough (5-15s for new pods
+			// to be scheduled and pass readiness) for the controller's
+			// watch + 30s requeue to observe the Degraded phase.
+			_, err := utils.Run(exec.Command("kubectl", "delete", "pods", "-n", policyTestNamespace,
+				"-l", "app=phase-test-degraded", "--wait=false", "--grace-period=0", "--force"))
 			Expect(err).NotTo(HaveOccurred())
 
 			By("LynqNode.Ready condition stays True throughout the disruption — Lynq does NOT attribute failure")
@@ -162,22 +164,24 @@ var _ = Describe("Resource Phases", Ordered, func() {
 			}, 60*time.Second, 3*time.Second).Should(Or(Equal(""), Equal("0")))
 
 			By("degradedResources reaches >=1 at some point during the disruption window")
-			// Eventually-window: the pod is briefly Degraded between deletion and the new pod
-			// reaching Available. We assert observation of >=1, not Consistently — restart
-			// can be fast on CI and the window narrow.
+			// Eventually-window: the workload is briefly Degraded between
+			// force-deletion and new pods reaching Available. Poll fast
+			// (500ms) to catch the transient state — controller reconcile +
+			// status manager batched flush is ~1s, so a 2s window risks
+			// missing the dip on CI runners where pods recover quickly.
 			Eventually(func() string {
 				out, _ := utils.Run(exec.Command("kubectl", "get", "lynqnode", nodeName, "-n", policyTestNamespace,
 					"-o", "jsonpath={.status.degradedResources}"))
 				return strings.TrimSpace(out)
-			}, 60*time.Second, 2*time.Second).Should(SatisfyAny(Equal("1"), Equal("2"), Equal("3")),
-				"degradedResources should report >=1 while a pod is unavailable post-rollout")
+			}, 90*time.Second, 500*time.Millisecond).Should(SatisfyAny(Equal("1"), Equal("2"), Equal("3")),
+				"degradedResources should report >=1 while pods are unavailable post-rollout")
 
 			By("degradedResourceIds includes the deployment resource ID during disruption")
 			Eventually(func() string {
 				out, _ := utils.Run(exec.Command("kubectl", "get", "lynqnode", nodeName, "-n", policyTestNamespace,
 					"-o", "jsonpath={.status.degradedResourceIds}"))
 				return strings.TrimSpace(out)
-			}, 60*time.Second, 2*time.Second).Should(ContainSubstring("app-deployment"),
+			}, 90*time.Second, 500*time.Millisecond).Should(ContainSubstring("app-deployment"),
 				"degradedResourceIds should list the affected resource ID")
 
 			By("resourcePhases[0].phase shows Degraded during the disruption window")
@@ -185,7 +189,7 @@ var _ = Describe("Resource Phases", Ordered, func() {
 				out, _ := utils.Run(exec.Command("kubectl", "get", "lynqnode", nodeName, "-n", policyTestNamespace,
 					"-o", "jsonpath={.status.resourcePhases[0].phase}"))
 				return strings.TrimSpace(out)
-			}, 60*time.Second, 2*time.Second).Should(Equal("Degraded"),
+			}, 90*time.Second, 500*time.Millisecond).Should(Equal("Degraded"),
 				"Per-resource phase should transition Available→Degraded post-eviction")
 
 			By("no ReadinessTimeout event was emitted during the disruption (filtered to events AFTER the pod eviction)")
@@ -193,7 +197,7 @@ var _ = Describe("Resource Phases", Ordered, func() {
 			// from the initial rollout (if image pull happened to take
 			// longer than timeoutSeconds on this CI runner) would have an
 			// earlier timestamp and would not match.
-			out, _ = utils.Run(exec.Command("kubectl", "get", "events", "-n", policyTestNamespace,
+			out, _ := utils.Run(exec.Command("kubectl", "get", "events", "-n", policyTestNamespace,
 				"--field-selector", fmt.Sprintf("involvedObject.name=%s,reason=ReadinessTimeout", nodeName),
 				"-o", "jsonpath={range .items[*]}{.lastTimestamp}{\"\\n\"}{end}"))
 			for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
