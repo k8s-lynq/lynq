@@ -81,13 +81,23 @@ var _ = Describe("Resource Phases", Ordered, func() {
 			// event and report a false failure. 180s is well over typical
 			// nginx pull + readiness, while leaving the steady-state-doesn't-
 			// fail-after-X-seconds guarantee intact (Suite 1.4 covers that).
-			// minReadySeconds: 15 guarantees a Degraded observation window:
-			// when pods are force-deleted, new pods reach Ready quickly
-			// (~2-3s on cached nginx), but K8s does NOT count them in
-			// availableReplicas until they've been Ready for minReadySeconds.
-			// That gives the controller's watch + reconcile a 15s window to
-			// observe availableReplicas < spec.replicas and classify the
-			// resource as Degraded.
+			// Two layered mechanisms guarantee a 25+ second Degraded
+			// observation window:
+			//
+			//  (a) Container command sleeps 25s BEFORE starting nginx.
+			//      A force-deleted pod's replacement therefore takes 25s
+			//      to become container-Ready, no matter how warm the
+			//      image cache is. This is what gives the controller's
+			//      30s requeue + watch a guaranteed observation slot.
+			//
+			//  (b) minReadySeconds: 15 holds the new pod out of
+			//      availableReplicas for 15 additional seconds after
+			//      Ready. Belt-and-suspenders against fast scheduling.
+			//
+			// readinessProbe + httpGet ensures the Ready transition is
+			// observed only after nginx is actually serving (the sleep
+			// alone doesn't extend Ready since there's no probe by
+			// default).
 			createForm(formName, hubName, `
   deployments:
     - id: app-deployment
@@ -112,6 +122,12 @@ var _ = Describe("Resource Phases", Ordered, func() {
               containers:
               - name: app
                 image: nginx:1.25-alpine
+                command: ["sh", "-c", "sleep 25 && nginx -g 'daemon off;'"]
+                readinessProbe:
+                  tcpSocket:
+                    port: 80
+                  initialDelaySeconds: 1
+                  periodSeconds: 2
 `)
 			insertTestDataToTable(testTable, uid, true)
 			waitForLynqNode(nodeName)
