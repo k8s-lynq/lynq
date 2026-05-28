@@ -66,12 +66,13 @@ kubectl get servicemonitor -n lynq-system
 
 ### Grafana Dashboard
 
-Import `config/monitoring/grafana-dashboard.json` via **Dashboards → Import** in the Grafana UI. Select your Prometheus datasource. The dashboard ships 17 panels grouped into four categories:
+Import `config/monitoring/grafana-dashboard.json` via **Dashboards → Import** in the Grafana UI. Select your Prometheus datasource. The dashboard ships 21 panels grouped into five categories:
 
 - **Top-line stat panels**: Total Desired / Ready / Failed Nodes, Total Conflicted Resources
 - **Reconciliation health**: Reconciliation Duration percentiles, Reconciliation Rate, Error Rate, LynqNode Ready Status, Degraded Nodes
 - **Resource & conflict breakdowns**: Resource Counts by Node and Total, Conflicted Resources by Node and Total, Conflicts Rate by Node
 - **Hub & runtime internals**: Hub Health, Apply Rate by Kind, Work Queue Depth
+- **Resource Phases** (added with the phase model): Resource Phase Distribution (stacked area), Currently Degraded Resources (table), Workload Disruption Rate (Available→Degraded), Rollout Duration P95 (by kind). See [Resource Phases](resource-phases.md).
 
 ## Metrics Catalog
 
@@ -123,12 +124,16 @@ kubectl get events -A --field-selector involvedObject.kind=LynqNode --sort-by='.
 | `TemplateApplied` | Normal | Resources applied successfully |
 | `LynqNodeDeleting` | Normal | Node deletion started |
 | `LynqNodeDeleted` | Normal | Node deletion completed |
+| `RolloutComplete` | Normal | Resource transitioned `Progressing`/`Pending` → `Available` (emitted once per generation, also observes the `lynqnode_resource_rollout_duration_seconds` histogram). See [Resource Phases](resource-phases.md). |
+| `WorkloadRecovered` | Normal | Resource transitioned `Degraded` → `Available` (K8s converged the steady-state disruption). |
 | `TemplateRenderError` | Warning | Template syntax or variable error |
 | `ApplyFailed` | Warning | Resource apply failed (RBAC, quota, etc.) |
 | `ResourceConflict` | Warning | SSA field-manager conflict detected |
 | `ForceApply` | Warning | Ownership taken with `conflictPolicy: Force` |
 | `DependencySkipped` | Warning | Resource skipped — dependency failed |
-| `ReadinessTimeout` | Warning | Resource did not become ready in time |
+| `ReadinessTimeout` | Warning | Resource did not become ready in time (narrowed to `Progressing`→`Failed` via rollout timeout; never fires for steady-state Degraded). |
+| `WorkloadDegraded` | Warning | Resource transitioned `Available` → `Degraded` — pod-level disruption (node drain, eviction, HPA, etc.) after rollout had completed. **Kubernetes is converging; this is NOT a Lynq-attributed failure.** |
+| `RolloutAborted` | Warning | Resource transitioned `Progressing` → `Failed` for a non-timeout reason (e.g., `ProgressDeadlineExceeded`, apply error). Distinct from `ReadinessTimeout`. |
 | `DependencyError` | Warning | Dependency cycle detected |
 | `LynqNodeDeletionFailed` | Warning | Node cleanup failed |
 

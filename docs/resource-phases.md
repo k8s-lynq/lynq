@@ -59,16 +59,20 @@ The classifier is a pure function of the live child object's status fields plus 
 
 ```
 Pending      observedGeneration < generation, or spec.replicas == 0
-Progressing  observedGeneration == generation AND updatedReplicas < spec.replicas
-Available    observedGeneration == generation AND updatedReplicas == spec.replicas
-             AND availableReplicas == spec.replicas
-Degraded     observedGeneration == generation AND updatedReplicas == spec.replicas
-             AND availableReplicas < spec.replicas  ← post-rollout disruption
+Progressing  observedGeneration == generation AND rollout has NOT yet converged
+Available    rollout converged AND availableReplicas == spec.replicas
+Degraded     rollout converged AND availableReplicas < spec.replicas
+             (post-rollout disruption — Kubernetes is converging)
 Failed       status.conditions[Progressing].reason == "ProgressDeadlineExceeded"
              OR rollout timeout elapsed while Progressing
 ```
 
-The canonical "rollout complete" signal is `updatedReplicas == spec.replicas`. Once the new ReplicaSet has fully rolled out, subsequent drops in `availableReplicas` are steady-state disruption.
+"Rollout converged for the current generation" is detected from **either** of two K8s-native signals (OR — either is sufficient):
+
+1. `status.conditions[Progressing].reason == "NewReplicaSetAvailable"` — the explicit marker that the new ReplicaSet completed.
+2. `status.conditions[Available].status == "True"` — set when `availableReplicas` reaches the `minAvailable` threshold.
+
+Both come from Kubernetes itself. Using only signal (1) misclassified fast 1-replica deployments — K8s sometimes never transitions `Progressing.reason` to `NewReplicaSetAvailable` on quick rollouts, while `Available=True` is set reliably. The OR removes that gap. `updatedReplicas == spec.replicas` is NOT a sufficient signal on its own: an image-pull-failing pod still increments `updatedReplicas` as the pod object is created with the new template, even though it never becomes Available.
 
 ### StatefulSet
 
@@ -77,10 +81,11 @@ Available    observedGeneration == generation AND updatedReplicas == spec.replic
              AND currentReplicas == spec.replicas
              AND (updateRevision == "" OR currentRevision == updateRevision)
              AND readyReplicas == spec.replicas
-Degraded     (above rollout-complete criteria) AND readyReplicas < spec.replicas
+Degraded     (above rollout-complete criteria) AND readyReplicas > 0
+             AND readyReplicas < spec.replicas
 ```
 
-`currentRevision == updateRevision` is the StatefulSet-specific "rollout complete" signal.
+`currentRevision == updateRevision` is the StatefulSet-specific "rollout complete" signal. StatefulSet has no equivalent of Deployment's `Available=True` condition, so the classifier additionally requires `readyReplicas > 0` as proof the generation reached partial health — otherwise a never-Ready StatefulSet (e.g., bad image) would be misclassified as Degraded instead of Progressing→Failed.
 
 ### DaemonSet
 
@@ -89,12 +94,29 @@ Available    observedGeneration == generation
              AND updatedNumberScheduled == desiredNumberScheduled
              AND numberAvailable == desiredNumberScheduled
 Degraded     updatedNumberScheduled == desiredNumberScheduled
+             AND numberAvailable > 0
              AND numberAvailable < desiredNumberScheduled  ← e.g., node drain
 ```
 
+Same regression guard as StatefulSet — `numberAvailable > 0` ensures the rollout reached partial health before classifying transient drops as Degraded.
+
 ### Everything else
 
-`Service`, `ConfigMap`, `Secret`, `ServiceAccount`, `CronJob`, `PodDisruptionBudget`, `NetworkPolicy`, `Ingress`, `PVC`, `HPA`, `Job`, custom resources — these don't have the post-rollout-partial-availability concept. They classify as `Available` or `Pending`/`Progressing`/`Failed` per their native readiness signals (same conditions as the legacy `IsReady` check). They do NOT have a `Degraded` phase.
+`ConfigMap`, `Secret`, `ServiceAccount`, `CronJob`, `PodDisruptionBudget`, `NetworkPolicy` — classified `Available` immediately upon creation. No phase transitions.
+
+`Service` — `Available` immediately for `ClusterIP`/`NodePort`/`Headless`; `LoadBalancer` services Progress until `status.loadBalancer.ingress` is populated, then `Available`. May time out to `Failed` via Lynq's rollout timeout.
+
+`Job` — `Available` on `Complete=True` or `succeeded > 0`; `Failed` immediately on `Failed=True` condition; `Progressing` otherwise.
+
+`Ingress` — `Available` once `status.loadBalancer.ingress` is populated OR `spec.rules` is set; `Progressing`/`Failed` otherwise.
+
+`PVC` — `Available` on `status.phase == "Bound"`; `Progressing`/`Failed` otherwise.
+
+`HPA` — `Available` on `AbleToScale=True` condition; `Progressing`/`Failed` otherwise.
+
+Custom resources — `Available` when `status.conditions[Ready].status == "True"`, or immediately when `status.conditions` is absent (matches the pre-phase-model fallback). `Progressing`/`Failed` otherwise.
+
+None of the above kinds have a `Degraded` phase — the post-rollout-partial-availability concept only applies to pod-based workloads.
 
 ## Per-resource visibility
 
