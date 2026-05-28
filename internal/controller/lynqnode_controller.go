@@ -413,31 +413,19 @@ func (r *LynqNodeReconciler) applyResources(
 			continue
 		}
 
-		// Handle CreationPolicy.Once
-		if resource.CreationPolicy == lynqv1.CreationPolicyOnce {
-			// Check if resource already exists and has the "created-once" annotation
-			exists, hasAnnotation, err := r.checkOnceCreated(ctx, obj)
-			if err != nil {
-				logger.Error(err, "Failed to check Once policy", "id", resource.ID)
-				failedResourceIds[resource.ID] = true
-				failedCount++
-				continue
-			}
-
-			if exists && hasAnnotation {
-				// Resource already created with Once policy, skip
-				logger.V(1).Info("Skipping resource (CreationPolicy=Once, already created)", "id", resource.ID, "name", obj.GetName())
-				readyCount++ // Count as ready since it exists
-				continue
-			}
-
-			// Add annotation to track that this was created with Once policy
-			annotations := obj.GetAnnotations()
-			if annotations == nil {
-				annotations = make(map[string]string)
-			}
-			annotations[AnnotationCreatedOnce] = AnnotationValueTrue
-			obj.SetAnnotations(annotations)
+		// Handle CreationPolicy.Once (extracted to keep applyResources's
+		// cyclomatic complexity under the gocyclo limit).
+		onceOutcome, onceErr := r.handleCreationPolicyOnce(ctx, resource, obj)
+		switch onceOutcome {
+		case onceCheckFailed:
+			logger.Error(onceErr, "Failed to check Once policy", "id", resource.ID)
+			failedResourceIds[resource.ID] = true
+			failedCount++
+			continue
+		case onceAlreadyExists:
+			logger.V(1).Info("Skipping resource (CreationPolicy=Once, already created)", "id", resource.ID, "name", obj.GetName())
+			readyCount++
+			continue
 		}
 
 		// Apply resource with specified patch strategy and track changes
@@ -591,6 +579,54 @@ func (r *LynqNodeReconciler) applyResources(
 
 	return readyCount, failedCount, changedCount, conflictedCount, skippedCount, skippedIds,
 		degradedCount, progressingCount, pendingCount, degradedResourceIds, resourcePhases, replicaMetrics
+}
+
+// onceOutcome describes what handleCreationPolicyOnce decided. Lets the
+// caller decide whether to continue, abort with failure, or proceed.
+type onceOutcome int
+
+const (
+	// onceProceed: resource is NOT Once policy, or Once but never created
+	// before — caller should continue with apply.
+	onceProceed onceOutcome = iota
+	// onceCheckFailed: checkOnceCreated returned an error — caller should
+	// mark the resource Failed and continue to next resource.
+	onceCheckFailed
+	// onceAlreadyExists: resource is Once policy and the cluster already
+	// has it with the created-once annotation — caller should count Ready
+	// and continue to next resource (skip apply).
+	onceAlreadyExists
+)
+
+// handleCreationPolicyOnce checks whether a CreationPolicy.Once resource
+// has already been created. For non-Once resources it returns onceProceed
+// immediately. For Once resources that have not been created, it stamps
+// the AnnotationCreatedOnce annotation on obj so the apply pass writes it.
+//
+// Extracted from applyResources to keep that function within the gocyclo
+// budget (the inner if/else chain contributed 4 branches).
+func (r *LynqNodeReconciler) handleCreationPolicyOnce(
+	ctx context.Context,
+	resource lynqv1.TResource,
+	obj *unstructured.Unstructured,
+) (onceOutcome, error) {
+	if resource.CreationPolicy != lynqv1.CreationPolicyOnce {
+		return onceProceed, nil
+	}
+	exists, hasAnnotation, err := r.checkOnceCreated(ctx, obj)
+	if err != nil {
+		return onceCheckFailed, err
+	}
+	if exists && hasAnnotation {
+		return onceAlreadyExists, nil
+	}
+	annotations := obj.GetAnnotations()
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+	annotations[AnnotationCreatedOnce] = AnnotationValueTrue
+	obj.SetAnnotations(annotations)
+	return onceProceed, nil
 }
 
 // evaluateResourcePhase runs the new phase-driven readiness gate for one
