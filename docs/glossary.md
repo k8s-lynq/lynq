@@ -18,6 +18,8 @@ Quick-reference definitions. For deeper explanations, follow the linked pages.
 
 **appliedResources** — A `status` field on LynqNode listing every resource currently managed, in `kind/namespace/name@id` format. Used for orphan detection: resources in `appliedResources` but not in the current template become orphans.
 
+**Available (phase)** — One of five [resource phases](resource-phases.md). A workload is Available when its rollout is complete for the current generation AND fully healthy by native Kubernetes semantics (all replicas serving traffic). Counts toward `readyResources`.
+
 ---
 
 ## C
@@ -41,6 +43,8 @@ Quick-reference definitions. For deeper explanations, follow the linked pages.
 **dependIds** — Array field on `TResource`. Lists IDs of resources that must be applied (and ready, if `waitForReady: true`) before this resource is processed. → [Dependencies](dependencies.md)
 
 **DeletionPolicy** — Per-resource policy controlling lifecycle on LynqNode deletion. `Delete` (default) uses `ownerReference` for automatic GC; `Retain` uses label-based tracking and leaves the resource in the cluster. Evaluated at creation time — not deletion time. → [Policies](policies.md)
+
+**Degraded (phase)** — One of five [resource phases](resource-phases.md). A workload reaches Degraded when its rollout completed for the current generation but availability has since dropped (node drain, HPA scale-up, pod eviction, image GC). Kubernetes is converging the workload; **Lynq does NOT mark this as Failed.** Counts toward `readyResources` (the workload is still serving traffic) and `degradedResources`.
 
 **drift detection** — The process of detecting and correcting manual changes to managed resources. Lynq uses event-driven watches (immediate) plus a 30-second periodic requeue for eventual consistency.
 
@@ -118,6 +122,10 @@ Quick-reference definitions. For deeper explanations, follow the linked pages.
 ## P
 
 **PatchStrategy** — Per-resource policy controlling how updates are applied. `apply` (default, SSA), `merge` (strategic merge patch), `replace` (full replacement). → [Policies](policies.md)
+
+**Phase (resource phase)** — One of five classifications Lynq assigns to each child resource every reconcile: `Pending`, `Progressing`, `Available`, `Degraded`, `Failed`. Derived purely from native Kubernetes status (no annotations written). Source of truth in `status.resourcePhases`. → [Resource Phases](resource-phases.md)
+
+**Progressing (phase)** — Rollout-in-progress phase: the controller has observed the latest generation but rollout criteria aren't met yet. Subject to Lynq's rollout timeout — escalates to `Failed` when `timeoutSeconds` elapses. → [Resource Phases](resource-phases.md)
 
 ---
 

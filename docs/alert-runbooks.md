@@ -675,8 +675,121 @@ kubectl describe lynqnode <lynqnode-name> | grep -A 5 Conflict
 
 If conflicts persist, escalate to LynqNodeResourcesConflicted or LynqNodeHighConflictRate resolution procedures.
 
+## LynqNodeWorkloadDegraded (Warning)
+
+**Symptom:** `lynqnode_resources_degraded > 0` for 15+ minutes.
+
+A workload's rollout completed for the current generation, but availability has since dropped due to causes outside Lynq's rollout: node drain, HPA scale-up, pod eviction, image GC on a fresh node, or kubelet restart. **Kubernetes is converging the workload — this is NOT a Lynq failure.** The alert exists so operators can verify K8s actually converges.
+
+### Diagnosis
+
+```bash
+# Which resource(s) are degraded?
+kubectl get lynqnode <name> -o jsonpath='{.status.degradedResourceIds}'
+
+# Per-resource detail with reason
+kubectl get lynqnode <name> -o jsonpath=\
+'{range .status.resourcePhases[?(@.phase=="Degraded")]}{.id}{"\t"}{.kind}{"\t"}{.reason}{"\n"}{end}'
+
+# For a Deployment, check pod state
+kubectl get pods -l app=<label> -o wide
+kubectl describe pod <pending-pod>
+
+# Node-level check
+kubectl get nodes
+kubectl describe node <node-with-pending-pod>
+```
+
+### Likely causes
+
+- **Node drain** in progress (`kubectl drain` or cluster autoscaler scale-down)
+- **HPA** just scaled up faster than pods could become Available
+- **Image pull** on a cold node (esp. large images)
+- **Kubelet restart** evicted pods briefly
+- **PodDisruptionBudget** preventing rescheduling
+
+### Resolution
+
+Usually self-resolves — wait. Escalate to `LynqNodeWorkloadSeverelyDegraded` (30+ min) if it does not.
+
+## LynqNodeWorkloadSeverelyDegraded (Critical)
+
+**Symptom:** `lynqnode_resource_degraded_since_seconds > 1800` (any resource degraded > 30 min).
+
+Kubernetes has not converged the workload. This is a node-level or scheduler-level problem.
+
+### Diagnosis
+
+```bash
+# Identify the resource
+kubectl get lynqnode <name> -o yaml | yq '.status.resourcePhases[] | select(.phase=="Degraded")'
+
+# Pod-level check
+kubectl get pods -l <selector> --field-selector=status.phase!=Running
+kubectl describe pod <not-running-pod>
+kubectl get events --field-selector involvedObject.name=<pod-name>
+```
+
+### Likely causes
+
+- Persistent image pull failure
+- Insufficient node resources (CPU/memory/PIDs)
+- Missing PV / PVC binding failure
+- Kubelet on a node is broken
+- Scheduler can't satisfy nodeSelector / affinity / taints
+
+### Resolution
+
+Treat as a node/cluster incident, not a Lynq issue. Fix the underlying constraint and Lynq will pick up the recovery via watch.
+
+## LynqNodeWorkloadFlapping (Warning)
+
+**Symptom:** `rate(lynqnode_resource_phase_transitions_total{from="Available",to="Degraded"}[15m]) > 0.1` for 15+ minutes.
+
+Pods are churning Available↔Degraded faster than 0.1/sec for a sustained period. Investigate workload thrash.
+
+### Diagnosis
+
+```bash
+# Which kinds are flapping?
+sum by (kind) (rate(lynqnode_resource_phase_transitions_total{from="Available",to="Degraded"}[15m]))
+
+# Check recent events for restart loops
+kubectl get events --sort-by='.lastTimestamp' -A | grep -E '(Killing|OOMKilled|CrashLoop)'
+```
+
+### Likely causes
+
+- OOMKilled pods (readiness/liveness loop)
+- Aggressive HPA tuning (rapid scale up/down)
+- Faulty PodDisruptionBudget allowing too many simultaneous evictions
+- Flaky readiness probe
+
+## LynqNodeRolloutSlow (Warning)
+
+**Symptom:** `histogram_quantile(0.95, ...lynqnode_resource_rollout_duration_seconds_bucket{result="complete"}...) > 300` for 30+ minutes — P95 rollouts exceed 5 minutes.
+
+### Diagnosis
+
+```bash
+# Which kinds have the slow rollouts?
+histogram_quantile(0.95,
+  sum by (le, kind) (rate(lynqnode_resource_rollout_duration_seconds_bucket{result="complete"}[1h])))
+
+# Recent rollouts (with their duration)
+sum(rate(lynqnode_resource_rollout_duration_seconds_count{result="complete"}[1h]))
+```
+
+### Likely causes
+
+- Slow readiness probe (`initialDelaySeconds` + checks taking too long)
+- Slow image pull
+- Insufficient resource requests preventing scheduling
+- Slow startup probes / pre-stop hooks
+
 ## See Also
 
+- [Resource Phases](resource-phases.md) — the 5-phase model these alerts are based on
 - [Monitoring](monitoring.md) — metrics catalog, events reference, alert overview
 - [Troubleshooting](troubleshooting.md) — symptom-based diagnosis (non-alert issues)
 - [Performance](performance.md) — scaling and tuning

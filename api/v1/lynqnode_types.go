@@ -106,7 +106,11 @@ type LynqNodeStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// ReadyResources is the number of resources that are ready
+	// ReadyResources is the number of resources that are ready.
+	// Counts both Available and Degraded phases — a workload experiencing
+	// transient pod-level disruption (node drain, HPA scale-up, eviction) is
+	// still serving traffic and is counted Ready. See DegradedResources for
+	// the steady-state-disruption sub-count.
 	// +optional
 	ReadyResources int32 `json:"readyResources,omitempty"`
 
@@ -114,9 +118,45 @@ type LynqNodeStatus struct {
 	// +optional
 	DesiredResources int32 `json:"desiredResources,omitempty"`
 
-	// FailedResources is the number of resources that failed
+	// FailedResources is the number of resources that failed.
+	// A resource enters Failed only via: rollout timeout while Progressing,
+	// Kubernetes-native ProgressDeadlineExceeded, apply error, or Job Failed
+	// condition. Steady-state pod-level disruption does NOT enter Failed —
+	// see DegradedResources.
 	// +optional
 	FailedResources int32 `json:"failedResources,omitempty"`
+
+	// DegradedResources is the number of resources currently in the Degraded
+	// phase — rollout completed for the current generation, but availability
+	// has since dropped due to causes outside Lynq's rollout (node drain,
+	// HPA scale-up, pod eviction, etc.). Kubernetes is converging these;
+	// Lynq does NOT mark them Failed. See ResourcePhase.
+	// +optional
+	DegradedResources int32 `json:"degradedResources,omitempty"`
+
+	// ProgressingResources is the number of resources currently rolling out
+	// (observedGeneration matches but rollout criteria not yet met).
+	// +optional
+	ProgressingResources int32 `json:"progressingResources,omitempty"`
+
+	// PendingResources is the number of resources whose controllers have not
+	// yet observed the latest generation.
+	// +optional
+	PendingResources int32 `json:"pendingResources,omitempty"`
+
+	// DegradedResourceIds lists the IDs of resources currently in the
+	// Degraded phase. Surfaces in `kubectl get lynqnode -o wide` so
+	// operators can correlate the count with specific resources without
+	// inspecting status.resourcePhases.
+	// +optional
+	DegradedResourceIds []string `json:"degradedResourceIds,omitempty"`
+
+	// ResourcePhases records the observed phase of each child resource.
+	// One entry per resource in the LynqForm. This is the source of truth
+	// for per-resource phase visibility — query via kubectl jsonpath or
+	// custom-columns. See ResourcePhaseEntry.
+	// +optional
+	ResourcePhases []ResourcePhaseEntry `json:"resourcePhases,omitempty"`
 
 	// SkippedResources is the number of resources skipped due to dependency failures
 	// +optional
@@ -160,12 +200,17 @@ type LynqNodeStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="UID",type="string",JSONPath=".spec.uid",description="Node unique identifier"
 // +kubebuilder:printcolumn:name="Form",type="string",JSONPath=".spec.templateRef",description="LynqForm reference"
-// +kubebuilder:printcolumn:name="Ready",type="integer",JSONPath=".status.readyResources",description="Number of ready resources"
+// +kubebuilder:printcolumn:name="Ready",type="integer",JSONPath=".status.readyResources",description="Resources serving traffic (Available + Degraded)"
 // +kubebuilder:printcolumn:name="Desired",type="integer",JSONPath=".status.desiredResources",description="Total number of resources"
-// +kubebuilder:printcolumn:name="Skipped",type="integer",JSONPath=".status.skippedResources",description="Resources skipped due to dependency failures"
-// +kubebuilder:printcolumn:name="Conflicted",type="string",JSONPath=".status.conditions[?(@.type=='Conflicted')].status",description="Conflict status"
+// +kubebuilder:printcolumn:name="Degraded",type="integer",JSONPath=".status.degradedResources",description="Resources experiencing K8s-converged disruption (NOT a Lynq failure)"
+// +kubebuilder:printcolumn:name="Progressing",type="integer",JSONPath=".status.progressingResources",description="Resources currently rolling out"
 // +kubebuilder:printcolumn:name="Conditions",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].reason",description="Condition reason"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
+// +kubebuilder:printcolumn:name="Failed",type="integer",JSONPath=".status.failedResources",description="Resources that failed (rollout timeout, ProgressDeadlineExceeded, apply error)",priority=1
+// +kubebuilder:printcolumn:name="Skipped",type="integer",JSONPath=".status.skippedResources",description="Resources skipped due to dependency failures",priority=1
+// +kubebuilder:printcolumn:name="Pending",type="integer",JSONPath=".status.pendingResources",description="Resources awaiting controller observation",priority=1
+// +kubebuilder:printcolumn:name="Conflicted",type="string",JSONPath=".status.conditions[?(@.type=='Conflicted')].status",description="Conflict status",priority=1
+// +kubebuilder:printcolumn:name="DegradedIds",type="string",JSONPath=".status.degradedResourceIds",description="IDs of currently-Degraded resources",priority=1
 
 // LynqNode is the Schema for the lynqnodes API.
 type LynqNode struct {

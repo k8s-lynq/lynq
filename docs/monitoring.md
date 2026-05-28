@@ -4,7 +4,9 @@ description: "Set up Prometheus metrics, Grafana dashboards, and structured logg
 
 # Monitoring & Observability
 
-Lynq exposes 15 Prometheus metrics at `:8443/metrics`, emits structured Kubernetes events per reconciliation, and ships a pre-built Grafana dashboard.
+Lynq exposes 26 Prometheus metrics at `:8443/metrics`, emits structured Kubernetes events per reconciliation, and ships a pre-built Grafana dashboard.
+
+> **What changed in the phase model**: `lynqnode_resources_failed` is now stricter — only Lynq-attributed failures (rollout timeout, ProgressDeadlineExceeded, apply error, Job Failed). Steady-state pod-level disruption (node drain, HPA scale-up, eviction) goes to the new `lynqnode_resources_degraded` metric and Lynq does NOT attribute it as failure. See [Resource Phases](resource-phases.md) for the classification rules.
 
 ## Setup
 
@@ -90,6 +92,17 @@ Import `config/monitoring/grafana-dashboard.json` via **Dashboards → Import** 
 | `lynqform_rollout_updating_nodes` | Gauge | `form`, `namespace` | Nodes currently being updated (v1.1.16+) |
 | `lynqform_rollout_phase` | Gauge | `form`, `namespace` | Rollout phase: 0=Idle, 1=InProgress, 2=Failed, 3=Complete (v1.1.16+) |
 | `lynqform_rollout_progress` | Gauge | `form`, `namespace` | Rollout progress percentage (v1.1.16+) |
+| `lynqnode_resources_degraded` | Gauge | `lynqnode`, `namespace` | Resources in Degraded phase (steady-state K8s-converged disruption, NOT a Lynq failure). See [Resource Phases](resource-phases.md). |
+| `lynqnode_resources_progressing` | Gauge | `lynqnode`, `namespace` | Resources currently rolling out |
+| `lynqnode_resources_pending` | Gauge | `lynqnode`, `namespace` | Resources awaiting controller observation |
+| `lynqnode_resource_phase` | Gauge | `lynqnode`, `namespace`, `resource_id`, `kind`, `phase` | Per-resource phase stateset (value=1 for active phase, 0 for the other four) |
+| `lynqnode_resource_replicas_desired` | Gauge | `lynqnode`, `namespace`, `resource_id`, `kind` | Per-resource `spec.replicas` / `desiredNumberScheduled` (workloads) |
+| `lynqnode_resource_replicas_available` | Gauge | (same) | Per-resource `availableReplicas` / `numberAvailable` |
+| `lynqnode_resource_replicas_ready` | Gauge | (same) | Per-resource `readyReplicas` / `numberReady` |
+| `lynqnode_resource_replicas_updated` | Gauge | (same) | Per-resource `updatedReplicas` / `updatedNumberScheduled` |
+| `lynqnode_resource_degraded_since_seconds` | Gauge | `lynqnode`, `namespace`, `resource_id`, `kind` | Seconds since the resource entered Degraded phase (0 when not Degraded) |
+| `lynqnode_resource_rollout_duration_seconds` | Histogram | `kind`, `result` (`complete`/`timeout`/`aborted`) | Rollout duration from apply-start-time to first Available, observed once per generation |
+| `lynqnode_resource_phase_transitions_total` | Counter | `kind`, `from`, `to` | Phase transitions (powers PromQL SLO recipes like Available→Degraded rate) |
 
 For PromQL queries using these metrics, see [Prometheus Query Examples](prometheus-queries.md).
 

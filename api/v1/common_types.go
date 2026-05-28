@@ -167,3 +167,84 @@ const (
 	// Used to track which nodes have been updated to the current template version
 	AnnotationTemplateGeneration = "lynq.sh/template-generation"
 )
+
+// ResourcePhase classifies the observed state of a child resource.
+//
+// Lynq distinguishes "rollout in progress" (Lynq's responsibility — strict
+// equality + timeout enforced) from "steady-state pod-level disruption" (the
+// workload's own controller is converging it — Kubernetes-native semantics
+// followed, no Lynq-attributed failure).
+//
+// +kubebuilder:validation:Enum=Pending;Progressing;Available;Degraded;Failed
+type ResourcePhase string
+
+const (
+	// ResourcePhasePending: the resource's controller has not yet observed the
+	// latest generation (observedGeneration < generation), or no status exists
+	// yet. Blocks dependents silently.
+	ResourcePhasePending ResourcePhase = "Pending"
+
+	// ResourcePhaseProgressing: the controller has observed the latest
+	// generation but rollout criteria are not yet met (e.g., updatedReplicas <
+	// spec.replicas). Blocks dependents silently. Subject to the rollout
+	// timeout anchored to lynq.sh/apply-start-time — exceeding it transitions
+	// the resource to ResourcePhaseFailed with a ReadinessTimeout event.
+	ResourcePhaseProgressing ResourcePhase = "Progressing"
+
+	// ResourcePhaseAvailable: rollout is complete for the current generation
+	// and the resource is fully healthy by Kubernetes-native semantics.
+	// Counts toward readyResources.
+	ResourcePhaseAvailable ResourcePhase = "Available"
+
+	// ResourcePhaseDegraded: rollout completed for the current generation
+	// (updatedReplicas == spec.replicas) but availability has since dropped
+	// (availableReplicas < spec.replicas) due to causes outside Lynq's
+	// rollout — node drain, HPA scale-up, pod eviction, image GC, kubelet
+	// restart, etc. Kubernetes itself is converging the workload; Lynq counts
+	// this as Ready for LynqNode aggregation and tracks it via
+	// degradedResources + lynqnode_resources_degraded. Never transitions to
+	// Failed — there is no steady-state timeout.
+	ResourcePhaseDegraded ResourcePhase = "Degraded"
+
+	// ResourcePhaseFailed: Lynq's rollout timeout elapsed while Progressing,
+	// OR Kubernetes itself gave up on the rollout (Deployment
+	// status.conditions[Progressing].reason == "ProgressDeadlineExceeded"),
+	// OR an apply error occurred, OR a Job's Failed condition is True.
+	// Counts toward failedResources.
+	ResourcePhaseFailed ResourcePhase = "Failed"
+)
+
+// ResourcePhaseEntry records the observed phase of a single child resource on
+// LynqNode.status.resourcePhases. One entry per child resource — the array is
+// the source of truth for per-resource visibility (kubectl jsonpath / custom
+// columns query against this field).
+type ResourcePhaseEntry struct {
+	// ID matches the TResource.ID from the LynqForm.
+	// +kubebuilder:validation:Required
+	ID string `json:"id"`
+
+	// Kind is the Kubernetes resource kind (Deployment, StatefulSet, etc.).
+	// +kubebuilder:validation:Required
+	Kind string `json:"kind"`
+
+	// Name is the rendered resource name in the cluster (after nameTemplate
+	// evaluation). Allows operators to map a phase back to a concrete object.
+	// +optional
+	Name string `json:"name,omitempty"`
+
+	// Phase is the current classification — see ResourcePhase.
+	// +kubebuilder:validation:Required
+	Phase ResourcePhase `json:"phase"`
+
+	// Reason is a short human-readable diagnostic, populated for non-Available
+	// phases. Example for a Degraded Deployment:
+	// "availableReplicas=2/3, observedGeneration matched".
+	// +optional
+	Reason string `json:"reason,omitempty"`
+
+	// SinceSeconds is how long the resource has been in the current phase.
+	// Reset on phase transition. Populated for Degraded (powers the
+	// lynqnode_resource_degraded_since_seconds metric) and Progressing.
+	// +optional
+	SinceSeconds int64 `json:"sinceSeconds,omitempty"`
+}

@@ -523,8 +523,42 @@ lynqnode_resources_failed{namespace="default"}[1h]
 rate(lynqnode_conflicts_total{lynqnode="acme-prod-template", namespace="default"}[5m])
 ```
 
+## Resource Phases & Steady-State Degradation
+
+These queries use the per-resource phase metrics introduced with the phase model. See [Resource Phases](resource-phases.md) for the classification rules.
+
+```promql
+# Count of resources currently in Degraded phase, by hub
+sum by (hub_namespace=on(namespace)) (lynqnode_resources_degraded)
+
+# Top 10 LynqNodes with the longest-running Degraded resources
+topk(10, max by (lynqnode, resource_id) (lynqnode_resource_degraded_since_seconds))
+
+# Workload disruption rate — Available→Degraded transitions per second by kind
+sum by (kind) (rate(lynqnode_resource_phase_transitions_total{from="Available",to="Degraded"}[15m]))
+
+# Rollout duration P95 by kind (complete rollouts only)
+histogram_quantile(0.95,
+  sum by (le, kind) (rate(lynqnode_resource_rollout_duration_seconds_bucket{result="complete"}[1h])))
+
+# Current phase distribution across the fleet
+sum by (phase) (lynqnode_resource_phase == 1)
+
+# Resources currently rolling out
+sum (lynqnode_resources_progressing)
+
+# Workloads where availability ratio dropped — useful for diagnosing partial outages
+(lynqnode_resource_replicas_available / lynqnode_resource_replicas_desired) < 1
+
+# Rollout SLO: % of rollouts completing within 60s
+sum(rate(lynqnode_resource_rollout_duration_seconds_bucket{le="60",result="complete"}[1h]))
+/
+sum(rate(lynqnode_resource_rollout_duration_seconds_count{result="complete"}[1h]))
+```
+
 ## See Also
 
 - [Monitoring Guide](monitoring.md) - Complete monitoring documentation
 - [Alert Rules](../config/prometheus/alerts.yaml) - Prometheus alert rules
 - [Troubleshooting](troubleshooting.md) - Common issues and solutions
+- [Resource Phases](resource-phases.md) - 5-phase model reference

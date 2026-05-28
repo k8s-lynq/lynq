@@ -33,7 +33,23 @@ args:
   - --zap-log-level=info                       # debug | info | error
   - --zap-encoder=json                         # json | console
   - --zap-devel=false                          # true enables development mode
+
+  # Phase model rollback (emergency only)
+  - --legacy-readiness-strict=false            # default false (phase model on);
+                                               # set true to revert to pre-phase-model
+                                               # strict readiness behavior. See below.
 ```
+
+### `--legacy-readiness-strict`
+
+Emergency rollback flag for the phase model. When `true`:
+
+- The readiness check reverts to strict equality (every replica must be Available); any partial unavailability past `timeoutSeconds` becomes `Failed` with a `ReadinessTimeout` event.
+- The new `Degraded` phase is never observed; `WorkloadDegraded`/`WorkloadRecovered`/`RolloutComplete` events are never emitted.
+- The new metric series remain registered but the gauges stay at 0 (existing dashboards keep working without showing the new signals).
+- LynqNode.status fields (`degradedResources`, `progressingResources`, `pendingResources`, `resourcePhases`, `degradedResourceIds`) stay at zero / empty.
+
+Intended for production rollback only. The flag is slated for removal after one release cycle if no users opt in. See the [Resource Phases](resource-phases.md) concept page for the design rationale.
 
 **Concurrency guidance:**
 

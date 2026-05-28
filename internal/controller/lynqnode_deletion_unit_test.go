@@ -170,7 +170,7 @@ func TestApplyResources_DeletionCheck(t *testing.T) {
 	start := time.Now()
 
 	// applyResources should detect deletion and return immediately
-	ready, failed, changed, conflicted, skipped, skippedIds := r.applyResources(ctx, node, nodes, vars, false)
+	ready, failed, changed, conflicted, skipped, skippedIds, _, _, _, _, _, _ := r.applyResources(ctx, node, nodes, vars, false)
 
 	duration := time.Since(start)
 

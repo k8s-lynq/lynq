@@ -28,6 +28,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	lynqv1 "github.com/k8s-lynq/lynq/api/v1"
 )
 
 func TestChecker_IsReady(t *testing.T) {
@@ -735,4 +737,467 @@ func TestChecker_WaitForReady(t *testing.T) {
 			}
 		})
 	}
+}
+
+// --- ClassifyPhase tests -------------------------------------------------
+//
+// Behavior matrix verified per kind:
+//
+//   Pending      observedGeneration < generation (controller hasn't seen spec)
+//   Progressing  observedGeneration matches, rollout criteria NOT yet met
+//   Available    rollout complete AND fully healthy
+//   Degraded     rollout complete BUT availability dropped (the headline new
+//                phase — used to be misclassified as Failed-after-timeout)
+//   Failed       rollout timeout exceeded, OR ProgressDeadlineExceeded, OR
+//                Job Failed condition
+
+// deploymentObj builds a Deployment unstructured with the given replica
+// counters. observedGeneration defaults to generation when generation > 0.
+func deploymentObj(generation, observedGeneration, replicas, updated, available, ready int64, progressingReason string) *unstructured.Unstructured {
+	obj := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "apps/v1",
+			"kind":       "Deployment",
+			"metadata": map[string]interface{}{
+				"generation": generation,
+			},
+			"spec": map[string]interface{}{
+				"replicas": replicas,
+			},
+			"status": map[string]interface{}{
+				"observedGeneration": observedGeneration,
+				"updatedReplicas":    updated,
+				"availableReplicas":  available,
+				"readyReplicas":      ready,
+			},
+		},
+	}
+	if progressingReason != "" {
+		conditions := []interface{}{
+			map[string]interface{}{
+				"type":   "Progressing",
+				"status": "False",
+				"reason": progressingReason,
+			},
+		}
+		_ = unstructured.SetNestedSlice(obj.Object, conditions, "status", "conditions")
+	}
+	return obj
+}
+
+func TestChecker_ClassifyPhase_Deployment(t *testing.T) {
+	c := NewChecker(nil)
+	const rolloutTimeout = 30 * time.Second
+
+	tests := []struct {
+		name      string
+		obj       *unstructured.Unstructured
+		elapsed   time.Duration
+		wantPhase lynqv1.ResourcePhase
+		// wantTimedOut is checked only when wantPhase == Failed.
+		wantTimedOut bool
+	}{
+		{
+			name:      "Available — 3/3 updated, 3/3 available",
+			obj:       deploymentObj(2, 2, 3, 3, 3, 3, "NewReplicaSetAvailable"),
+			elapsed:   5 * time.Second,
+			wantPhase: lynqv1.ResourcePhaseAvailable,
+		},
+		{
+			name:      "Degraded — headline case: rollout complete but one pod down post-eviction",
+			obj:       deploymentObj(2, 2, 3, 3, 2, 2, "NewReplicaSetAvailable"),
+			elapsed:   30 * time.Minute, // hours since apply — proves no timeout escalation
+			wantPhase: lynqv1.ResourcePhaseDegraded,
+		},
+		{
+			name:      "Progressing — updatedReplicas < replicas, still within timeout",
+			obj:       deploymentObj(2, 2, 3, 2, 2, 2, "ReplicaSetUpdated"),
+			elapsed:   5 * time.Second,
+			wantPhase: lynqv1.ResourcePhaseProgressing,
+		},
+		{
+			name:         "Failed — rollout timeout elapsed while Progressing",
+			obj:          deploymentObj(2, 2, 3, 1, 1, 1, "ReplicaSetUpdated"),
+			elapsed:      60 * time.Second,
+			wantPhase:    lynqv1.ResourcePhaseFailed,
+			wantTimedOut: true,
+		},
+		{
+			name:         "Failed — Kubernetes-native ProgressDeadlineExceeded (not RolloutTimedOut, it's K8s deciding)",
+			obj:          deploymentObj(2, 2, 3, 1, 1, 1, "ProgressDeadlineExceeded"),
+			elapsed:      5 * time.Second, // well within Lynq's timeout — K8s decided faster
+			wantPhase:    lynqv1.ResourcePhaseFailed,
+			wantTimedOut: false,
+		},
+		{
+			name:      "Pending — observedGeneration lags generation",
+			obj:       deploymentObj(3, 2, 3, 3, 3, 3, ""),
+			elapsed:   5 * time.Second,
+			wantPhase: lynqv1.ResourcePhasePending,
+		},
+		{
+			name:      "Pending — spec.replicas=0 (parity with existing semantics, not Degraded)",
+			obj:       deploymentObj(1, 1, 0, 0, 0, 0, "NewReplicaSetAvailable"),
+			elapsed:   5 * time.Second,
+			wantPhase: lynqv1.ResourcePhasePending,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := c.ClassifyPhase(tt.obj, tt.elapsed, rolloutTimeout)
+			if got.Phase != tt.wantPhase {
+				t.Errorf("phase = %q, want %q (reason=%q)", got.Phase, tt.wantPhase, got.Reason)
+			}
+			if tt.wantPhase == lynqv1.ResourcePhaseFailed && got.RolloutTimedOut != tt.wantTimedOut {
+				t.Errorf("RolloutTimedOut = %v, want %v", got.RolloutTimedOut, tt.wantTimedOut)
+			}
+		})
+	}
+}
+
+// statefulSetObj builds a StatefulSet unstructured. currentRevision and
+// updateRevision can differ to simulate a rolling update.
+func statefulSetObj(generation, observedGeneration, replicas, updated, current, ready int64, currentRev, updateRev string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "apps/v1",
+			"kind":       "StatefulSet",
+			"metadata": map[string]interface{}{
+				"generation": generation,
+			},
+			"spec": map[string]interface{}{
+				"replicas": replicas,
+			},
+			"status": map[string]interface{}{
+				"observedGeneration": observedGeneration,
+				"updatedReplicas":    updated,
+				"currentReplicas":    current,
+				"readyReplicas":      ready,
+				"currentRevision":    currentRev,
+				"updateRevision":     updateRev,
+			},
+		},
+	}
+}
+
+func TestChecker_ClassifyPhase_StatefulSet(t *testing.T) {
+	c := NewChecker(nil)
+	const rolloutTimeout = 30 * time.Second
+
+	tests := []struct {
+		name      string
+		obj       *unstructured.Unstructured
+		elapsed   time.Duration
+		wantPhase lynqv1.ResourcePhase
+	}{
+		{
+			name:      "Available — revisions converged, all ready",
+			obj:       statefulSetObj(2, 2, 3, 3, 3, 3, "v2", "v2"),
+			elapsed:   5 * time.Second,
+			wantPhase: lynqv1.ResourcePhaseAvailable,
+		},
+		{
+			name:      "Degraded — revisions converged but one pod down post-eviction",
+			obj:       statefulSetObj(2, 2, 3, 3, 3, 2, "v2", "v2"),
+			elapsed:   30 * time.Minute,
+			wantPhase: lynqv1.ResourcePhaseDegraded,
+		},
+		{
+			name:      "Progressing — currentRevision != updateRevision (mid-rollout)",
+			obj:       statefulSetObj(2, 2, 3, 2, 3, 2, "v1", "v2"),
+			elapsed:   5 * time.Second,
+			wantPhase: lynqv1.ResourcePhaseProgressing,
+		},
+		{
+			name:      "Pending — observedGeneration lags",
+			obj:       statefulSetObj(3, 2, 3, 3, 3, 3, "v2", "v2"),
+			elapsed:   5 * time.Second,
+			wantPhase: lynqv1.ResourcePhasePending,
+		},
+		{
+			name:      "Pending — replicas=0",
+			obj:       statefulSetObj(1, 1, 0, 0, 0, 0, "", ""),
+			elapsed:   5 * time.Second,
+			wantPhase: lynqv1.ResourcePhasePending,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := c.ClassifyPhase(tt.obj, tt.elapsed, rolloutTimeout)
+			if got.Phase != tt.wantPhase {
+				t.Errorf("phase = %q, want %q (reason=%q)", got.Phase, tt.wantPhase, got.Reason)
+			}
+		})
+	}
+}
+
+func daemonSetObj(generation, observedGeneration, desired, updated, ready, available int64) *unstructured.Unstructured {
+	return &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "apps/v1",
+			"kind":       "DaemonSet",
+			"metadata": map[string]interface{}{
+				"generation": generation,
+			},
+			"status": map[string]interface{}{
+				"observedGeneration":     observedGeneration,
+				"desiredNumberScheduled": desired,
+				"updatedNumberScheduled": updated,
+				"numberReady":            ready,
+				"numberAvailable":        available,
+			},
+		},
+	}
+}
+
+func TestChecker_ClassifyPhase_DaemonSet(t *testing.T) {
+	c := NewChecker(nil)
+	const rolloutTimeout = 30 * time.Second
+
+	tests := []struct {
+		name      string
+		obj       *unstructured.Unstructured
+		elapsed   time.Duration
+		wantPhase lynqv1.ResourcePhase
+	}{
+		{
+			name:      "Available — all nodes scheduled, updated, and available",
+			obj:       daemonSetObj(2, 2, 3, 3, 3, 3),
+			elapsed:   5 * time.Second,
+			wantPhase: lynqv1.ResourcePhaseAvailable,
+		},
+		{
+			name:      "Degraded — updated across all nodes but one pod unavailable (node drain)",
+			obj:       daemonSetObj(2, 2, 3, 3, 2, 2),
+			elapsed:   30 * time.Minute,
+			wantPhase: lynqv1.ResourcePhaseDegraded,
+		},
+		{
+			name:      "Progressing — rollout still updating nodes",
+			obj:       daemonSetObj(2, 2, 3, 2, 2, 2),
+			elapsed:   5 * time.Second,
+			wantPhase: lynqv1.ResourcePhaseProgressing,
+		},
+		{
+			name:      "Pending — no nodes match selector (desiredNumberScheduled=0)",
+			obj:       daemonSetObj(1, 1, 0, 0, 0, 0),
+			elapsed:   5 * time.Second,
+			wantPhase: lynqv1.ResourcePhasePending,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := c.ClassifyPhase(tt.obj, tt.elapsed, rolloutTimeout)
+			if got.Phase != tt.wantPhase {
+				t.Errorf("phase = %q, want %q (reason=%q)", got.Phase, tt.wantPhase, got.Reason)
+			}
+		})
+	}
+}
+
+func TestChecker_ClassifyPhase_NonWorkloadKinds(t *testing.T) {
+	c := NewChecker(nil)
+
+	tests := []struct {
+		name      string
+		obj       *unstructured.Unstructured
+		wantPhase lynqv1.ResourcePhase
+	}{
+		{
+			name: "ConfigMap — immediately Available",
+			obj: &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "v1", "kind": "ConfigMap",
+			}},
+			wantPhase: lynqv1.ResourcePhaseAvailable,
+		},
+		{
+			name: "Secret — immediately Available",
+			obj: &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "v1", "kind": "Secret",
+			}},
+			wantPhase: lynqv1.ResourcePhaseAvailable,
+		},
+		{
+			name: "ServiceAccount — immediately Available",
+			obj: &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "v1", "kind": "ServiceAccount",
+			}},
+			wantPhase: lynqv1.ResourcePhaseAvailable,
+		},
+		{
+			name: "Namespace Active — Available",
+			obj: &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "v1", "kind": "Namespace",
+				"status": map[string]interface{}{"phase": "Active"},
+			}},
+			wantPhase: lynqv1.ResourcePhaseAvailable,
+		},
+		{
+			name: "Namespace Terminating — Pending",
+			obj: &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "v1", "kind": "Namespace",
+				"status": map[string]interface{}{"phase": "Terminating"},
+			}},
+			wantPhase: lynqv1.ResourcePhasePending,
+		},
+		{
+			name: "Service ClusterIP — immediately Available",
+			obj: &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "v1", "kind": "Service",
+				"spec": map[string]interface{}{"type": "ClusterIP"},
+			}},
+			wantPhase: lynqv1.ResourcePhaseAvailable,
+		},
+		{
+			name: "Service LoadBalancer without ingress — Progressing",
+			obj: &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "v1", "kind": "Service",
+				"spec": map[string]interface{}{"type": "LoadBalancer"},
+			}},
+			wantPhase: lynqv1.ResourcePhaseProgressing,
+		},
+		{
+			name: "Service LoadBalancer with ingress — Available",
+			obj: &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "v1", "kind": "Service",
+				"spec": map[string]interface{}{"type": "LoadBalancer"},
+				"status": map[string]interface{}{
+					"loadBalancer": map[string]interface{}{
+						"ingress": []interface{}{
+							map[string]interface{}{"ip": "10.0.0.1"},
+						},
+					},
+				},
+			}},
+			wantPhase: lynqv1.ResourcePhaseAvailable,
+		},
+		{
+			name: "Job Complete=True — Available",
+			obj: &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "batch/v1", "kind": "Job",
+				"status": map[string]interface{}{
+					"conditions": []interface{}{
+						map[string]interface{}{"type": "Complete", "status": "True"},
+					},
+				},
+			}},
+			wantPhase: lynqv1.ResourcePhaseAvailable,
+		},
+		{
+			name: "Job Failed=True — Failed (not RolloutTimedOut)",
+			obj: &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "batch/v1", "kind": "Job",
+				"status": map[string]interface{}{
+					"conditions": []interface{}{
+						map[string]interface{}{"type": "Failed", "status": "True"},
+					},
+				},
+			}},
+			wantPhase: lynqv1.ResourcePhaseFailed,
+		},
+		{
+			name: "CronJob — immediately Available",
+			obj: &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "batch/v1", "kind": "CronJob",
+			}},
+			wantPhase: lynqv1.ResourcePhaseAvailable,
+		},
+		{
+			name: "PodDisruptionBudget — immediately Available",
+			obj: &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "policy/v1", "kind": "PodDisruptionBudget",
+			}},
+			wantPhase: lynqv1.ResourcePhaseAvailable,
+		},
+		{
+			name: "NetworkPolicy — immediately Available",
+			obj: &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
+			}},
+			wantPhase: lynqv1.ResourcePhaseAvailable,
+		},
+		{
+			name: "PVC Bound — Available",
+			obj: &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "v1", "kind": "PersistentVolumeClaim",
+				"status": map[string]interface{}{"phase": "Bound"},
+			}},
+			wantPhase: lynqv1.ResourcePhaseAvailable,
+		},
+		{
+			name: "PVC Pending phase — Progressing",
+			obj: &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "v1", "kind": "PersistentVolumeClaim",
+				"status": map[string]interface{}{"phase": "Pending"},
+			}},
+			wantPhase: lynqv1.ResourcePhaseProgressing,
+		},
+		{
+			name: "Custom resource with no status.conditions — Available (matches existing fallback)",
+			obj: &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "example.com/v1", "kind": "Widget",
+			}},
+			wantPhase: lynqv1.ResourcePhaseAvailable,
+		},
+		{
+			name: "Custom resource with Ready=True — Available",
+			obj: &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "example.com/v1", "kind": "Widget",
+				"status": map[string]interface{}{
+					"conditions": []interface{}{
+						map[string]interface{}{"type": "Ready", "status": "True"},
+					},
+				},
+			}},
+			wantPhase: lynqv1.ResourcePhaseAvailable,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := c.ClassifyPhase(tt.obj, 5*time.Second, 30*time.Second)
+			if got.Phase != tt.wantPhase {
+				t.Errorf("phase = %q, want %q (reason=%q)", got.Phase, tt.wantPhase, got.Reason)
+			}
+		})
+	}
+}
+
+// TestChecker_ClassifyPhase_Replicas verifies that the ReplicaStatus is
+// populated correctly so the metrics layer can emit accurate replica gauges.
+func TestChecker_ClassifyPhase_Replicas(t *testing.T) {
+	c := NewChecker(nil)
+
+	t.Run("Deployment replica counts surface in PhaseResult", func(t *testing.T) {
+		obj := deploymentObj(2, 2, 5, 3, 2, 3, "ReplicaSetUpdated")
+		got := c.ClassifyPhase(obj, 5*time.Second, 30*time.Second)
+
+		if got.Replicas.Desired != 5 {
+			t.Errorf("Replicas.Desired = %d, want 5", got.Replicas.Desired)
+		}
+		if got.Replicas.Updated != 3 {
+			t.Errorf("Replicas.Updated = %d, want 3", got.Replicas.Updated)
+		}
+		if got.Replicas.Available != 2 {
+			t.Errorf("Replicas.Available = %d, want 2", got.Replicas.Available)
+		}
+		if got.Replicas.Ready != 3 {
+			t.Errorf("Replicas.Ready = %d, want 3", got.Replicas.Ready)
+		}
+	})
+
+	t.Run("DaemonSet maps native counters to ReplicaStatus", func(t *testing.T) {
+		obj := daemonSetObj(2, 2, 4, 4, 4, 3)
+		got := c.ClassifyPhase(obj, 5*time.Second, 30*time.Second)
+
+		if got.Replicas.Desired != 4 {
+			t.Errorf("Replicas.Desired = %d, want 4 (desiredNumberScheduled)", got.Replicas.Desired)
+		}
+		if got.Replicas.Available != 3 {
+			t.Errorf("Replicas.Available = %d, want 3 (numberAvailable)", got.Replicas.Available)
+		}
+	})
 }

@@ -160,6 +160,47 @@ func (m *Manager) PublishMetrics(node *lynqv1.LynqNode, ready, failed, desired, 
 	})
 }
 
+// PublishResourcePhases publishes the per-reconcile snapshot of per-resource
+// phases — the source of truth for status.resourcePhases (kubectl jsonpath)
+// and the per-resource metrics (lynqnode_resource_phase stateset, replica
+// gauges, degraded-since-seconds).
+//
+// Pass an empty (non-nil) phases slice to clear the array; pass nil to leave
+// status.resourcePhases unchanged.
+func (m *Manager) PublishResourcePhases(node *lynqv1.LynqNode, phases []lynqv1.ResourcePhaseEntry, degradedIds []string, replicas map[string]ResourceReplicaMetrics) {
+	m.Publish(StatusEvent{
+		Type:    EventResourcePhasesUpdated,
+		NodeKey: client.ObjectKeyFromObject(node),
+		Payload: ResourcePhasesPayload{
+			Phases:              phases,
+			DegradedResourceIds: degradedIds,
+			ResourceReplicas:    replicas,
+		},
+		Timestamp: time.Now(),
+	})
+}
+
+// PublishResourceCountsWithPhases is an extension of PublishResourceCounts
+// that also carries the new per-phase aggregate counts (degraded,
+// progressing, pending). When all three are zero, behaves identically to
+// PublishResourceCounts (existing callers keep working).
+func (m *Manager) PublishResourceCountsWithPhases(node *lynqv1.LynqNode, ready, failed, desired, conflicted, degraded, progressing, pending int32) {
+	m.Publish(StatusEvent{
+		Type:    EventResourceCountsUpdated,
+		NodeKey: client.ObjectKeyFromObject(node),
+		Payload: ResourceCountsPayload{
+			Ready:       ready,
+			Failed:      failed,
+			Desired:     desired,
+			Conflicted:  conflicted,
+			Degraded:    degraded,
+			Progressing: progressing,
+			Pending:     pending,
+		},
+		Timestamp: time.Now(),
+	})
+}
+
 // PublishLastFullReconcileAt is a helper to publish the LastFullReconcileAt timestamp.
 // Used by the controller to gate the periodic drift-correction force-reapply: this
 // timestamp marks when the most recent unconditional re-apply completed (or, on first
