@@ -219,18 +219,19 @@ func (u *StatusUpdate) Apply(event StatusEvent) {
 		u.ReadyResources = &payload.Ready
 		u.FailedResources = &payload.Failed
 		u.DesiredResources = &payload.Desired
-		// Phase counts are part of the same payload. Apply only when at
-		// least one phase count is non-zero — preserves backwards
-		// compatibility with callers that didn't supply them (they
-		// implicitly leave phase counts at zero and don't touch status).
-		if payload.Degraded != 0 || payload.Progressing != 0 || payload.Pending != 0 {
-			d := payload.Degraded
-			p := payload.Progressing
-			pe := payload.Pending
-			u.DegradedResources = &d
-			u.ProgressingResources = &p
-			u.PendingResources = &pe
-		}
+		// Always set the per-phase counts. The previous "only when non-zero"
+		// guard prevented progressingResources from RESETTING to 0 after a
+		// rollout completed: the new payload arrived with progressing=0 and
+		// the guard skipped the write, leaving the previous value (e.g.,
+		// "1" during rollout) stale on status. Backwards-compat callers
+		// that don't supply phase counts implicitly pass zeros, which is
+		// the correct "no phase activity" state.
+		d := payload.Degraded
+		p := payload.Progressing
+		pe := payload.Pending
+		u.DegradedResources = &d
+		u.ProgressingResources = &p
+		u.PendingResources = &pe
 
 	case EventConditionChanged:
 		payload := event.Payload.(ConditionPayload)
