@@ -145,15 +145,27 @@ var _ = Describe("Resource Phases", Ordered, func() {
 			By("recording wall-clock timestamp before disruption — filters out any spurious initial-rollout events")
 			disruptionStart := time.Now().UTC()
 
-			By("simulating pod eviction by force-deleting ALL pods simultaneously")
-			// Deleting one pod recovers too quickly when the nginx image is
-			// cached on the node — availableReplicas barely dips before
-			// climbing back. Force-deleting all 3 pods with grace-period=0
-			// drops availableReplicas to 0 long enough (5-15s for new pods
-			// to be scheduled and pass readiness) for the controller's
-			// watch + 30s requeue to observe the Degraded phase.
-			_, err := utils.Run(exec.Command("kubectl", "delete", "pods", "-n", policyTestNamespace,
-				"-l", "app=phase-test-degraded", "--wait=false", "--grace-period=0", "--force"))
+			By("simulating pod eviction by force-deleting ONE pod")
+			// Force-delete exactly one pod (not all). Deleting ALL pods can
+			// cause K8s to transition Progressing.reason away from
+			// NewReplicaSetAvailable as the deployment looks "fresh" again,
+			// and the classifier would then see this as a brand-new rollout
+			// (Progressing) instead of post-rollout disruption (Degraded).
+			// With one-pod deletion the deployment-level signals
+			// (Progressing.reason, observedGeneration) stay stable while
+			// availableReplicas dips — exactly the Degraded scenario.
+			//
+			// minReadySeconds=15 (set on the form) holds availableReplicas
+			// below spec.replicas for ~15 seconds even after the replacement
+			// pod reaches Ready, giving the controller multiple reconcile
+			// opportunities to observe the Degraded state.
+			out, err := utils.Run(exec.Command("kubectl", "get", "pods", "-n", policyTestNamespace,
+				"-l", "app=phase-test-degraded", "-o", "jsonpath={.items[0].metadata.name}"))
+			Expect(err).NotTo(HaveOccurred())
+			podName := strings.TrimSpace(out)
+			Expect(podName).NotTo(BeEmpty())
+			_, err = utils.Run(exec.Command("kubectl", "delete", "pod", podName, "-n", policyTestNamespace,
+				"--wait=false", "--grace-period=0", "--force"))
 			Expect(err).NotTo(HaveOccurred())
 
 			By("LynqNode.Ready condition stays True throughout the disruption — Lynq does NOT attribute failure")
@@ -205,7 +217,7 @@ var _ = Describe("Resource Phases", Ordered, func() {
 			// from the initial rollout (if image pull happened to take
 			// longer than timeoutSeconds on this CI runner) would have an
 			// earlier timestamp and would not match.
-			out, _ := utils.Run(exec.Command("kubectl", "get", "events", "-n", policyTestNamespace,
+			out, _ = utils.Run(exec.Command("kubectl", "get", "events", "-n", policyTestNamespace,
 				"--field-selector", fmt.Sprintf("involvedObject.name=%s,reason=ReadinessTimeout", nodeName),
 				"-o", "jsonpath={range .items[*]}{.lastTimestamp}{\"\\n\"}{end}"))
 			for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
