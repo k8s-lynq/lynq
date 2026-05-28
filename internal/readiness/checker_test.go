@@ -753,7 +753,18 @@ func TestChecker_WaitForReady(t *testing.T) {
 
 // deploymentObj builds a Deployment unstructured with the given replica
 // counters. observedGeneration defaults to generation when generation > 0.
+// When progressingReason is non-empty, a Progressing condition is added.
 func deploymentObj(generation, observedGeneration, replicas, updated, available, ready int64, progressingReason string) *unstructured.Unstructured {
+	return deploymentObjWithAvailable(generation, observedGeneration, replicas, updated, available, ready, progressingReason, "")
+}
+
+// deploymentObjWithAvailable extends deploymentObj with an explicit
+// Available condition status ("True"/"False"/"" for absent). The two
+// signals — Progressing.reason and Available — are independently
+// settable so we can exercise the "Available=True but
+// Progressing.reason != NewReplicaSetAvailable" case that triggered the
+// healthy-busybox regression.
+func deploymentObjWithAvailable(generation, observedGeneration, replicas, updated, available, ready int64, progressingReason, availableStatus string) *unstructured.Unstructured {
 	obj := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "apps/v1",
@@ -772,14 +783,21 @@ func deploymentObj(generation, observedGeneration, replicas, updated, available,
 			},
 		},
 	}
+	var conditions []interface{}
 	if progressingReason != "" {
-		conditions := []interface{}{
-			map[string]interface{}{
-				"type":   "Progressing",
-				"status": "False",
-				"reason": progressingReason,
-			},
-		}
+		conditions = append(conditions, map[string]interface{}{
+			"type":   "Progressing",
+			"status": "True",
+			"reason": progressingReason,
+		})
+	}
+	if availableStatus != "" {
+		conditions = append(conditions, map[string]interface{}{
+			"type":   "Available",
+			"status": availableStatus,
+		})
+	}
+	if len(conditions) > 0 {
 		_ = unstructured.SetNestedSlice(obj.Object, conditions, "status", "conditions")
 	}
 	return obj
@@ -856,6 +874,24 @@ func TestChecker_ClassifyPhase_Deployment(t *testing.T) {
 			elapsed:      60 * time.Second,
 			wantPhase:    lynqv1.ResourcePhaseFailed,
 			wantTimedOut: true,
+		},
+		{
+			// Regression case for fast 1-replica deployments (e.g.,
+			// busybox with `sleep 3600` and no readinessProbe). K8s
+			// reliably sets Available=True but the Progressing.reason
+			// transition to "NewReplicaSetAvailable" can lag behind on
+			// quick rollouts. The classifier must treat Available=True
+			// as sufficient evidence of rollout completion.
+			name:      "Available — Available=True even without NewReplicaSetAvailable reason",
+			obj:       deploymentObjWithAvailable(2, 2, 1, 1, 1, 1, "ReplicaSetUpdated", "True"),
+			elapsed:   5 * time.Second,
+			wantPhase: lynqv1.ResourcePhaseAvailable,
+		},
+		{
+			name:      "Degraded — Available=True was set, then availability dropped",
+			obj:       deploymentObjWithAvailable(2, 2, 3, 3, 2, 2, "ReplicaSetUpdated", "True"),
+			elapsed:   30 * time.Minute,
+			wantPhase: lynqv1.ResourcePhaseDegraded,
 		},
 		{
 			name:      "Pending — spec.replicas=0 (parity with existing semantics, not Degraded)",

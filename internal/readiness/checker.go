@@ -497,9 +497,21 @@ func (c *Checker) classifyDeploymentPhase(
 
 	// 2. ProgressDeadlineExceeded — Kubernetes itself gave up. Lynq follows.
 	//
-	// The canonical "rollout has reached healthy state at least once for this
-	// generation" signal on a Deployment is
-	// `status.conditions[Progressing].reason == "NewReplicaSetAvailable"`.
+	// The "rollout has reached healthy state at least once for this
+	// generation" signal on a Deployment comes from two sources:
+	//   - Progressing.reason == "NewReplicaSetAvailable" — the explicit
+	//     marker that the rollout completed successfully.
+	//   - Available condition == True — set when availableReplicas meets the
+	//     minAvailable threshold. K8s sets this reliably for quick rollouts
+	//     even when Progressing.reason hasn't transitioned to
+	//     NewReplicaSetAvailable yet (observed on 1-replica deployments with
+	//     no readiness probe).
+	//
+	// Either signal is sufficient evidence of "this generation is past the
+	// rollout phase." Using only NewReplicaSetAvailable caused healthy
+	// busybox-style deployments to stick in Progressing because K8s never
+	// updated that specific reason field on fast rollouts.
+	//
 	// updatedReplicas==spec.replicas alone is NOT sufficient — a Deployment
 	// with a non-existent image creates pods (so updatedReplicas grows) that
 	// never reach Available, and we must NOT misclassify those as Degraded.
@@ -511,19 +523,20 @@ func (c *Checker) classifyDeploymentPhase(
 			Replicas: rs,
 		}
 	}
+	rolloutConverged := progressingReason == "NewReplicaSetAvailable" || readDeploymentAvailable(obj)
 
 	// 3. Available — rollout converged healthy at least once AND fully healthy now.
-	if progressingReason == "NewReplicaSetAvailable" && availableReplicas == replicas {
+	if rolloutConverged && availableReplicas == replicas {
 		return PhaseResult{Phase: lynqv1.ResourcePhaseAvailable, Replicas: rs}
 	}
 
 	// 4. Degraded — rollout converged healthy at least once but availability
 	// has since dropped. Kubernetes is converging the workload; Lynq does
 	// NOT mark this Failed (the headline phase-model semantic).
-	if progressingReason == "NewReplicaSetAvailable" && availableReplicas < replicas {
+	if rolloutConverged && availableReplicas < replicas {
 		return PhaseResult{
 			Phase:    lynqv1.ResourcePhaseDegraded,
-			Reason:   fmt.Sprintf("availableReplicas=%d/%d, NewReplicaSetAvailable was set", availableReplicas, replicas),
+			Reason:   fmt.Sprintf("availableReplicas=%d/%d, rollout previously converged", availableReplicas, replicas),
 			Replicas: rs,
 		}
 	}
@@ -894,6 +907,31 @@ func readDeploymentProgressingReason(obj *unstructured.Unstructured) string {
 		return reason
 	}
 	return ""
+}
+
+// readDeploymentAvailable returns true when the Deployment's Available
+// condition is True. K8s sets this once availableReplicas reaches the
+// minAvailable threshold — a more reliable "rollout converged once" marker
+// than Progressing.reason==NewReplicaSetAvailable on fast rollouts where
+// the reason field doesn't always transition.
+func readDeploymentAvailable(obj *unstructured.Unstructured) bool {
+	conditions, found, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
+	if !found {
+		return false
+	}
+	for _, cond := range conditions {
+		cm, ok := cond.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		ctype, _, _ := unstructured.NestedString(cm, "type")
+		if ctype != "Available" {
+			continue
+		}
+		status, _, _ := unstructured.NestedString(cm, "status")
+		return status == ConditionStatusTrue
+	}
+	return false
 }
 
 // GetReadinessMessage returns a human-readable message about resource readiness
