@@ -389,7 +389,8 @@ func (r *LynqNodeReconciler) applyResources(
 			if errors.IsNotFound(err) {
 				// LynqNode was deleted, stop processing
 				logger.Info("LynqNode deleted during reconciliation, stopping resource application")
-				return
+				return readyCount, failedCount, changedCount, conflictedCount, skippedCount, skippedIds,
+					degradedCount, progressingCount, pendingCount, degradedResourceIds, resourcePhases, replicaMetrics
 			}
 			// Continue on other errors
 		} else if !currentLynqNode.DeletionTimestamp.IsZero() {
@@ -397,7 +398,8 @@ func (r *LynqNodeReconciler) applyResources(
 			logger.Info("LynqNode deletion in progress, stopping resource application",
 				"node", node.Name,
 				"processedResources", readyCount+failedCount)
-			return
+			return readyCount, failedCount, changedCount, conflictedCount, skippedCount, skippedIds,
+				degradedCount, progressingCount, pendingCount, degradedResourceIds, resourcePhases, replicaMetrics
 		}
 
 		// Render templates (with cache: skip expensive rendering when inputs unchanged)
@@ -568,43 +570,14 @@ func (r *LynqNodeReconciler) applyResources(
 			}
 
 			// NEW PATH — phase-driven classification + per-resource phase
-			// tracking + transition-based events.
-			phaseResult := checker.ClassifyPhase(current, elapsed, timeoutDuration)
-			previousPhase := previousPhases[resource.ID]
-			entry := r.processResourcePhase(ctx, node, resource, obj.GetName(), kind, phaseResult, previousPhase, elapsed)
-
-			// Update counters based on phase. Note: Available AND Degraded
-			// both increment readyCount — the workload is serving traffic
-			// either way. This is the headline semantic change: steady-state
-			// pod-level disruption no longer flips LynqNode.Ready=False.
-			switch phaseResult.Phase {
-			case lynqv1.ResourcePhaseAvailable:
-				readyCount++
-			case lynqv1.ResourcePhaseDegraded:
-				readyCount++
-				degradedCount++
-				degradedResourceIds = append(degradedResourceIds, resource.ID)
-			case lynqv1.ResourcePhaseProgressing:
-				progressingCount++
-				notReadyResourceIds[resource.ID] = true
-			case lynqv1.ResourcePhasePending:
-				pendingCount++
-				notReadyResourceIds[resource.ID] = true
-			case lynqv1.ResourcePhaseFailed:
-				failedResourceIds[resource.ID] = true
-				failedCount++
-			}
-
-			// Per-resource workload metrics (zero-valued for non-workload kinds).
-			replicaMetrics[resource.ID] = status.ResourceReplicaMetrics{
-				Kind:                 kind,
-				Desired:              phaseResult.Replicas.Desired,
-				Available:            phaseResult.Replicas.Available,
-				Ready:                phaseResult.Replicas.Ready,
-				Updated:              phaseResult.Replicas.Updated,
-				DegradedSinceSeconds: entry.SinceSeconds,
-			}
-
+			// tracking + transition-based events. Extracted into a helper
+			// to keep applyResources's cyclomatic complexity manageable
+			// (gocyclo limit is 35).
+			entry, replicas, phase := r.evaluateResourcePhase(ctx, node, resource, current, kind, elapsed, timeoutDuration, previousPhases)
+			r.aggregatePhaseCounters(phase, resource.ID,
+				&readyCount, &degradedCount, &progressingCount, &pendingCount, &failedCount,
+				&degradedResourceIds, failedResourceIds, notReadyResourceIds)
+			replicaMetrics[resource.ID] = replicas
 			resourcePhases = append(resourcePhases, entry)
 		} else {
 			// No readiness check required, count as ready
@@ -616,7 +589,71 @@ func (r *LynqNodeReconciler) applyResources(
 		}
 	}
 
-	return
+	return readyCount, failedCount, changedCount, conflictedCount, skippedCount, skippedIds,
+		degradedCount, progressingCount, pendingCount, degradedResourceIds, resourcePhases, replicaMetrics
+}
+
+// evaluateResourcePhase runs the new phase-driven readiness gate for one
+// applied resource. Extracted from applyResources to keep cyclomatic
+// complexity within the gocyclo budget. Returns the per-resource state the
+// caller aggregates into the result.
+//
+// Called from the new (phase-model) path only — the legacy path stays
+// inline in applyResources for backwards-compat clarity.
+func (r *LynqNodeReconciler) evaluateResourcePhase(
+	ctx context.Context,
+	node *lynqv1.LynqNode,
+	resource lynqv1.TResource,
+	current *unstructured.Unstructured,
+	kind string,
+	elapsed, timeoutDuration time.Duration,
+	previousPhases map[string]lynqv1.ResourcePhase,
+) (lynqv1.ResourcePhaseEntry, status.ResourceReplicaMetrics, lynqv1.ResourcePhase) {
+	checker := r.getReadinessChecker()
+	phaseResult := checker.ClassifyPhase(current, elapsed, timeoutDuration)
+	previousPhase := previousPhases[resource.ID]
+	entry := r.processResourcePhase(ctx, node, resource, current.GetName(), kind, phaseResult, previousPhase, elapsed)
+
+	replicas := status.ResourceReplicaMetrics{
+		Kind:                 kind,
+		Desired:              phaseResult.Replicas.Desired,
+		Available:            phaseResult.Replicas.Available,
+		Ready:                phaseResult.Replicas.Ready,
+		Updated:              phaseResult.Replicas.Updated,
+		DegradedSinceSeconds: entry.SinceSeconds,
+	}
+	return entry, replicas, phaseResult.Phase
+}
+
+// aggregatePhaseCounters maps a resource's phase to the caller's aggregate
+// counters and dependency-tracking maps. Available AND Degraded both bump
+// readyCount — the workload is serving traffic either way. This is the
+// headline semantic change: steady-state pod-level disruption no longer
+// flips LynqNode.Ready=False.
+func (r *LynqNodeReconciler) aggregatePhaseCounters(
+	phase lynqv1.ResourcePhase,
+	resourceID string,
+	readyCount, degradedCount, progressingCount, pendingCount, failedCount *int32,
+	degradedResourceIds *[]string,
+	failedResourceIds, notReadyResourceIds map[string]bool,
+) {
+	switch phase {
+	case lynqv1.ResourcePhaseAvailable:
+		*readyCount++
+	case lynqv1.ResourcePhaseDegraded:
+		*readyCount++
+		*degradedCount++
+		*degradedResourceIds = append(*degradedResourceIds, resourceID)
+	case lynqv1.ResourcePhaseProgressing:
+		*progressingCount++
+		notReadyResourceIds[resourceID] = true
+	case lynqv1.ResourcePhasePending:
+		*pendingCount++
+		notReadyResourceIds[resourceID] = true
+	case lynqv1.ResourcePhaseFailed:
+		failedResourceIds[resourceID] = true
+		*failedCount++
+	}
 }
 
 // processResourcePhase emits transition-based metrics and events for a single
@@ -628,13 +665,13 @@ func (r *LynqNodeReconciler) applyResources(
 //   - Available → Degraded:        emit WorkloadDegraded event
 //   - Degraded → Available:        emit WorkloadRecovered event
 //   - Progressing|Pending → Available:
-//                                  emit RolloutComplete event + observe
-//                                  rollout_duration_seconds histogram
+//     emit RolloutComplete event + observe
+//     rollout_duration_seconds histogram
 //   - Progressing|Pending → Failed (RolloutTimedOut):
-//                                  emit ReadinessTimeout event + observe
-//                                  histogram with result="timeout"
+//     emit ReadinessTimeout event + observe
+//     histogram with result="timeout"
 //   - Progressing|Pending → Failed (other):
-//                                  observe histogram with result="aborted"
+//     observe histogram with result="aborted"
 //
 // Every transition (previousPhase != current && previousPhase != "") also
 // increments lynqnode_resource_phase_transitions_total{kind,from,to}.
@@ -2465,7 +2502,9 @@ func (r *LynqNodeReconciler) checkResourcesReadiness(
 		resourcePhases = append(resourcePhases, entry)
 	}
 
-	return
+	return readyCount, failedCount, conflictedCount,
+		degradedCount, progressingCount, pendingCount,
+		degradedResourceIds, resourcePhases, replicaMetrics
 }
 
 // elapsedSinceApply returns how long it has been since the operator last applied obj.

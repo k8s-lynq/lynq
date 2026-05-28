@@ -32,6 +32,25 @@ import (
 const (
 	// ConditionStatusTrue represents a true condition status
 	ConditionStatusTrue = "True"
+
+	// Workload kinds — extracted so the kind switch in IsReady,
+	// GetReadinessMessage, and ClassifyPhase all reference the same literals
+	// (satisfies the goconst linter).
+	kindNamespace             = "Namespace"
+	kindConfigMap             = "ConfigMap"
+	kindSecret                = "Secret"
+	kindServiceAccount        = "ServiceAccount"
+	kindService               = "Service"
+	kindDeployment            = "Deployment"
+	kindStatefulSet           = "StatefulSet"
+	kindDaemonSet             = "DaemonSet"
+	kindJob                   = "Job"
+	kindCronJob               = "CronJob"
+	kindIngress               = "Ingress"
+	kindPVC                   = "PersistentVolumeClaim"
+	kindPDB                   = "PodDisruptionBudget"
+	kindNetworkPolicy         = "NetworkPolicy"
+	kindHorizontalPodAutoscaler = "HorizontalPodAutoscaler"
 )
 
 // Checker checks if resources are ready
@@ -92,31 +111,31 @@ func (c *Checker) IsReady(obj *unstructured.Unstructured) bool {
 	gvk := obj.GroupVersionKind()
 
 	switch gvk.Kind {
-	case "Namespace":
+	case kindNamespace:
 		return c.isNamespaceReady(obj)
-	case "ConfigMap", "Secret", "ServiceAccount":
+	case kindConfigMap, kindSecret, kindServiceAccount:
 		return true // These are ready immediately
-	case "Service":
+	case kindService:
 		return c.isServiceReady(obj)
-	case "Deployment":
+	case kindDeployment:
 		return c.isDeploymentReady(obj)
-	case "StatefulSet":
+	case kindStatefulSet:
 		return c.isStatefulSetReady(obj)
-	case "DaemonSet":
+	case kindDaemonSet:
 		return c.isDaemonSetReady(obj)
-	case "Job":
+	case kindJob:
 		return c.isJobReady(obj)
-	case "CronJob":
+	case kindCronJob:
 		return true // CronJobs are ready when created
-	case "Ingress":
+	case kindIngress:
 		return c.isIngressReady(obj)
-	case "PersistentVolumeClaim":
+	case kindPVC:
 		return c.isPVCReady(obj)
-	case "PodDisruptionBudget":
+	case kindPDB:
 		return true // PDBs are ready immediately after creation
-	case "NetworkPolicy":
+	case kindNetworkPolicy:
 		return true // NetworkPolicies are ready immediately after creation
-	case "HorizontalPodAutoscaler":
+	case kindHorizontalPodAutoscaler:
 		return c.isHPAReady(obj)
 	default:
 		// For custom resources, check status.conditions
@@ -408,25 +427,25 @@ func (c *Checker) ClassifyPhase(
 ) PhaseResult {
 	gvk := obj.GroupVersionKind()
 	switch gvk.Kind {
-	case "Namespace":
+	case kindNamespace:
 		return c.classifyNamespacePhase(obj)
-	case "ConfigMap", "Secret", "ServiceAccount", "CronJob", "PodDisruptionBudget", "NetworkPolicy":
+	case kindConfigMap, kindSecret, kindServiceAccount, kindCronJob, kindPDB, kindNetworkPolicy:
 		return PhaseResult{Phase: lynqv1.ResourcePhaseAvailable}
-	case "Service":
+	case kindService:
 		return c.classifyServicePhase(obj, elapsedSinceApply, rolloutTimeout)
-	case "Deployment":
+	case kindDeployment:
 		return c.classifyDeploymentPhase(obj, elapsedSinceApply, rolloutTimeout)
-	case "StatefulSet":
+	case kindStatefulSet:
 		return c.classifyStatefulSetPhase(obj, elapsedSinceApply, rolloutTimeout)
-	case "DaemonSet":
+	case kindDaemonSet:
 		return c.classifyDaemonSetPhase(obj, elapsedSinceApply, rolloutTimeout)
-	case "Job":
+	case kindJob:
 		return c.classifyJobPhase(obj)
-	case "Ingress":
+	case kindIngress:
 		return c.classifyIngressPhase(obj, elapsedSinceApply, rolloutTimeout)
-	case "PersistentVolumeClaim":
+	case kindPVC:
 		return c.classifyPVCPhase(obj, elapsedSinceApply, rolloutTimeout)
-	case "HorizontalPodAutoscaler":
+	case kindHorizontalPodAutoscaler:
 		return c.classifyHPAPhase(obj, elapsedSinceApply, rolloutTimeout)
 	default:
 		return c.classifyCustomResourcePhase(obj, elapsedSinceApply, rolloutTimeout)
@@ -861,19 +880,19 @@ func (c *Checker) GetReadinessMessage(obj *unstructured.Unstructured) string {
 
 	gvk := obj.GroupVersionKind()
 	switch gvk.Kind {
-	case "Deployment":
+	case kindDeployment:
 		replicas, _, _ := unstructured.NestedInt64(obj.Object, "spec", "replicas")
 		availableReplicas, _, _ := unstructured.NestedInt64(obj.Object, "status", "availableReplicas")
 		return fmt.Sprintf("Waiting for replicas: %d/%d available", availableReplicas, replicas)
-	case "StatefulSet":
+	case kindStatefulSet:
 		replicas, _, _ := unstructured.NestedInt64(obj.Object, "spec", "replicas")
 		readyReplicas, _, _ := unstructured.NestedInt64(obj.Object, "status", "readyReplicas")
 		return fmt.Sprintf("Waiting for replicas: %d/%d ready", readyReplicas, replicas)
-	case "Job":
+	case kindJob:
 		succeeded, _, _ := unstructured.NestedInt64(obj.Object, "status", "succeeded")
 		failed, _, _ := unstructured.NestedInt64(obj.Object, "status", "failed")
 		return fmt.Sprintf("Job status: %d succeeded, %d failed", succeeded, failed)
-	case "HorizontalPodAutoscaler":
+	case kindHorizontalPodAutoscaler:
 		currentReplicas, _, _ := unstructured.NestedInt64(obj.Object, "status", "currentReplicas")
 		desiredReplicas, _, _ := unstructured.NestedInt64(obj.Object, "status", "desiredReplicas")
 		return fmt.Sprintf("HPA status: %d current, %d desired replicas", currentReplicas, desiredReplicas)
