@@ -836,6 +836,28 @@ func TestChecker_ClassifyPhase_Deployment(t *testing.T) {
 			wantPhase: lynqv1.ResourcePhasePending,
 		},
 		{
+			// Critical regression case (caught by E2E resource_timeout
+			// test): a Deployment with a non-existent image creates pods
+			// that NEVER reach Available, but updatedReplicas grows as the
+			// pod objects are scheduled. Naively checking updatedReplicas
+			// == spec.replicas would misclassify this as Degraded → still
+			// Ready → never escalates to Failed. The Progressing.reason
+			// gate ("NewReplicaSetAvailable" must have been seen at least
+			// once) is what distinguishes "post-rollout disruption" from
+			// "never converged".
+			name:      "Progressing — pods scheduled but NewReplicaSetAvailable never set (failing image pull)",
+			obj:       deploymentObj(2, 2, 3, 3, 0, 0, "ReplicaSetUpdated"),
+			elapsed:   5 * time.Second,
+			wantPhase: lynqv1.ResourcePhaseProgressing,
+		},
+		{
+			name:         "Failed — pods scheduled but never reached health, timeout elapsed",
+			obj:          deploymentObj(2, 2, 3, 3, 0, 0, "ReplicaSetUpdated"),
+			elapsed:      60 * time.Second,
+			wantPhase:    lynqv1.ResourcePhaseFailed,
+			wantTimedOut: true,
+		},
+		{
 			name:      "Pending — spec.replicas=0 (parity with existing semantics, not Degraded)",
 			obj:       deploymentObj(1, 1, 0, 0, 0, 0, "NewReplicaSetAvailable"),
 			elapsed:   5 * time.Second,
@@ -916,6 +938,16 @@ func TestChecker_ClassifyPhase_StatefulSet(t *testing.T) {
 			wantPhase: lynqv1.ResourcePhasePending,
 		},
 		{
+			// Regression guard: STS with non-existent image. Pods are
+			// scheduled (currentReplicas grows) but never reach Ready.
+			// readyReplicas==0 means rollout never converged; STS should
+			// stay Progressing, not Degraded.
+			name:      "Progressing — pods scheduled but readyReplicas=0 (failing image pull)",
+			obj:       statefulSetObj(2, 2, 3, 3, 3, 0, "v2", "v2"),
+			elapsed:   5 * time.Second,
+			wantPhase: lynqv1.ResourcePhaseProgressing,
+		},
+		{
 			name:      "Pending — replicas=0",
 			obj:       statefulSetObj(1, 1, 0, 0, 0, 0, "", ""),
 			elapsed:   5 * time.Second,
@@ -985,6 +1017,16 @@ func TestChecker_ClassifyPhase_DaemonSet(t *testing.T) {
 			obj:       daemonSetObj(1, 1, 0, 0, 0, 0),
 			elapsed:   5 * time.Second,
 			wantPhase: lynqv1.ResourcePhasePending,
+		},
+		{
+			// Regression guard: DaemonSet with non-existent image. Pods
+			// are scheduled (updatedNumberScheduled grows) but never reach
+			// Available (numberAvailable==0). DS should stay Progressing,
+			// not Degraded.
+			name:      "Progressing — pods scheduled across nodes but numberAvailable=0",
+			obj:       daemonSetObj(2, 2, 3, 3, 0, 0),
+			elapsed:   5 * time.Second,
+			wantPhase: lynqv1.ResourcePhaseProgressing,
 		},
 	}
 

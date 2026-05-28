@@ -496,7 +496,15 @@ func (c *Checker) classifyDeploymentPhase(
 	}
 
 	// 2. ProgressDeadlineExceeded — Kubernetes itself gave up. Lynq follows.
-	if reason := readDeploymentProgressingReason(obj); reason == "ProgressDeadlineExceeded" {
+	//
+	// The canonical "rollout has reached healthy state at least once for this
+	// generation" signal on a Deployment is
+	// `status.conditions[Progressing].reason == "NewReplicaSetAvailable"`.
+	// updatedReplicas==spec.replicas alone is NOT sufficient — a Deployment
+	// with a non-existent image creates pods (so updatedReplicas grows) that
+	// never reach Available, and we must NOT misclassify those as Degraded.
+	progressingReason := readDeploymentProgressingReason(obj)
+	if progressingReason == "ProgressDeadlineExceeded" {
 		return PhaseResult{
 			Phase:    lynqv1.ResourcePhaseFailed,
 			Reason:   "ProgressDeadlineExceeded (Kubernetes abandoned the rollout)",
@@ -504,23 +512,25 @@ func (c *Checker) classifyDeploymentPhase(
 		}
 	}
 
-	// 3. Available — rollout complete and fully healthy.
-	if updatedReplicas == replicas && availableReplicas == replicas {
+	// 3. Available — rollout converged healthy at least once AND fully healthy now.
+	if progressingReason == "NewReplicaSetAvailable" && availableReplicas == replicas {
 		return PhaseResult{Phase: lynqv1.ResourcePhaseAvailable, Replicas: rs}
 	}
 
-	// 4. Degraded — rollout completed for the current generation but
-	// availability has since dropped. Kubernetes is converging this; Lynq
-	// does NOT mark it Failed.
-	if updatedReplicas == replicas && availableReplicas < replicas {
+	// 4. Degraded — rollout converged healthy at least once but availability
+	// has since dropped. Kubernetes is converging the workload; Lynq does
+	// NOT mark this Failed (the headline phase-model semantic).
+	if progressingReason == "NewReplicaSetAvailable" && availableReplicas < replicas {
 		return PhaseResult{
 			Phase:    lynqv1.ResourcePhaseDegraded,
-			Reason:   fmt.Sprintf("availableReplicas=%d/%d, observedGeneration matched", availableReplicas, replicas),
+			Reason:   fmt.Sprintf("availableReplicas=%d/%d, NewReplicaSetAvailable was set", availableReplicas, replicas),
 			Replicas: rs,
 		}
 	}
 
-	// 5. Progressing — rollout not yet complete (updatedReplicas < replicas).
+	// 5. Progressing — rollout not yet complete OR never reached
+	// NewReplicaSetAvailable (e.g., failing image pull). Lynq's rollout
+	// timeout still escalates this to Failed.
 	if rolloutTimeout > 0 && elapsed >= rolloutTimeout {
 		return PhaseResult{
 			Phase:           lynqv1.ResourcePhaseFailed,
@@ -579,6 +589,12 @@ func (c *Checker) classifyStatefulSetPhase(
 	// Rollout complete: updatedReplicas converged AND revisions match. When
 	// updateRevision is empty (fresh STS or older API server), fall back to
 	// the updatedReplicas check alone.
+	//
+	// StatefulSet lacks a Deployment-style Progressing.reason, so we use a
+	// readyReplicas>0 heuristic to detect "this generation reached at least
+	// partial health". Without it, an STS with a non-existent image —
+	// where updatedReplicas grows as pods are scheduled (even if they never
+	// pull) — would be misclassified as Degraded instead of Progressing→Failed.
 	revisionsConverged := updateRevision == "" || currentRevision == updateRevision
 	rolloutComplete := updatedReplicas == replicas && currentReplicas == replicas && revisionsConverged
 
@@ -586,7 +602,11 @@ func (c *Checker) classifyStatefulSetPhase(
 		return PhaseResult{Phase: lynqv1.ResourcePhaseAvailable, Replicas: rs}
 	}
 
-	if rolloutComplete && readyReplicas < replicas {
+	// Degraded requires that AT LEAST ONE pod is currently Ready — proof
+	// that the generation reached health at some point. Zero ready pods on
+	// a "rollout-complete" STS means it never converged → Progressing,
+	// which Lynq's timeout will escalate to Failed.
+	if rolloutComplete && readyReplicas > 0 && readyReplicas < replicas {
 		return PhaseResult{
 			Phase:    lynqv1.ResourcePhaseDegraded,
 			Reason:   fmt.Sprintf("readyReplicas=%d/%d, revisions converged", readyReplicas, replicas),
@@ -646,7 +666,11 @@ func (c *Checker) classifyDaemonSetPhase(
 		return PhaseResult{Phase: lynqv1.ResourcePhaseAvailable, Replicas: rs}
 	}
 
-	if updated == desired && available < desired {
+	// Degraded requires AT LEAST ONE node has a healthy pod — proof the
+	// rollout reached partial health. Zero available pods with rollout
+	// "complete" means it never converged (e.g., bad image on every node)
+	// → Progressing, which Lynq's timeout will escalate to Failed.
+	if updated == desired && available > 0 && available < desired {
 		return PhaseResult{
 			Phase:    lynqv1.ResourcePhaseDegraded,
 			Reason:   fmt.Sprintf("numberAvailable=%d/%d, updatedNumberScheduled matched", available, desired),
