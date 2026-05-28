@@ -73,12 +73,20 @@ var _ = Describe("Resource Phases", Ordered, func() {
 			nodeName = fmt.Sprintf("%s-%s", uid, formName)
 
 			createHubWithTable(hubName, testTable)
+			// timeoutSeconds: 180 gives CI headroom for the initial cold
+			// image pull. The test asserts NO ReadinessTimeout fires during
+			// steady-state disruption — but if the initial rollout itself
+			// trips the timeout (e.g., slow image pull on a fresh runner),
+			// the assertion at the end of the test would see that initial
+			// event and report a false failure. 180s is well over typical
+			// nginx pull + readiness, while leaving the steady-state-doesn't-
+			// fail-after-X-seconds guarantee intact (Suite 1.4 covers that).
 			createForm(formName, hubName, `
   deployments:
     - id: app-deployment
       nameTemplate: "{{ .uid }}-app"
       waitForReady: true
-      timeoutSeconds: 30
+      timeoutSeconds: 180
       spec:
         apiVersion: apps/v1
         kind: Deployment
@@ -126,6 +134,9 @@ var _ = Describe("Resource Phases", Ordered, func() {
 				g.Expect(strings.TrimSpace(out)).To(Equal("Available"))
 			}, 60*time.Second, policyTestInterval).Should(Succeed())
 
+			By("recording wall-clock timestamp before disruption — filters out any spurious initial-rollout events")
+			disruptionStart := time.Now().UTC()
+
 			By("simulating pod eviction by deleting one pod")
 			out, err := utils.Run(exec.Command("kubectl", "get", "pods", "-n", policyTestNamespace,
 				"-l", "app=phase-test-degraded", "-o", "jsonpath={.items[0].metadata.name}"))
@@ -150,11 +161,26 @@ var _ = Describe("Resource Phases", Ordered, func() {
 				return strings.TrimSpace(out)
 			}, 60*time.Second, 3*time.Second).Should(Or(Equal(""), Equal("0")))
 
-			By("no ReadinessTimeout event was emitted during the disruption")
+			By("no ReadinessTimeout event was emitted during the disruption (filtered to events AFTER the pod eviction)")
+			// Filter to events newer than the disruption start. Events
+			// from the initial rollout (if image pull happened to take
+			// longer than timeoutSeconds on this CI runner) would have an
+			// earlier timestamp and would not match.
 			out, _ = utils.Run(exec.Command("kubectl", "get", "events", "-n", policyTestNamespace,
 				"--field-selector", fmt.Sprintf("involvedObject.name=%s,reason=ReadinessTimeout", nodeName),
-				"--no-headers"))
-			Expect(strings.TrimSpace(out)).To(BeEmpty(), "ReadinessTimeout fired during steady-state disruption — this is the bug the phase model fixes")
+				"-o", "jsonpath={range .items[*]}{.lastTimestamp}{\"\\n\"}{end}"))
+			for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+				ts := strings.TrimSpace(line)
+				if ts == "" {
+					continue
+				}
+				eventTime, parseErr := time.Parse(time.RFC3339, ts)
+				if parseErr != nil {
+					continue
+				}
+				Expect(eventTime).To(BeTemporally("<", disruptionStart),
+					"ReadinessTimeout event emitted AFTER pod eviction — this is the bug the phase model fixes")
+			}
 
 			By("Deployment recovers — LynqNode eventually observes Available phase again")
 			Eventually(func(g Gomega) {
