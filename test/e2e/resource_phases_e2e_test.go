@@ -161,6 +161,33 @@ var _ = Describe("Resource Phases", Ordered, func() {
 				return strings.TrimSpace(out)
 			}, 60*time.Second, 3*time.Second).Should(Or(Equal(""), Equal("0")))
 
+			By("degradedResources reaches >=1 at some point during the disruption window")
+			// Eventually-window: the pod is briefly Degraded between deletion and the new pod
+			// reaching Available. We assert observation of >=1, not Consistently — restart
+			// can be fast on CI and the window narrow.
+			Eventually(func() string {
+				out, _ := utils.Run(exec.Command("kubectl", "get", "lynqnode", nodeName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.status.degradedResources}"))
+				return strings.TrimSpace(out)
+			}, 60*time.Second, 2*time.Second).Should(SatisfyAny(Equal("1"), Equal("2"), Equal("3")),
+				"degradedResources should report >=1 while a pod is unavailable post-rollout")
+
+			By("degradedResourceIds includes the deployment resource ID during disruption")
+			Eventually(func() string {
+				out, _ := utils.Run(exec.Command("kubectl", "get", "lynqnode", nodeName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.status.degradedResourceIds}"))
+				return strings.TrimSpace(out)
+			}, 60*time.Second, 2*time.Second).Should(ContainSubstring("app-deployment"),
+				"degradedResourceIds should list the affected resource ID")
+
+			By("resourcePhases[0].phase shows Degraded during the disruption window")
+			Eventually(func() string {
+				out, _ := utils.Run(exec.Command("kubectl", "get", "lynqnode", nodeName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.status.resourcePhases[0].phase}"))
+				return strings.TrimSpace(out)
+			}, 60*time.Second, 2*time.Second).Should(Equal("Degraded"),
+				"Per-resource phase should transition Available→Degraded post-eviction")
+
 			By("no ReadinessTimeout event was emitted during the disruption (filtered to events AFTER the pod eviction)")
 			// Filter to events newer than the disruption start. Events
 			// from the initial rollout (if image pull happened to take
@@ -445,6 +472,22 @@ var _ = Describe("Resource Phases", Ordered, func() {
 			out, _ := utils.Run(exec.Command("kubectl", "get", "lynqnode", nodeName, "-n", policyTestNamespace,
 				"-o", "jsonpath={.status.failedResources}"))
 			Expect(strings.TrimSpace(out)).To(Or(Equal(""), Equal("0")))
+
+			By("progressingResources settles to 0 once the rollout completes")
+			// The slow rollout went through Progressing → Available; once
+			// Available is reached, no resource should remain Progressing.
+			Eventually(func() string {
+				out, _ := utils.Run(exec.Command("kubectl", "get", "lynqnode", nodeName, "-n", policyTestNamespace,
+					"-o", "jsonpath={.status.progressingResources}"))
+				return strings.TrimSpace(out)
+			}, 30*time.Second, policyTestInterval).Should(Or(Equal(""), Equal("0")),
+				"progressingResources should drop to 0 after rollout completes")
+
+			By("degradedResources is 0 in the healthy post-rollout state")
+			out, _ = utils.Run(exec.Command("kubectl", "get", "lynqnode", nodeName, "-n", policyTestNamespace,
+				"-o", "jsonpath={.status.degradedResources}"))
+			Expect(strings.TrimSpace(out)).To(Or(Equal(""), Equal("0")),
+				"degradedResources should be 0 for a freshly-rolled-out healthy workload")
 		})
 	})
 })

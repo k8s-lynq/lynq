@@ -130,6 +130,17 @@ var _ = Describe("Metrics Collection", Ordered, func() {
 					// Check lynqnode_condition_status for Ready condition
 					readyConditionMetric := extractConditionMetricValue(metricsOutput, "lynqnode_condition_status", expectedNodeName, policyTestNamespace, "Ready")
 					g.Expect(readyConditionMetric).To(Equal(float64(1)), "Ready condition should be True (1)")
+
+					// Phase-model gauges: a healthy steady-state workload has
+					// no Degraded / Progressing / Pending resources.
+					degradedMetric := extractMetricValue(metricsOutput, "lynqnode_resources_degraded", expectedNodeName, policyTestNamespace)
+					g.Expect(degradedMetric).To(Equal(float64(0)), "lynqnode_resources_degraded should be 0 in healthy state")
+
+					progressingMetric := extractMetricValue(metricsOutput, "lynqnode_resources_progressing", expectedNodeName, policyTestNamespace)
+					g.Expect(progressingMetric).To(Equal(float64(0)), "lynqnode_resources_progressing should be 0 once rolled out")
+
+					pendingMetric := extractMetricValue(metricsOutput, "lynqnode_resources_pending", expectedNodeName, policyTestNamespace)
+					g.Expect(pendingMetric).To(Equal(float64(0)), "lynqnode_resources_pending should be 0 once observed")
 				}, 4*time.Minute, 5*time.Second).Should(Succeed())
 			})
 		})

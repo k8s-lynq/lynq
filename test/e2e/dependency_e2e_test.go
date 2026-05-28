@@ -152,6 +152,22 @@ var _ = Describe("Dependency Graph", Ordered, func() {
 					g.Expect(err).NotTo(HaveOccurred())
 					g.Expect(output).To(Equal("3"))
 				}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+				By("And resourcePhases should have one entry per resource, all Available")
+				// Per-resource phase array sanity: every resource in the form
+				// must show up in status.resourcePhases with its classified
+				// phase. For a fully-applied chain, every entry must be
+				// Available (no Pending/Progressing leftovers).
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "lynqnode", expectedNodeName, "-n", policyTestNamespace,
+						"-o", "jsonpath={.status.resourcePhases[*].phase}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					// Three "Available" tokens space-separated when all phases
+					// are Available — guards both array length and per-entry
+					// phase in one assertion.
+					g.Expect(strings.TrimSpace(output)).To(Equal("Available Available Available"))
+				}, policyTestTimeout, policyTestInterval).Should(Succeed())
 			})
 		})
 

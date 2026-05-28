@@ -19,6 +19,7 @@ package e2e
 import (
 	"fmt"
 	"os/exec"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -140,6 +141,31 @@ var _ = Describe("Resource Health Check", Ordered, func() {
 					output, err = utils.Run(cmd)
 					g.Expect(err).NotTo(HaveOccurred())
 					g.Expect(output).To(Equal("1"))
+				}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+				By("And the new per-phase counts should all be 0 in the healthy state")
+				// Zero-state guard for the phase-model fields: a freshly-rolled-out
+				// healthy workload has no Degraded / Progressing / Pending resources.
+				// Catches regressions where a phase incorrectly classifies a healthy
+				// resource as anything other than Available.
+				Eventually(func(g Gomega) {
+					for _, field := range []string{"degradedResources", "progressingResources", "pendingResources"} {
+						cmd := exec.Command("kubectl", "get", "lynqnode", expectedNodeName, "-n", policyTestNamespace,
+							"-o", fmt.Sprintf("jsonpath={.status.%s}", field))
+						output, err := utils.Run(cmd)
+						g.Expect(err).NotTo(HaveOccurred())
+						g.Expect(strings.TrimSpace(output)).To(Or(Equal(""), Equal("0")),
+							"%s should be 0 in healthy post-rollout state", field)
+					}
+				}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+				By("And resourcePhases[0].phase should be Available")
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "lynqnode", expectedNodeName, "-n", policyTestNamespace,
+						"-o", "jsonpath={.status.resourcePhases[0].phase}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(strings.TrimSpace(output)).To(Equal("Available"))
 				}, policyTestTimeout, policyTestInterval).Should(Succeed())
 			})
 		})
