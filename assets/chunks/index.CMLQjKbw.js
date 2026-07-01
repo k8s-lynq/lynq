@@ -1,0 +1,1 @@
+import{S as s,T as l}from"./index.De4Wc8wj.js";import{i as v,t as h}from"./index.De4Wc8wj.js";import"./index.C3pHsCe3.js";var u=[null];function f(n,r){var t=n.__transition,o,i;if(t){r=r==null?null:r+"";for(i in t)if((o=t[i]).state>s&&o.name===r)return new l([[n]],u,r,+i)}return null}export{f as active,v as interrupt,h as transition};
