@@ -60,14 +60,14 @@
         >
           <a
             href="/quickstart"
-            class="cta-primary group pointer-events-auto inline-flex items-center gap-2 rounded-full bg-lynq-text! px-6 py-[0.72rem] text-[0.95rem] font-medium text-[#0a0a0a]! no-underline transition-opacity duration-200 hover:opacity-90"
+            class="cta-primary group pointer-events-auto inline-flex items-center gap-2 rounded-full bg-lynq-text! px-6 py-[0.72rem] text-[0.95rem] font-medium! text-[#0a0a0a]! no-underline transition-opacity duration-200 hover:opacity-90"
           >
             Get Started
             <span class="arrow inline-block transition-transform duration-200 group-hover:translate-x-[3px]" aria-hidden="true">&#8594;</span>
           </a>
           <a
             href="https://github.com/k8s-lynq/lynq"
-            class="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-lynq-border bg-transparent px-6 py-[0.72rem] text-[0.95rem] font-medium text-lynq-text! no-underline transition-colors duration-200 hover:border-white/20 hover:bg-white/[0.06]"
+            class="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-lynq-border bg-transparent px-6 py-[0.72rem] text-[0.95rem] font-medium! text-lynq-text! no-underline transition-colors duration-200 hover:border-white/20 hover:bg-white/[0.06]"
             target="_blank"
             rel="noopener"
           >
