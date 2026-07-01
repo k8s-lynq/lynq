@@ -186,16 +186,18 @@ const features = [
   background: rgba(255, 255, 255, 0.02);
 }
 
-.cta-button {
+.dashboard-cta .cta-button {
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 1rem 2rem;
+  padding: 0.85rem 1.9rem;
   background: linear-gradient(135deg, var(--lynq-purple) 0%, var(--lynq-accent) 100%);
-  color: #fff;
-  font-weight: 600;
-  font-size: 1rem;
-  border-radius: 12px;
+  /* weight/color are overridden by the .VPHome .landing-page a !important reset,
+     so restate them !important to keep the pill on-brand (windflow pills are 500). */
+  color: #04100f !important;
+  font-weight: 500 !important;
+  font-size: 0.95rem;
+  border-radius: 9999px;
   text-decoration: none;
   transition: transform 0.3s var(--lynq-ease), box-shadow 0.3s var(--lynq-ease);
   box-shadow: 0 4px 15px rgba(51, 172, 168, 0.35);
