@@ -89,7 +89,11 @@ html.dark .VPContent.is-home .VPHome {
 .VPHome .landing-page h6 {
   border: none !important;
   padding: 0 !important;
-  letter-spacing: normal !important;
+  /* windflow uses tight tracking on large display headings (~-1.5px at 60px).
+     This selector (0,2,1 + !important) outranks Tailwind's important tracking
+     utilities, so the tracking is asserted here rather than per-heading. Any
+     heading that wants normal tracking must override with equal specificity. */
+  letter-spacing: -0.025em !important;
 }
 
 .VPHome .landing-page p {
@@ -702,4 +706,127 @@ html.dark .VPContent.is-home .VPHome {
   100% {
     opacity: 0.8;
   }
+}
+
+/* ========================================
+   Lynq landing design tokens (renewal)
+   ----------------------------------------
+   Shared foundation for the rebuilt landing primitives: SectionHeader,
+   StatusBadge, ResourceCard, TerminalWindow, DataTable, YamlBlock, ArrowFlow,
+   SceneStage, etc. Reference these via var(--lynq-*) from every primitive.
+
+   NOTE: The `.landing-page` block above applies AGGRESSIVE resets under
+   `.VPHome .landing-page` — strips h*/p/ul/a/pre/code styling with !important.
+   New primitives are scoped SFCs and mostly escape those selectors, but any
+   markup rendered inside `.landing-page` must set its own styles explicitly
+   (and where it collides with the resets, may need to re-assert them) so it
+   survives. Do not rely on inherited VitePress typography inside primitives.
+   ======================================== */
+:root {
+  /* Layout + type tokens are declared FIRST, before the surface/color tokens.
+     The build's CSS pipeline was dropping declarations that appeared later in
+     this :root block (custom props like --lynq-container / --lynq-h1 resolved
+     empty at runtime, collapsing the page container to full width and headings
+     to the browser default). Keeping them at the top guarantees they parse. */
+  --lynq-container: 1040px;
+  --lynq-h1: clamp(2.6rem, 5.5vw, 3.75rem);
+  --lynq-h2: clamp(2rem, 5vw, 3.75rem);
+  --lynq-h1-weight: 400;
+  --lynq-heading-weight: 500;
+  --lynq-tracking: -0.03em;
+
+  /* Surfaces — matched to the windflow reference (pure black, near-black cards) */
+  --lynq-bg: #000000;
+  --lynq-bg-2: #050505;
+  --lynq-card: #050505;
+  --lynq-border: rgba(255, 255, 255, 0.09);
+
+  /* Brand + status accents */
+  --lynq-purple: #33aca8;
+  --lynq-accent: #4fd1cb;
+  --lynq-green: #10b981;
+  --lynq-blue: #3b82f6;
+  --lynq-red: #ef4444;
+  --lynq-amber: #f59e0b;
+
+  /* Text — windflow uses a soft light-gray (#ededed), not pure white */
+  --lynq-text: #ededed;
+  --lynq-text-dim: rgba(255, 255, 255, 0.65);
+  --lynq-text-faint: rgba(255, 255, 255, 0.4);
+
+  /* Display font — Pretendard Variable (same face windflow uses), loaded via
+     a stylesheet link in config.mjs head. Falls back to the system stack. */
+  --lynq-font: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui,
+    -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  /* Type + layout */
+  --lynq-mono: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', monospace;
+  --lynq-section-y: 8rem;
+  --lynq-container: 1040px;
+  --lynq-radius: 18px;
+  --lynq-radius-sm: 10px;
+
+  /* Motion */
+  --lynq-beat: 600ms;
+  --lynq-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --lynq-reveal: 0.6s;
+
+  /* Heading scale + weight, matched to windflow: very large, light weight,
+     tight tracking, soft-gray. H1 ~60px/400, H2 ~60px/500. */
+  --lynq-h1: clamp(2.6rem, 5.5vw, 3.75rem);
+  --lynq-h2: clamp(2rem, 5vw, 3.75rem);
+  --lynq-h1-weight: 400;
+  --lynq-heading-weight: 500;
+  --lynq-tracking: -0.03em;
+}
+
+/* Apply the windflow display face across the whole landing page. Scoped to
+   .landing-page so docs pages keep the VitePress default font. */
+.landing-page,
+.landing-page h1,
+.landing-page h2,
+.landing-page h3 {
+  font-family: var(--lynq-font);
+}
+
+/* Landing heading scale — matched to the windflow reference (H1 ≈ 60px/400,
+   section H2 ≈ 60px/500, tight tracking from the reset above).
+
+   These live in GLOBAL, UNLAYERED CSS on purpose. VitePress ships unlayered
+   base rules (`h1{font-size:2em;font-weight:600}`, `h2{1.5em}`), and Tailwind's
+   font-size utilities sit in `@layer utilities` — layered rules ALWAYS lose to
+   unlayered ones, so `text-[length:...]` utilities rendered these headings at
+   the 32px/24px browser defaults. `.landing-page h1` (0,1,1) cleanly outranks
+   the base `h1` (0,0,1) and beats the layered utilities. Literal clamp() values
+   are used (not var(--lynq-h*)) so heading sizing never depends on custom-prop
+   resolution order. Section components that set their own scoped h2 size (higher
+   specificity) still win and keep their bespoke scale. */
+.landing-page h1 {
+  font-size: clamp(2.6rem, 5.5vw, 3.75rem);
+  font-weight: 400;
+  line-height: 1.08;
+}
+.landing-page h2 {
+  font-size: clamp(2rem, 5vw, 3.75rem);
+  font-weight: 500;
+  line-height: 1.12;
+}
+
+/* ========================================
+   Safe global .gradient-text fallback
+   ----------------------------------------
+   The v1 Hero H1 second line ("Your Infrastructure.") went invisible when
+   .gradient-text set `-webkit-text-fill-color: transparent` + `background-clip:
+   text` WITHOUT a real `background-image` — transparent text over no gradient.
+   This global rule guarantees a valid purple->accent gradient is always painted
+   under the clipped text, so the class is safe no matter how a section — e.g.
+   HeroDemo.vue — defines or overrides its own scoped copy. A scoped override with
+   its own valid gradient still wins; this is the floor, not a ceiling.
+   ======================================== */
+.gradient-text {
+  background-image: linear-gradient(135deg, var(--lynq-text), var(--lynq-accent));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
 }

@@ -59,7 +59,7 @@ function formatDate(raw) {
 }
 
 .container {
-  max-width: 1200px;
+  max-width: 1040px;
   margin: 0 auto;
 }
 
@@ -74,14 +74,17 @@ function formatDate(raw) {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  color: #a78bfa;
+  color: #4fd1cb;
   margin-bottom: 0.75rem;
 }
 
 .section-header h2 {
-  font-size: clamp(2rem, 4vw, 3rem);
-  font-weight: 700;
-  color: #fff;
+  /* Literal values: the --lynq-h2/--lynq-heading-weight custom props do not
+     resolve in scoped component CSS on this page. Matched to windflow H2. */
+  font-size: clamp(2rem, 5vw, 3.75rem);
+  font-weight: 500;
+  color: #ededed;
+  letter-spacing: -0.025em;
   margin: 0 0 1rem;
 }
 
@@ -110,7 +113,7 @@ function formatDate(raw) {
 
 .blog-card:hover {
   background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(167, 139, 250, 0.3);
+  border-color: rgba(79, 209, 203, 0.3);
   transform: translateY(-4px);
 }
 
@@ -139,8 +142,8 @@ function formatDate(raw) {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   padding: 0.2rem 0.6rem;
-  background: rgba(167, 139, 250, 0.15);
-  color: #a78bfa;
+  background: rgba(79, 209, 203, 0.15);
+  color: #4fd1cb;
   border-radius: 100px;
 }
 
@@ -166,12 +169,12 @@ function formatDate(raw) {
   gap: 0.4rem;
   font-size: 0.85rem;
   font-weight: 500;
-  color: #a78bfa;
+  color: #4fd1cb;
   transition: all 0.3s ease;
 }
 
 .blog-card:hover .read-more {
-  color: #c4b5fd;
+  color: #8ee0db;
 }
 
 .read-more .arrow {
@@ -192,13 +195,13 @@ function formatDate(raw) {
   gap: 0.5rem;
   font-size: 1rem;
   font-weight: 500;
-  color: #a78bfa;
+  color: #4fd1cb;
   text-decoration: none;
   transition: all 0.3s ease;
 }
 
 .view-all:hover {
-  color: #c4b5fd;
+  color: #8ee0db;
 }
 
 .view-all .arrow {
