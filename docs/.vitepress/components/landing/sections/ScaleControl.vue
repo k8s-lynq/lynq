@@ -218,7 +218,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .scale {
   width: 100%;
-  padding: 6rem 2rem;
+  padding: var(--lynq-section-y) 2rem;
   scroll-margin-top: 5rem;
 }
 .scale-inner { max-width: 1040px; }

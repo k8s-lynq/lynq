@@ -761,7 +761,7 @@ html.dark .VPContent.is-home .VPHome {
 
   /* Type + layout */
   --lynq-mono: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', monospace;
-  --lynq-section-y: 8rem;
+  --lynq-section-y: 5.5rem;
   --lynq-container: 1040px;
   --lynq-radius: 18px;
   --lynq-radius-sm: 10px;

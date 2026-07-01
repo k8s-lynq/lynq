@@ -117,7 +117,7 @@ import LineIcon from '../primitives/LineIcon.vue'
 <style scoped>
 .reconcile {
   width: 100%;
-  padding: 6rem 2rem;
+  padding: var(--lynq-section-y) 2rem;
   scroll-margin-top: 5rem;
 }
 .reconcile-inner {
