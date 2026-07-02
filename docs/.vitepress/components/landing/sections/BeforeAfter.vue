@@ -5,7 +5,7 @@
         label="The Problem"
         title="Your Database Knows. Your Cluster Doesn't."
         subtitle="The moment a row changes, the cluster is out of date — until someone runs kubectl. Lynq closes that gap continuously: the cluster is always a reflection of the database."
-        accent="purple"
+        accent="amber"
       />
 
       <!-- Compact drift loop: the Database holds the desired state; the Cluster
@@ -50,7 +50,24 @@ import SectionHeader from '../primitives/SectionHeader.vue'
 <style scoped>
 .before-after {
   padding-block: var(--lynq-section-y);
-  background: linear-gradient(180deg, var(--lynq-bg-2) 0%, var(--lynq-bg) 100%);
+  position: relative;
+}
+/* "The Problem" section signature — a warm red/amber wash so drift reads as
+   tension. Painted on ::before so the global section-transparency rule (which
+   only clears `background`) leaves it intact. */
+.before-after::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(52rem 32rem at 50% -4%, rgba(239, 68, 68, 0.1), transparent 62%),
+    radial-gradient(40rem 30rem at 88% 104%, rgba(245, 158, 11, 0.07), transparent 60%);
+}
+.before-after > * {
+  position: relative;
+  z-index: 1;
 }
 
 /* ---- compact drift panel ---- */

@@ -267,7 +267,23 @@ onBeforeUnmount(() => {
 <style scoped>
 .observability {
   padding-block: var(--lynq-section-y);
-  background: var(--lynq-bg);
+  position: relative;
+}
+/* Cool blue "ops" signature — contrasts the red breach graphs. On ::before so
+   the global section-transparency rule leaves it intact. */
+.observability::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(54rem 34rem at 50% -4%, rgba(59, 130, 246, 0.12), transparent 62%),
+    radial-gradient(40rem 30rem at 10% 100%, rgba(51, 172, 168, 0.06), transparent 60%);
+}
+.observability > * {
+  position: relative;
+  z-index: 1;
 }
 .observability :deep(.lynq-section-header h2) {
   font-size: var(--lynq-h2);
