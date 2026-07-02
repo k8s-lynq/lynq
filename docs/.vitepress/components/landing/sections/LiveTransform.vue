@@ -1,177 +1,176 @@
 <template>
-  <section
-    class="live-transform scroll-mt-20 px-8"
-    ref="sectionRef"
-    @mouseenter="onPanelEnter"
-    @mouseleave="onPanelLeave"
-  >
+  <section class="live-transform scroll-mt-20 px-8" ref="sectionRef">
     <div class="mx-auto" style="max-width: 1040px" ref="containerRef">
       <SectionHeader
         label="How It Works"
         title="From Data to Resources in Seconds"
-        subtitle="Follow the full lifecycle — from a database row to running Kubernetes resources. Click any stage to jump."
+        subtitle="A real operator session — apply two manifests, then watch every row reconcile into named, running Kubernetes resources."
         accent="green"
       />
 
-      <!-- Stage rail: Database → LynqHub → LynqForm → Kubernetes -->
-      <div class="rail flex items-stretch justify-center mb-10" role="tablist" aria-label="Pipeline stages">
-        <template v-for="(stage, i) in stages" :key="stage.key">
+      <!-- Single authentic terminal that replays the whole workflow. -->
+      <div class="term rounded-lynq-sm border border-lynq-border overflow-hidden" @click="onTermClick">
+        <div class="term-bar">
+          <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span class="term-title">lynq — kubectl · zsh</span>
           <button
-            class="stage rounded-lynq border border-lynq-border flex flex-col items-center gap-1.5 px-4 py-5 text-lynq-text cursor-pointer"
-            :class="[stage.key, { active: step === i, done: step > i }]"
-            role="tab"
-            :aria-selected="step === i"
-            @click="onStageClick(i)"
-          >
-            <span class="stage-icon flex items-center justify-center text-lynq-purple" aria-hidden="true">
-              <LineIcon :name="stage.icon" />
-            </span>
-            <span class="text-[0.95rem] font-semibold text-lynq-text">{{ stage.label }}</span>
-            <span class="text-[0.72rem] text-lynq-faint">{{ stage.sublabel }}</span>
-          </button>
+            v-if="finished && !reduced"
+            class="term-replay"
+            type="button"
+            @click.stop="replay"
+            aria-label="Replay session"
+          >↻ replay</button>
+          <span v-else class="term-replay-spacer" aria-hidden="true"></span>
+        </div>
 
-          <div v-if="i < stages.length - 1" class="rail-arrow">
-            <ArrowFlow
-              direction="right"
-              :color="i === stages.length - 2 ? 'green' : 'purple'"
-              :active="!reduced && (step === i || step === i + 1)"
-              :label="stage.edge"
-            />
-          </div>
-        </template>
-      </div>
+        <div class="term-scroll" ref="scrollRef" role="log" aria-label="Terminal session">
+          <div
+            v-for="(ln, i) in rendered"
+            :key="i"
+            class="tline"
+            :class="ln.tone"
+          ><span v-if="ln.prompt" class="tprompt">{{ ln.prompt }}</span><span class="ttxt">{{ ln.text || ' ' }}</span></div>
 
-      <!-- Detail panel: prose (left) + YAML / terminal (right).
-           The panel reserves a FIXED height so switching steps never reflows
-           the page (no CLS); shorter steps simply have extra padding room. -->
-      <div class="panel rounded-lynq border border-lynq-border flex p-8">
-        <transition name="fade-slide" mode="out-in">
-          <div class="panel-inner w-full" :key="step">
-            <div class="prose">
-              <span class="step-index block font-mono text-[0.72rem] font-semibold uppercase tracking-[0.1em] text-lynq-accent mb-[0.6rem]">Step {{ step + 1 }} / {{ stages.length }}</span>
-              <h3 class="text-[1.3rem] text-lynq-text m-0 mb-[0.9rem]">{{ pipelineSteps[step].title }}</h3>
-              <p class="text-[0.98rem] leading-[1.65] text-lynq-dim m-0">{{ pipelineSteps[step].description }}</p>
-            </div>
-
-            <div class="detail min-w-0">
-              <TerminalWindow v-if="step === 3" title="kubectl output" class="demo-object">
-                <TerminalLine
-                  v-for="(ln, li) in kubectlLines"
-                  :key="li"
-                  :prompt="ln.prompt"
-                  :text="ln.text || ' '"
-                  :revealed="reduced || li <= revealedLines"
-                />
-              </TerminalWindow>
-              <YamlBlock
-                v-else
-                class="demo-object"
-                :filename="pipelineSteps[step].filename"
-                :code="pipelineSteps[step].code"
-                :highlight-tokens="['{{ .uid }}']"
-              />
-            </div>
-          </div>
-        </transition>
+          <div v-if="typing" class="tline cmd"><span class="tprompt">{{ typing.prompt }}</span><span class="ttxt">{{ typing.text }}</span><span class="caret" aria-hidden="true"></span></div>
+          <div v-else-if="atPrompt" class="tline cmd"><span class="tprompt">$</span><span class="ttxt"> </span><span class="caret" aria-hidden="true"></span></div>
+        </div>
       </div>
     </div>
   </section>
 </template>
 
 <script setup>
-import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import SectionHeader from '../primitives/SectionHeader.vue'
-import ArrowFlow from '../primitives/ArrowFlow.vue'
-import YamlBlock from '../primitives/YamlBlock.vue'
-import TerminalWindow from '../primitives/TerminalWindow.vue'
-import TerminalLine from '../primitives/TerminalLine.vue'
-import LineIcon from '../primitives/LineIcon.vue'
 import { useInView } from '../composables/useInView.js'
 import { useReducedMotion } from '../composables/useReducedMotion.js'
-import { useStepTimeline } from '../composables/useStepTimeline.js'
-import { pipelineSteps, kubectlLines } from '../data/demoData.js'
-
-// Static stage metadata. Icons are picked from the shared LineIcon set so the
-// pipeline reads in the same restrained line-art style as the rest of the page.
-const stages = [
-  { key: 'db', label: 'Database', sublabel: 'MySQL', edge: 'sync', icon: 'database' },
-  { key: 'hub', label: 'LynqHub', sublabel: 'Data Source', edge: 'data', icon: 'sync' },
-  { key: 'form', label: 'LynqForm', sublabel: 'Template', edge: 'apply', icon: 'template' },
-  { key: 'k8s', label: 'Kubernetes', sublabel: 'Resources', edge: '', icon: 'cube' },
-]
+import { terminalSession } from '../data/demoData.js'
 
 const reduced = useReducedMotion()
 const sectionRef = ref(null)
 const containerRef = ref(null)
+const scrollRef = ref(null)
 const { inView } = useInView(containerRef, { threshold: 0.25, once: true })
 
-// Auto-advancing walkthrough. Holds on the final stage (no loop) for calm.
-const { step, playing, play, pause, seek } = useStepTimeline({
-  steps: stages.length,
-  durations: 3800,
-  loop: false,
-})
+// Committed lines (fully printed), the in-progress command being typed, and
+// whether the session has settled at a final idle prompt.
+const rendered = ref([])
+const typing = ref(null) // { prompt, text } | null
+const atPrompt = ref(false)
+const finished = ref(false)
 
-// Start once the section scrolls into view (skip auto-motion when reduced).
-watch(inView, (v) => {
-  if (v && !reduced.value) play()
-})
-
-// Sub-reveal for the step-4 terminal: reveal kubectl lines one at a time once
-// stage 3 is reached. Under reduced motion every line shows instantly.
-const revealedLines = ref(0)
-let lineTimer = null
-
-function clearLineTimer() {
-  if (lineTimer !== null) {
-    clearInterval(lineTimer)
-    lineTimer = null
-  }
+// Cancellation: every run captures a token; a newer run (or unmount) bumps the
+// counter so the older async loop bails on its next await. All timeouts are
+// tracked so they can be cleared on reset/teardown (no leaks, SSR-safe).
+let runToken = 0
+const timers = new Set()
+function clearTimers() {
+  timers.forEach((t) => clearTimeout(t))
+  timers.clear()
+}
+function wait(ms) {
+  return new Promise((res) => {
+    const t = setTimeout(() => {
+      timers.delete(t)
+      res()
+    }, ms)
+    timers.add(t)
+  })
+}
+function scrollBottom() {
+  nextTick(() => {
+    const el = scrollRef.value
+    if (el) el.scrollTop = el.scrollHeight
+  })
 }
 
-function startLineReveal() {
-  clearLineTimer()
-  revealedLines.value = 0
-  if (typeof window === 'undefined') return
-  lineTimer = setInterval(() => {
-    if (revealedLines.value >= kubectlLines.length - 1) {
-      clearLineTimer()
-      return
+// Reduced motion / SSR: print the full transcript at once, no typing or waits.
+function renderStatic() {
+  clearTimers()
+  runToken++
+  rendered.value = terminalSession.map((s) => {
+    if (s.type === 'gap') return { prompt: '', text: '', tone: '' }
+    if (s.type === 'cmd') return { prompt: s.prompt || '$', text: s.text, tone: 'cmd' }
+    return { prompt: '', text: s.text, tone: s.tone || '' }
+  })
+  typing.value = null
+  atPrompt.value = true
+  finished.value = true
+}
+
+async function run() {
+  clearTimers()
+  const token = ++runToken
+  rendered.value = []
+  typing.value = null
+  atPrompt.value = false
+  finished.value = false
+
+  for (const step of terminalSession) {
+    if (token !== runToken) return
+
+    if (step.type === 'cmd') {
+      const prompt = step.prompt || '$'
+      typing.value = { prompt, text: '' }
+      for (const ch of step.text) {
+        if (token !== runToken) return
+        typing.value = { prompt, text: typing.value.text + ch }
+        scrollBottom()
+        // Human-ish keystroke cadence with slight jitter.
+        await wait(28 + Math.random() * 46)
+      }
+      // Pause after Enter, mimicking command dispatch + API latency.
+      await wait(430)
+      if (token !== runToken) return
+      rendered.value.push({ prompt, text: step.text, tone: 'cmd' })
+      typing.value = null
+      scrollBottom()
+    } else if (step.type === 'gap') {
+      rendered.value.push({ prompt: '', text: '', tone: '' })
+      scrollBottom()
+      await wait(step.delay ?? 130)
+    } else {
+      rendered.value.push({ prompt: '', text: step.text, tone: step.tone || '' })
+      scrollBottom()
+      await wait(step.delay ?? 85)
     }
-    revealedLines.value += 1
-  }, 180)
+  }
+
+  if (token !== runToken) return
+  atPrompt.value = true
+  finished.value = true
 }
 
-watch(step, (s) => {
-  if (s === 3 && !reduced.value) startLineReveal()
-  else clearLineTimer()
+// Start exactly once when the section first scrolls into view.
+let started = false
+function start() {
+  if (started) return
+  started = true
+  if (reduced.value) renderStatic()
+  else run()
+}
+function replay() {
+  if (!reduced.value) run()
+}
+function onTermClick() {
+  // Click-to-replay once the session has settled (matches the visible control).
+  if (finished.value && !reduced.value) run()
+}
+
+watch(inView, (v) => {
+  if (v) start()
 })
-
-// Clicking a stage scrubs to it (seek pauses auto-advance) and, if it's the
-// terminal stage, kicks off the line reveal.
-function onStageClick(i) {
-  seek(i)
-  if (i === 3 && !reduced.value) startLineReveal()
-}
-
-// Hovering the section pauses auto-advance so readers can dwell; leaving
-// resumes only if the walkthrough hadn't yet reached the final held stage.
-let wasPlayingBeforeHover = false
-function onPanelEnter() {
-  wasPlayingBeforeHover = playing.value
-  if (playing.value) pause()
-}
-function onPanelLeave() {
-  if (wasPlayingBeforeHover && step.value < stages.length - 1) play()
-}
 
 onMounted(() => {
-  // Under reduced motion settle straight on the terminal stage; the template
-  // shows all lines via the `reduced` guard, so no timer is needed.
-  if (reduced.value) seek(stages.length - 1)
+  // If the observer never fires (reduced motion users often have it disabled
+  // anyway) settle the static transcript so the section is never blank.
+  if (reduced.value) start()
 })
 
-onBeforeUnmount(clearLineTimer)
+onBeforeUnmount(() => {
+  runToken++
+  clearTimers()
+})
 </script>
 
 <style scoped>
@@ -180,168 +179,126 @@ onBeforeUnmount(clearLineTimer)
   background: linear-gradient(180deg, var(--lynq-bg) 0%, var(--lynq-bg-2) 100%);
 }
 
-/* Lighter, smaller heading (v2 tone). */
 .live-transform :deep(.lynq-section-header h2) {
   font-size: var(--lynq-h2);
   font-weight: var(--lynq-heading-weight);
 }
 
-/* ── Stage rail ── */
-/* Static layout is on the template; the animated hover/active state transitions
-   and the subtle base tint stay here (JS toggles .active / .done). */
-.stage {
-  min-width: 118px;
-  background: rgba(255, 255, 255, 0.02);
-  transition: transform var(--lynq-beat) var(--lynq-ease),
-    background 0.3s ease, border-color 0.3s ease;
-  font-family: inherit;
+/* ── Terminal chrome (matches TerminalWindow primitive) ── */
+.term {
+  background: var(--lynq-bg);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  cursor: default;
 }
 
-.stage:hover {
-  background: rgba(255, 255, 255, 0.05);
-  transform: translateY(-2px);
-}
-
-.stage.active {
-  background: rgba(51, 172, 168, 0.1);
-  border-color: rgba(51, 172, 168, 0.5);
-  transform: translateY(-2px);
-}
-
-.stage.k8s.active {
-  background: rgba(16, 185, 129, 0.1);
-  border-color: rgba(16, 185, 129, 0.5);
-}
-
-.stage-icon {
-  width: 44px;
-  height: 44px;
-  font-size: 28px;
-}
-
-.stage.k8s .stage-icon {
-  color: var(--lynq-green);
-}
-
-.rail-arrow {
-  flex: 0 0 70px;
-  align-self: center;
-  height: 40px;
+.term-bar {
   display: flex;
   align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.9rem;
+  background: #252538;
+  border-bottom: 1px solid var(--lynq-border);
 }
 
-/* Calmer marching ants: slow the flow and soften the dashes so the rail reads
-   as a gentle pulse rather than a busy conveyor. */
-.rail-arrow :deep(.animated .dash) {
-  animation-duration: 2s;
-  opacity: 0.7;
+.dots {
+  display: flex;
+  gap: 0.5rem;
+  flex: none;
+}
+.dots i {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 9999px;
+}
+.dots i:nth-child(1) { background: #ff5f57; }
+.dots i:nth-child(2) { background: #febc2e; }
+.dots i:nth-child(3) { background: #28c840; }
+
+.term-title {
+  flex: 1;
+  text-align: center;
+  font-family: var(--lynq-mono);
+  font-size: 0.78rem;
+  color: var(--lynq-text-dim);
 }
 
-/* ── Detail panel ──
-   FIXED reserved height so switching between steps (different YAML lengths /
-   the terminal) never changes the panel height → no page reflow / CLS. The
-   tallest step (LynqForm YAML) sets the floor; shorter steps just pad out. */
-.panel {
-  background: rgba(255, 255, 255, 0.03);
-  /* FIXED reserved height → no reflow / CLS when steps swap. */
-  min-height: 460px;
+.term-replay,
+.term-replay-spacer {
+  flex: none;
+  min-width: 74px;
+  text-align: right;
+}
+.term-replay {
+  font-family: var(--lynq-mono);
+  font-size: 0.72rem;
+  color: var(--lynq-text-dim);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  padding: 0.15rem 0.3rem;
+  border-radius: 6px;
+  transition: color 0.2s ease, background 0.2s ease;
+}
+.term-replay:hover {
+  color: var(--lynq-text);
+  background: rgba(255, 255, 255, 0.08);
 }
 
-.panel-inner {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
-  gap: 2rem;
-  align-items: start;
-}
-
-/* Heading weight token has no Tailwind utility — keep it here. */
-.prose h3 {
-  font-weight: var(--lynq-heading-weight);
-}
-
-/* The code/terminal object must fit the lane with NO inner horizontal scroll.
-   YAML wraps long lines; the wide kubectl table shrinks its font to fit the
-   lane width instead of scrolling sideways. */
-.demo-object {
-  max-width: 100%;
-  overflow: hidden;
-}
-
-.detail :deep(.lynq-yaml-block .content) {
+/* ── Scrolling body ──
+   Fixed height → no CLS; scrolls like a real terminal as output streams. */
+.term-scroll {
+  height: 440px;
+  overflow-y: auto;
   overflow-x: hidden;
-  font-size: 0.76rem;
-  line-height: 1.5;
+  padding: 1rem 1.1rem;
+  font-family: var(--lynq-mono);
+  font-size: 0.82rem;
+  line-height: 1.6;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+.term-scroll::-webkit-scrollbar { width: 8px; }
+.term-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
 }
 
-.detail :deep(.lynq-yaml-block .content code) {
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.detail :deep(.lynq-terminal .body) {
-  overflow-x: hidden;
-  font-size: 0.62rem;
-  line-height: 1.5;
-}
-
-.detail :deep(.lynq-terminal .lynq-terminal-line) {
+.tline {
   white-space: pre;
+  color: rgba(255, 255, 255, 0.72);
 }
-
-/* Cross-fade between steps (calm; short travel). */
-.fade-slide-enter-active,
-.fade-slide-leave-active {
-  transition: opacity 0.3s ease, transform 0.3s ease;
+.tprompt {
+  color: var(--lynq-green);
+  margin-right: 0.6rem;
+  user-select: none;
 }
+.tline.cmd .ttxt { color: var(--lynq-text); }
+.tline.ok .ttxt { color: #4fd1cb; }
+.tline.dim .ttxt { color: rgba(255, 255, 255, 0.38); }
 
-.fade-slide-enter-from {
-  opacity: 0;
-  transform: translateY(8px);
+.caret {
+  display: inline-block;
+  width: 0.5rem;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--lynq-text);
+  animation: term-caret 1s step-end infinite;
 }
-
-.fade-slide-leave-to {
-  opacity: 0;
-  transform: translateY(-8px);
+@keyframes term-caret {
+  0%, 50% { opacity: 1; }
+  50.01%, 100% { opacity: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .stage,
-  .fade-slide-enter-active,
-  .fade-slide-leave-active {
-    transition: none;
-  }
+  .caret { animation: none; }
 }
 
 @media (max-width: 860px) {
-  .rail {
-    flex-wrap: wrap;
-    gap: 0.75rem;
-  }
-
-  .rail-arrow {
-    display: none;
-  }
-
-  .stage {
-    flex: 1 1 40%;
-    min-width: 120px;
-  }
-
-  .panel {
-    min-height: 0;
-  }
-
-  .panel-inner {
-    grid-template-columns: 1fr;
-    gap: 1.5rem;
-  }
-
-  /* The kubectl table stays wide on narrow screens; allow it to scroll within
-     its own box only here (the desktop no-scroll rule still holds above). */
-  .detail :deep(.lynq-terminal .body) {
+  .term-scroll {
+    height: 380px;
     overflow-x: auto;
-    font-size: 0.68rem;
+    font-size: 0.72rem;
   }
 }
 </style>

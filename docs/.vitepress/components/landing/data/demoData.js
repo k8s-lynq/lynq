@@ -176,6 +176,65 @@ export const kubectlLines = [
   { prompt: '', text: 'beta-inc-app      1/1     1m' },
 ]
 
+/* ── Faithful kubectl-style column formatter ──
+   Left-pads every cell except the last to fixed widths so the rendered rows
+   line up exactly like real `kubectl get` table output (monospace, space-
+   separated columns — kubectl does not colorise `get` output). */
+const cols = (widths, ...cells) =>
+  cells.map((c, i) => (i === cells.length - 1 ? String(c) : String(c).padEnd(widths[i]))).join('')
+
+const NODE_W = [22, 7, 9, 14]
+const DEPLOY_W = [32, 8, 13, 12]
+const SVC_W = [26, 12, 15, 10]
+const ING_W = [26, 8, 20, 10, 8]
+
+/**
+ * A scripted, end-to-end operator session for the LiveTransform section, played
+ * inside a single authentic terminal. Each step is one of:
+ *   - `cmd`  a command line typed character-by-character (prompt defaults to '$')
+ *   - `out`  an output line printed after `delay` ms (default fast)
+ *   - `gap`  a blank spacer line
+ * `tone` tints a line: 'ok' (subtle green payoff), 'dim' (muted, e.g. ^C).
+ * The `kubectl get lynqnodes -w` block streams READY 0/3 → 3/3 in real time,
+ * which is what visually sells "in seconds". Domain-accurate: apiVersion
+ * operator.lynq.sh/v1, CRD short names, `{uid}-app/-svc/-web` resource names.
+ * @type {{ type:'cmd'|'out'|'gap', text?:string, prompt?:string, tone?:'ok'|'dim', delay?:number }[]}
+ */
+export const terminalSession = [
+  { type: 'cmd', text: 'kubectl apply -f lynqhub.yaml' },
+  { type: 'out', text: 'lynqhub.operator.lynq.sh/my-hub created', tone: 'ok' },
+  { type: 'gap' },
+  { type: 'cmd', text: 'kubectl apply -f lynqform.yaml' },
+  { type: 'out', text: 'lynqform.operator.lynq.sh/web-stack created', tone: 'ok' },
+  { type: 'gap' },
+
+  // LynqHub has read the two active rows and is materialising LynqNodes.
+  { type: 'cmd', text: 'kubectl get lynqnodes -w' },
+  { type: 'out', text: cols(NODE_W, 'NAME', 'READY', 'DESIRED', 'CONDITIONS', 'AGE') },
+  { type: 'out', text: cols(NODE_W, 'acme-corp-web-stack', '0/3', '3', 'Reconciling', '0s'), delay: 650 },
+  { type: 'out', text: cols(NODE_W, 'beta-inc-web-stack', '0/3', '3', 'Reconciling', '0s'), delay: 750 },
+  { type: 'out', text: cols(NODE_W, 'acme-corp-web-stack', '1/3', '3', 'Reconciling', '1s'), delay: 850 },
+  { type: 'out', text: cols(NODE_W, 'beta-inc-web-stack', '2/3', '3', 'Reconciling', '2s'), delay: 850 },
+  { type: 'out', text: cols(NODE_W, 'acme-corp-web-stack', '3/3', '3', 'Reconciled', '3s'), tone: 'ok', delay: 900 },
+  { type: 'out', text: cols(NODE_W, 'beta-inc-web-stack', '3/3', '3', 'Reconciled', '4s'), tone: 'ok', delay: 700 },
+  { type: 'out', text: '^C', tone: 'dim', delay: 550 },
+  { type: 'gap' },
+
+  // The real, named Kubernetes resources that now exist for each row.
+  { type: 'cmd', text: 'kubectl get deploy,svc,ing' },
+  { type: 'out', text: cols(DEPLOY_W, 'NAME', 'READY', 'UP-TO-DATE', 'AVAILABLE', 'AGE') },
+  { type: 'out', text: cols(DEPLOY_W, 'deployment.apps/acme-corp-app', '1/1', '1', '1', '5s') },
+  { type: 'out', text: cols(DEPLOY_W, 'deployment.apps/beta-inc-app', '1/1', '1', '1', '5s') },
+  { type: 'gap' },
+  { type: 'out', text: cols(SVC_W, 'NAME', 'TYPE', 'CLUSTER-IP', 'PORT(S)', 'AGE') },
+  { type: 'out', text: cols(SVC_W, 'service/acme-corp-svc', 'ClusterIP', '10.96.12.31', '80/TCP', '5s') },
+  { type: 'out', text: cols(SVC_W, 'service/beta-inc-svc', 'ClusterIP', '10.96.44.9', '80/TCP', '5s') },
+  { type: 'gap' },
+  { type: 'out', text: cols(ING_W, 'NAME', 'CLASS', 'HOSTS', 'PORTS', 'AGE') },
+  { type: 'out', text: cols(ING_W, 'ingress/acme-corp-web', 'nginx', 'acme.example.com', '80', '5s') },
+  { type: 'out', text: cols(ING_W, 'ingress/beta-inc-web', 'nginx', 'beta.example.com', '80', '5s') },
+]
+
 /**
  * The "old way" — hand-rolled kubectl toil the BeforeAfter section contrasts
  * against Lynq. Each line is a terminal line; `tone` flags styling intent
