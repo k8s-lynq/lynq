@@ -150,9 +150,11 @@ const (
 	ReasonNotAllResourcesReady         = "NotAllResourcesReady"
 
 	// Resource kinds used in template rendering and readiness checks
-	resourceKindConfigMap  = "ConfigMap"
-	resourceKindSecret     = "Secret"
-	resourceKindDeployment = "Deployment"
+	resourceKindConfigMap   = "ConfigMap"
+	resourceKindSecret      = "Secret"
+	resourceKindDeployment  = "Deployment"
+	resourceKindStatefulSet = "StatefulSet"
+	resourceKindDaemonSet   = "DaemonSet"
 
 	// Degraded reasons
 	ReasonResourceFailuresAndConflicts = "ResourceFailuresAndConflicts"
@@ -864,7 +866,7 @@ func (r *LynqNodeReconciler) warnUnsafePatchStrategy(ctx context.Context, node *
 		return
 	}
 	switch kind {
-	case resourceKindDeployment, "StatefulSet", "DaemonSet":
+	case resourceKindDeployment, resourceKindStatefulSet, resourceKindDaemonSet:
 	default:
 		return
 	}
@@ -2055,7 +2057,7 @@ func (r *LynqNodeReconciler) getAPIVersionForKind(kind string) string {
 	switch kind {
 	case "Namespace", "ServiceAccount", "Service", resourceKindConfigMap, resourceKindSecret, "PersistentVolumeClaim":
 		return "v1"
-	case resourceKindDeployment, "StatefulSet", "DaemonSet":
+	case resourceKindDeployment, resourceKindStatefulSet, resourceKindDaemonSet:
 		return "apps/v1"
 	case "Job", "CronJob":
 		return "batch/v1"
