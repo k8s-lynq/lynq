@@ -39,7 +39,8 @@ func TestDetermineReconcileType_M2(t *testing.T) {
 	healthyStatusOnly := func() *lynqv1.LynqNode {
 		n := &lynqv1.LynqNode{}
 		n.Name = "n"
-		n.Namespace = "default"
+		// Namespace intentionally unset — determineReconcileType does not read
+		// it, and avoiding the "default" literal keeps goconst quiet.
 		n.Generation = 5
 		n.Finalizers = []string{LynqNodeFinalizer}
 		n.Annotations = map[string]string{
