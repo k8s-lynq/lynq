@@ -174,6 +174,8 @@ For a full production setup (RDS + S3 + CloudFront + Deployments + Ingress), see
 - **Cloud resource costs**: Crossplane provisions real infrastructure. Use `deletionPolicy: Retain` for databases to prevent data loss on node deactivation.
 - **Timeout sizing**: RDS instances take 10-20 minutes. Set `timeoutSeconds: 1200` for dedicated instances. Set `waitForReady: false` for CloudFront (15-30 min) to avoid blocking node readiness.
 - **Provider credentials**: Each Crossplane provider needs its own `ProviderConfig`. A missing or misconfigured config causes all managed resources to remain `NotSynced`.
+- **Field ownership (co-management)**: Lynq creates the Crossplane Claim/XR and manages it with Server-Side Apply (`fieldManager: lynq-operator`). Keep `patchStrategy: apply` — it preserves fields owned by other managers. If a Crossplane Composition or a `patch` on the XR writes back a spec field you also template, cede that field to Crossplane with Lynq's [`ignoreFields`](field-ignore.md) so the two don't oscillate. Avoid `patchStrategy: replace`/`merge` on co-managed Crossplane resources (Lynq emits an `UnsafePatchStrategy` warning for workload kinds).
+- **Readiness = the XR's `Ready` condition**: Lynq classifies a Crossplane resource via its `status.conditions[Ready]`. Custom resources have no steady-state `Degraded` phase — a claim whose `Ready` flips back to False after provisioning is treated as `Progressing` and will hit `ReadinessTimeout` if it stays down past `timeoutSeconds`. Size `timeoutSeconds` for slow providers accordingly. See [Resource Phases](resource-phases.md).
 
 ## Troubleshooting
 

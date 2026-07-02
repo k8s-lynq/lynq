@@ -99,6 +99,15 @@ Cross-namespace support and operational improvements
   - Periodic force-reapply (~10 min, configurable) as drift-correction backstop for external edits
   - maxSkew deadlock fix (readiness timeout measured from apply start time)
 
+- ✅ **Native Resource Health & Phase Model** (v1.1.21)
+  - Per-resource 5-phase state model (Pending / Progressing / Available / Degraded / Failed) derived from native Kubernetes status — see [Resource Phases](resource-phases.md)
+  - Steady-state pod-level disruption (node drain, HPA scale-up, eviction) is reported as `Degraded`, not `Failed`; the LynqNode stays Ready and Kubernetes owns convergence
+  - New status fields (`degradedResources`, `progressingResources`, `pendingResources`, `degradedResourceIds`, `resourcePhases`) and kubectl columns (`Degraded`, `Progressing`)
+  - New per-resource metrics (phase stateset, replica gauges, degraded-since, rollout-duration histogram, phase-transition counter) and alerts (`LynqNodeWorkloadDegraded`, `LynqNodeWorkloadSeverelyDegraded`, `LynqNodeWorkloadFlapping`, `LynqNodeRolloutSlow`)
+  - New events: `WorkloadDegraded`, `WorkloadRecovered`, `RolloutComplete`, `RolloutAborted`
+  - Multi-manager coexistence: `ignoreFields` changes (e.g. HPA-owned `spec.replicas`) no longer churn re-applies; `UnsafePatchStrategy` warning when `replace`/`merge` targets a workload; status-only child events take a lightweight no-apply reconcile path
+  - `--legacy-readiness-strict` flag for one-flag rollback to the pre-phase-model behavior
+
 ## v1.2
 
 ::: info Focus
