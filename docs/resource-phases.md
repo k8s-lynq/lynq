@@ -168,6 +168,34 @@ kubectl get lynqnodes -A -o jsonpath=\
 '{range .items[*]}{range .status.resourcePhases[?(@.phase=="Degraded")]}{.id}{"\t"}{.reason}{"\n"}{end}{end}'
 ```
 
+### Dependency-blocked and skipped resources
+
+Resources that were **not applied this reconcile** because of a dependency
+still get a `resourcePhases` entry — as `Pending`, with a reason prefix that
+distinguishes the two cases:
+
+- `blocked: waiting for dependency '<id>' to become ready` — the dependency is
+  still `Pending`/`Progressing` (within its timeout). Counted in
+  `pendingResources`. Applied automatically once the dependency becomes ready.
+- `skipped: dependency '<id>' failed (retries next reconcile)` — the dependency
+  `Failed` and this resource has `skipOnDependencyFailure: true` (default).
+  Counted in `skippedResources` / `skippedResourceIds` (not in
+  `pendingResources`), and a `DependencySkipped` event is emitted.
+
+This makes a node stuck at "2/5 ready, 0 failed" self-explanatory: the missing
+resources appear as `Pending` with the exact dependency they are waiting on.
+
+### Diagnosing a rollout from the reason string
+
+Deployment `Progressing`/timeout-`Failed` reasons include both counters —
+`updatedReplicas=X/N, availableReplicas=Y/N` — so status alone distinguishes:
+
+- `availableReplicas=0/N` → **first provision** (or total outage): nothing is
+  serving traffic yet.
+- `availableReplicas>0` with `updatedReplicas<N` → an **update rollout on a
+  previously-healthy Deployment**: old-generation pods are still serving while
+  the new ReplicaSet converges (or times out).
+
 ## LynqNode conditions
 
 | Condition | Status | Reasons |

@@ -557,17 +557,25 @@ func (c *Checker) classifyDeploymentPhase(
 	// 5. Progressing — rollout not yet complete OR never reached
 	// NewReplicaSetAvailable (e.g., failing image pull). Lynq's rollout
 	// timeout still escalates this to Failed.
+	//
+	// The reason string includes availableReplicas so an operator can
+	// distinguish two very different situations from status alone:
+	//   - availableReplicas=0 → first provision (or total outage): nothing
+	//     is serving traffic.
+	//   - availableReplicas>0 → an UPDATE rollout on a previously-healthy
+	//     Deployment: old-generation pods are still serving while the new
+	//     ReplicaSet converges (or fails to).
 	if rolloutTimeout > 0 && elapsed >= rolloutTimeout {
 		return PhaseResult{
 			Phase:           lynqv1.ResourcePhaseFailed,
-			Reason:          fmt.Sprintf("rollout timeout %s elapsed (updatedReplicas=%d/%d)", rolloutTimeout, updatedReplicas, replicas),
+			Reason:          fmt.Sprintf("rollout timeout %s elapsed (updatedReplicas=%d/%d, availableReplicas=%d/%d)", rolloutTimeout, updatedReplicas, replicas, availableReplicas, replicas),
 			Replicas:        rs,
 			RolloutTimedOut: true,
 		}
 	}
 	return PhaseResult{
 		Phase:    lynqv1.ResourcePhaseProgressing,
-		Reason:   fmt.Sprintf("updatedReplicas=%d/%d", updatedReplicas, replicas),
+		Reason:   fmt.Sprintf("updatedReplicas=%d/%d, availableReplicas=%d/%d", updatedReplicas, replicas, availableReplicas, replicas),
 		Replicas: rs,
 	}
 }

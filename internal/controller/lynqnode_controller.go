@@ -384,6 +384,18 @@ func (r *LynqNodeReconciler) applyResources(
 				r.Recorder.Eventf(node, corev1.EventTypeWarning, "DependencySkipped",
 					"Resource '%s' skipped because dependency '%s' failed. Set skipOnDependencyFailure=false to create anyway.",
 					resource.ID, failedDepId)
+				// Record a Pending phase entry so the resource stays visible in
+				// status.resourcePhases (the array is documented as one entry
+				// per resource). Pending — not Failed — because the skip is
+				// per-reconcile: once the dependency recovers, this resource
+				// is applied normally. It is counted in skippedResources /
+				// skippedResourceIds, NOT in pendingResources, to keep the
+				// existing count semantics unchanged.
+				resourcePhases = append(resourcePhases, lynqv1.ResourcePhaseEntry{
+					ID: resource.ID, Kind: resource.Spec.GroupVersionKind().Kind, Name: resource.NameTemplate,
+					Phase:  lynqv1.ResourcePhasePending,
+					Reason: fmt.Sprintf("skipped: dependency '%s' failed (retries next reconcile)", failedDepId),
+				})
 				continue
 			} else {
 				// skipOnDependencyFailure=false: proceed with creation despite failed dependency
@@ -408,6 +420,16 @@ func (r *LynqNodeReconciler) applyResources(
 			logger.V(1).Info("Blocking resource until dependency is ready",
 				"id", resource.ID,
 				"notReadyDependency", notReadyDepId)
+			// Record a Pending phase entry (and count it) so an operator can
+			// answer "why is this node at 2/5 ready with nothing failed?"
+			// directly from status.resourcePhases: the resource has not been
+			// applied yet because it is waiting on a dependency.
+			pendingCount++
+			resourcePhases = append(resourcePhases, lynqv1.ResourcePhaseEntry{
+				ID: resource.ID, Kind: resource.Spec.GroupVersionKind().Kind, Name: resource.NameTemplate,
+				Phase:  lynqv1.ResourcePhasePending,
+				Reason: fmt.Sprintf("blocked: waiting for dependency '%s' to become ready", notReadyDepId),
+			})
 			continue
 		}
 
