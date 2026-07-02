@@ -259,6 +259,12 @@ func (m *Manager) flushBatch(ctx context.Context, batch map[client.ObjectKey]*St
 func (m *Manager) applyUpdate(ctx context.Context, update *StatusUpdate) error {
 	logger := log.Log.WithName("status-manager")
 
+	// Tracks whether the LynqNode still exists. Queued (batched) events can
+	// arrive AFTER the node's finalizer ran CleanupNodeMetrics; writing
+	// metrics for a deleted node would silently re-create the just-deleted
+	// series and leave stale gauges/alerts behind forever.
+	nodeGone := false
+
 	// Update Kubernetes status
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		// Get latest version
@@ -269,6 +275,7 @@ func (m *Manager) applyUpdate(ctx context.Context, update *StatusUpdate) error {
 				logger.V(1).Info("LynqNode not found, skipping status update",
 					"node", update.Key.Name,
 					"namespace", update.Key.Namespace)
+				nodeGone = true
 				return nil
 			}
 			return err
@@ -367,15 +374,17 @@ func (m *Manager) applyUpdate(ctx context.Context, update *StatusUpdate) error {
 
 	// Update metrics if provided (metrics don't require retry)
 	// CRITICAL: Always update metrics regardless of status changes
-	// This ensures Prometheus always gets the latest values during scraping
-	if update.Metrics != nil {
+	// This ensures Prometheus always gets the latest values during scraping.
+	// EXCEPT when the node no longer exists — a late queued event must not
+	// re-create series that CleanupNodeMetrics already deleted.
+	if update.Metrics != nil && !nodeGone {
 		m.updateMetrics(update.Key, update.Metrics)
 	}
 
 	// Per-resource phase + replica metrics. The phases array drives the
 	// lynqnode_resource_phase stateset; the replica map drives the
 	// lynqnode_resource_replicas_* gauges and lynqnode_resource_degraded_since_seconds.
-	if update.ResourcePhases != nil || update.ResourceReplicaMetrics != nil {
+	if (update.ResourcePhases != nil || update.ResourceReplicaMetrics != nil) && !nodeGone {
 		m.updatePerResourceMetrics(update.Key, update.ResourcePhases, update.ResourceReplicaMetrics)
 	}
 

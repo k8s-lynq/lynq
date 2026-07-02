@@ -272,7 +272,7 @@ For emergency rollback to pre-phase-model behavior, set the controller flag:
 --legacy-readiness-strict=true
 ```
 
-Strict equality returns, `Degraded` phase is never observed, `WorkloadDegraded` events are never emitted, `ReadinessTimeout` fires on any partial availability past `timeoutSeconds`. The new metric series remain registered but the gauges stay at 0. This flag is slated for removal after one release cycle.
+Strict equality returns, `Degraded` phase is never observed, `WorkloadDegraded` events are never emitted, `ReadinessTimeout` fires on any partial availability past `timeoutSeconds`. The new metric series remain registered but the gauges stay at 0. Legacy mode also disables the lightweight status-only reconcile path — every event takes the full reconcile, exactly as the pre-phase-model controller behaved. This flag is slated for removal after one release cycle.
 
 > **Note on stale fields after enabling legacy mode.** The legacy path does not
 > populate `status.resourcePhases`, `status.degradedResourceIds`, or the

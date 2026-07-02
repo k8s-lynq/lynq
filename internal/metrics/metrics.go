@@ -390,10 +390,13 @@ func DeleteLynqNodeSeries(lynqnode, namespace string) {
 	LynqNodeResourcesProgressing.DeleteLabelValues(lynqnode, namespace)
 	LynqNodeResourcesPending.DeleteLabelValues(lynqnode, namespace)
 	LynqNodeResourcesConflicted.DeleteLabelValues(lynqnode, namespace)
-	// Note: LynqNodeConditionStatus and LynqNodeDegradedStatus include a
-	// third label (type / reason) so they need DeletePartialMatch, which
-	// callers must use directly if they want full cleanup. Kept here as a
-	// best-effort common path.
+	// LynqNodeConditionStatus / LynqNodeDegradedStatus carry a third label
+	// (type / reason) whose values can't be enumerated here — delete every
+	// series matching the node's identity labels so a deleted node leaves no
+	// stale condition/degraded gauges (and no stale alerts) behind.
+	partial := prometheus.Labels{"lynqnode": lynqnode, "namespace": namespace}
+	LynqNodeConditionStatus.DeletePartialMatch(partial)
+	LynqNodeDegradedStatus.DeletePartialMatch(partial)
 }
 
 // RolloutPhaseToMetric converts a RolloutPhase to a numeric value for metrics

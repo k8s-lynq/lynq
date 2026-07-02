@@ -61,6 +61,13 @@ func TestDetermineReconcileType_M2(t *testing.T) {
 		}
 	})
 
+	t.Run("legacy-readiness-strict always routes to Spec (pre-phase-model behavior)", func(t *testing.T) {
+		legacy := &LynqNodeReconciler{LegacyReadinessStrict: true}
+		if got := legacy.determineReconcileType(healthyStatusOnly()); got != ReconcileTypeSpec {
+			t.Errorf("got %v, want ReconcileTypeSpec — the rollback flag must restore the always-full-reconcile behavior", got)
+		}
+	})
+
 	t.Run("generation mismatch routes to Spec", func(t *testing.T) {
 		n := healthyStatusOnly()
 		n.Generation = 6 // spec changed, observedGeneration still 5

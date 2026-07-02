@@ -823,8 +823,14 @@ func (r *LynqNodeReconciler) processResourcePhase(
 	// anchored to the transition, NOT to lynq.sh/apply-start-time — otherwise a
 	// workload applied days ago that degrades now would report days of
 	// "degraded" on its second reconcile and misfire the >30m severe alert.
+	//
+	// Carry-forward additionally requires the previous entry to describe the
+	// SAME concrete object (kind+name). If a template edit reuses a TResource
+	// ID for a different kind or a re-rendered name, the old object's clock
+	// must not leak onto the new one — the new object starts its own window.
 	if currentPhase == lynqv1.ResourcePhaseDegraded {
-		if previousPhase == lynqv1.ResourcePhaseDegraded && prevEntry.DegradedSince != nil {
+		sameObject := prevEntry.Kind == kind && prevEntry.Name == resourceName
+		if previousPhase == lynqv1.ResourcePhaseDegraded && sameObject && prevEntry.DegradedSince != nil {
 			entry.DegradedSince = prevEntry.DegradedSince
 		} else {
 			now := metav1.Now()
@@ -2138,6 +2144,15 @@ func (r *LynqNodeReconciler) determineReconcileType(node *lynqv1.LynqNode) Recon
 		if cond.Type == ConditionTypeDegraded && cond.Status == metav1.ConditionTrue {
 			return ReconcileTypeSpec
 		}
+	}
+
+	// 3b. Legacy rollback mode: always take the full path, exactly like the
+	// pre-phase-model controller did. The lightweight status path's legacy
+	// branch marks any not-ready resource as failed immediately (no timeout
+	// grace), which would poison FailedResources and defeat the rollback
+	// flag's "restore old behavior" contract.
+	if r.LegacyReadinessStrict {
+		return ReconcileTypeSpec
 	}
 
 	// 4. Check if spec changed (generation mismatch)
