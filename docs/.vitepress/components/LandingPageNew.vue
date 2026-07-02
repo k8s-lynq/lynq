@@ -24,6 +24,9 @@
     <!-- Reconcile at scale without a thundering herd (topology-based) -->
     <ScaleTopology />
 
+    <!-- Observability: Prometheus metrics + pre-built Grafana dashboard -->
+    <Observability />
+
     <!-- Dashboard Showcase -->
     <DashboardShowcase />
 
@@ -139,6 +142,7 @@ import LiveTransform from './landing/sections/LiveTransform.vue'
 import PolicyControls from './landing/sections/PolicyControls.vue'
 // ScaleControl.vue (grid-based) is kept as a backup, unreferenced.
 import ScaleTopology from './landing/sections/ScaleTopology.vue'
+import Observability from './landing/sections/Observability.vue'
 import DashboardShowcase from './landing/DashboardShowcase.vue'
 import LatestBlog from './landing/LatestBlog.vue'
 import CapabilitiesStrip from './landing/CapabilitiesStrip.vue'
