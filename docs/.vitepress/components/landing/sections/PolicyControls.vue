@@ -1,131 +1,63 @@
 <template>
-  <section ref="rootRef" class="policy-controls scroll-mt-20 px-8">
+  <section ref="rootRef" class="policy-controls scroll-mt-20 px-8" :class="{ in: inView }">
     <div class="mx-auto" style="max-width: 1040px">
       <SectionHeader
         label="Safety & Control"
         title="Policies That Protect Your Cluster"
-        subtitle="Every resource in a LynqForm carries three independent lifecycle policies. Fine-grained, per-resource control over what happens on conflict, on deactivation, and on re-reconcile — so automation never overwrites what it shouldn't."
+        subtitle="Data-driven automation is only safe if it knows what not to touch. Every resource in a LynqForm carries three per-resource policies — each a guardrail against a specific way automation could do damage."
         accent="purple"
       />
 
       <div class="cards grid grid-cols-3 gap-6 items-stretch">
         <div
-          v-for="(card, ci) in cards"
+          v-for="card in cards"
           :key="card.field"
           class="policy-card flex flex-col gap-4 p-6 bg-lynq-card border border-lynq-border rounded-lynq"
-          :class="{ 'is-pinned': cardState[ci].pinned }"
-          @mouseenter="onEnter(ci)"
-          @mouseleave="onLeave(ci)"
-          @focusin="onEnter(ci)"
-          @focusout="onLeave(ci)"
         >
-          <div class="card-head flex items-baseline justify-between gap-3">
-            <span class="field-name font-mono text-[0.9rem] font-bold text-lynq-text">{{ card.field }}</span>
-            <span class="current-value font-mono text-[0.78rem] font-semibold px-[0.55rem] py-[0.15rem] rounded-full" :data-value="valueOf(ci)">{{ card.values[valueOf(ci)] }}</span>
+          <div class="pc-field flex items-center gap-2">
+            <svg class="pc-shield" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path
+                d="M12 3l7 3v5.5c0 4.2-2.9 7.1-7 8.5-4.1-1.4-7-4.3-7-8.5V6l7-3z"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <span class="font-mono text-[0.92rem] font-bold text-lynq-text">{{ card.field }}</span>
           </div>
 
-          <!-- Segmented toggle: dim until the card is pinned (hover/focus) or
-               reduced-motion is active, at which point it's the primary control. -->
-          <div class="segmented flex gap-1 p-1 w-full rounded-full bg-lynq-bg2 border border-lynq-border" :class="{ active: cardState[ci].pinned || reduced }" role="group">
-            <button
-              v-for="(label, i) in card.values"
-              :key="label"
-              type="button"
-              class="seg-btn"
-              :class="{ on: valueOf(ci) === i }"
-              :aria-pressed="valueOf(ci) === i"
-              @click="select(ci, i)"
+          <div class="pc-threat">
+            <span class="warn" aria-hidden="true">&#9888;</span>
+            <span>{{ card.threat }}</span>
+          </div>
+
+          <div class="pc-opts flex flex-col gap-3">
+            <div
+              v-for="opt in card.options"
+              :key="opt.value"
+              class="pc-opt"
+              :class="{ protective: opt.protective }"
             >
-              {{ label }}
-            </button>
-          </div>
-
-          <div class="card-demo h-[9.5rem]">
-            <!-- conflictPolicy -->
-            <div v-if="card.field === 'conflictPolicy'" class="demo-body flex flex-col gap-3 h-full">
-              <ResourceCard
-                v-if="valueOf(ci) === 0"
-                kind="Service"
-                name="acme-corp-svc"
-                status="conflicted"
-                meta="field-manager: helm"
-              />
-              <ResourceCard
-                v-else
-                kind="Service"
-                name="acme-corp-svc"
-                status="ready"
-                meta="field-manager: lynq"
-              />
-              <p class="demo-caption m-0 min-h-[2.4em] text-[0.82rem] leading-[1.45] text-lynq-dim">
-                {{ valueOf(ci) === 0
-                  ? 'Halted — ownership conflict surfaced, nothing overwritten.'
-                  : 'Took ownership via Server-Side Apply force=true.' }}
-              </p>
-            </div>
-
-            <!-- deletionPolicy -->
-            <div v-else-if="card.field === 'deletionPolicy'" class="demo-body flex flex-col gap-3 h-full">
-              <div class="stack flex flex-col gap-2">
-                <div class="removed-card flex items-center gap-[0.6rem] px-[0.85rem] py-[0.55rem] rounded-lynq-sm">
-                  <span class="removed-kind">Deployment</span>
-                  <span class="removed-name">beta-inc-app</span>
-                  <span class="removed-tag">removed</span>
-                </div>
-                <div v-if="valueOf(ci) === 0" class="removed-card flex items-center gap-[0.6rem] px-[0.85rem] py-[0.55rem] rounded-lynq-sm">
-                  <span class="removed-kind">PVC</span>
-                  <span class="removed-name">beta-inc-data</span>
-                  <span class="removed-tag">removed</span>
-                </div>
-                <ResourceCard
-                  v-else
-                  kind="PVC"
-                  name="beta-inc-data"
-                  status="retained"
-                  meta="lynq.sh/orphaned=true"
-                />
+              <div class="pc-opt-top flex items-center justify-between gap-2">
+                <span class="pc-val">{{ opt.value }}</span>
+                <span class="pc-chip">
+                  <span v-if="opt.protective" class="tick" aria-hidden="true">&#10003;</span>{{ opt.chip }}
+                </span>
               </div>
-              <p class="demo-caption m-0 min-h-[2.4em] text-[0.82rem] leading-[1.45] text-lynq-dim">
-                {{ valueOf(ci) === 0
-                  ? 'Row deactivated — both resources removed from the cluster.'
-                  : 'Deployment removed, but the PVC is kept — ownerRef dropped, orphan marker added.' }}
-              </p>
-            </div>
-
-            <!-- creationPolicy -->
-            <div v-else class="demo-body flex flex-col gap-3 h-full">
-              <ResourceCard
-                v-if="valueOf(ci) === 0"
-                kind="Secret"
-                name="acme-corp-tls"
-                status="ready"
-                meta="reconciled every pass"
-              />
-              <ResourceCard
-                v-else
-                kind="Secret"
-                name="acme-corp-tls"
-                status="skipped"
-                meta="lynq.sh/created-once"
-              />
-              <p class="demo-caption m-0 min-h-[2.4em] text-[0.82rem] leading-[1.45] text-lynq-dim">
-                {{ valueOf(ci) === 0
-                  ? 'Reconciled continuously — drift corrected on every pass.'
-                  : 'Created once — subsequent reconciles skip it entirely.' }}
-              </p>
+              <p class="pc-desc m-0">{{ opt.desc }}</p>
             </div>
           </div>
-
-          <YamlBlock
-            filename="lynqform.yaml"
-            :code="card.snippet(valueOf(ci))"
-            :highlight-tokens="card.highlight(valueOf(ci))"
-          />
         </div>
       </div>
 
       <div class="learn-more mt-10 text-center">
-        <a href="/policies">Learn more about policies <span aria-hidden="true">&#8594;</span></a>
+        <a
+          class="inline-flex items-center gap-2 rounded-full border border-lynq-border bg-transparent px-6 py-[0.72rem] text-[0.95rem] font-medium! text-lynq-text! no-underline transition-colors duration-200 hover:border-white/20 hover:bg-white/[0.06]"
+          href="/policies"
+        >
+          Learn more about policies
+          <span aria-hidden="true">&#8594;</span>
+        </a>
       </div>
     </div>
   </section>
@@ -133,126 +65,82 @@
 
 <script setup>
 /**
- * PolicyControls — three side-by-side cards, one per real per-resource policy
- * (conflictPolicy / deletionPolicy / creationPolicy). Each card is a mini scene
- * that auto-toggles between the policy's two values on a slow loop while the
- * section is in view; hovering (or focusing) pins the card, pausing auto and
- * revealing a segmented toggle for manual flipping. Leaving resumes auto.
+ * PolicyControls — three cards, one per real per-resource policy
+ * (conflictPolicy / deletionPolicy / creationPolicy). Each card is framed as a
+ * guardrail: a one-line THREAT (the specific way automation could do damage)
+ * followed by the policy's two values, with the protective choice marked by a
+ * green ✓ chip. No toggles, no YAML, no redundant value pills — the whole point
+ * is that each policy value is legible at a glance.
  *
- * Under reduced motion there is no auto-toggle: the safe default value
- * (index 0 — Stuck / Delete / WhenNeeded) is shown statically and the manual
- * toggle stays usable.
- *
- * Each card owns its own 2-beat looping timeline. To keep the whole section in
- * a single .vue file (so scoped styles apply to all markup), the card markup is
- * authored in this template and per-card state is held in parallel arrays
- * indexed by card position — no child component is imported.
+ * Motion is a single scroll-reveal: the cards stagger in and each protective
+ * chip "engages" with a small pop. Under reduced motion everything is static
+ * (guarded by prefers-reduced-motion in the stylesheet).
  */
-import { ref, reactive, computed, watch } from 'vue'
+import { ref } from 'vue'
 import SectionHeader from '../primitives/SectionHeader.vue'
-import ResourceCard from '../primitives/ResourceCard.vue'
-import YamlBlock from '../primitives/YamlBlock.vue'
 import { useInView } from '../composables/useInView.js'
-import { useStepTimeline } from '../composables/useStepTimeline.js'
-import { useReducedMotion } from '../composables/useReducedMotion.js'
 
 const rootRef = ref(null)
 const { inView } = useInView(rootRef, { threshold: 0.2, once: true })
-const reduced = useReducedMotion()
 
-// values[0] is always the safe/default value (shown under reduced motion).
+// Default value is listed first (matches kubectl defaults); the protective
+// choice — the one that guards against this card's threat — carries the ✓ chip.
 const cards = [
   {
     field: 'conflictPolicy',
-    values: ['Stuck', 'Force'],
-    snippet: (i) =>
-      i === 0
-        ? 'deletionPolicy: Delete\nconflictPolicy: Stuck'
-        : 'deletionPolicy: Delete\nconflictPolicy: Force',
-    highlight: (i) => (i === 0 ? ['Stuck'] : ['Force']),
+    threat: 'Another controller already owns this Service.',
+    options: [
+      {
+        value: 'Stuck',
+        desc: 'Halts and surfaces the conflict — overwrites nothing.',
+        chip: 'safe default',
+        protective: true,
+      },
+      {
+        value: 'Force',
+        desc: 'Takes ownership deliberately via SSA force=true.',
+        chip: 'opt-in',
+        protective: false,
+      },
+    ],
   },
   {
     field: 'deletionPolicy',
-    values: ['Delete', 'Retain'],
-    snippet: (i) =>
-      i === 0
-        ? 'nameTemplate: "{{ .uid }}-data"\ndeletionPolicy: Delete'
-        : 'nameTemplate: "{{ .uid }}-data"\ndeletionPolicy: Retain',
-    highlight: (i) => (i === 0 ? ['Delete'] : ['Retain']),
+    threat: 'A row is deactivated — is its data wiped with it?',
+    options: [
+      {
+        value: 'Delete',
+        desc: 'Removes the resource along with the row.',
+        chip: 'default',
+        protective: false,
+      },
+      {
+        value: 'Retain',
+        desc: 'Keeps the PVC — drops the ownerRef, adds an orphan marker.',
+        chip: 'keeps data',
+        protective: true,
+      },
+    ],
   },
   {
     field: 'creationPolicy',
-    values: ['WhenNeeded', 'Once'],
-    snippet: (i) =>
-      i === 0
-        ? 'nameTemplate: "{{ .uid }}-tls"\ncreationPolicy: WhenNeeded'
-        : 'nameTemplate: "{{ .uid }}-tls"\ncreationPolicy: Once',
-    highlight: (i) => (i === 0 ? ['WhenNeeded'] : ['Once']),
+    threat: 'Every reconcile could re-run a one-time init Job.',
+    options: [
+      {
+        value: 'WhenNeeded',
+        desc: 'Re-applies whenever the rendered spec drifts.',
+        chip: 'default',
+        protective: false,
+      },
+      {
+        value: 'Once',
+        desc: 'Creates once, then never touches it again.',
+        chip: 'runs once',
+        protective: true,
+      },
+    ],
   },
 ]
-
-// One independent looping timeline per card. Each is a 2-beat loop that
-// auto-toggles value 0 <-> 1 while in view.
-const timelines = cards.map(() =>
-  useStepTimeline({
-    steps: 2,
-    durations: 2600,
-    loop: true,
-    autoStart: false,
-    respectReducedMotion: true,
-  })
-)
-
-// Per-card interaction state.
-const cardState = reactive(
-  cards.map(() => ({ pinned: false, manualValue: null }))
-)
-
-// The value actually rendered for card ci:
-//  - pinned with a manual selection -> that selection
-//  - reduced motion -> safe default (0)
-//  - otherwise -> the card's timeline step
-function valueOf(ci) {
-  const st = cardState[ci]
-  if (st.pinned && st.manualValue !== null) return st.manualValue
-  if (reduced.value) return 0
-  return timelines[ci].step.value
-}
-
-// Kick off every card's auto-toggle once the section scrolls into view (unless
-// reduced motion or the card is already pinned).
-watch(
-  inView,
-  (v) => {
-    if (!v) return
-    timelines.forEach((t, ci) => {
-      if (!reduced.value && !cardState[ci].pinned) t.play()
-    })
-  },
-  { immediate: true }
-)
-
-function onEnter(ci) {
-  const st = cardState[ci]
-  st.pinned = true
-  // Pin at the currently displayed value so there's no visual jump.
-  st.manualValue = valueOf(ci)
-  timelines[ci].pause()
-}
-
-function onLeave(ci) {
-  const st = cardState[ci]
-  st.pinned = false
-  st.manualValue = null
-  if (inView.value && !reduced.value) timelines[ci].play()
-}
-
-function select(ci, i) {
-  const st = cardState[ci]
-  st.manualValue = i
-  // seek() pauses the timeline (scrub semantics) and keeps the step in sync.
-  timelines[ci].seek(i)
-}
 </script>
 
 <style scoped>
@@ -261,146 +149,134 @@ function select(ci, i) {
   background: var(--lynq-bg);
 }
 
-/* Align the SectionHeader h2 to the v2 heading tokens (lighter, a step down).
-   The primitive is frozen, so override it locally via a deep selector. */
 .policy-controls :deep(.lynq-section-header h2) {
   font-size: var(--lynq-h2);
   font-weight: var(--lynq-heading-weight);
 }
 
-/* Colored link: the global .landing-page reset forces `color: inherit`, so keep
-   this in scoped CSS where it already wins for the accent link. */
-.learn-more a {
+/* ── Card ── */
+.pc-shield {
+  width: 18px;
+  height: 18px;
   color: var(--lynq-accent);
-  font-weight: 600;
-  font-size: 0.95rem;
-  text-decoration: none;
-  transition: color 0.2s var(--lynq-ease);
+  flex: none;
 }
 
-.learn-more a:hover {
+/* Threat callout — the damage this policy guards against (amber). */
+.pc-threat {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  min-height: 3.4em;
+  padding: 0.65rem 0.75rem;
+  border-radius: var(--lynq-radius-sm);
+  background: rgba(245, 158, 11, 0.07);
+  border: 1px solid rgba(245, 158, 11, 0.18);
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: var(--lynq-text-dim);
+}
+.pc-threat .warn {
+  color: var(--lynq-amber);
+  flex: none;
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
+/* Two option blocks; the protective one is green-outlined and tinted. */
+.pc-opt {
+  padding: 0.7rem 0.8rem;
+  border-radius: var(--lynq-radius-sm);
+  border: 1px solid var(--lynq-border);
+}
+.pc-opt.protective {
+  border-color: rgba(16, 185, 129, 0.32);
+  background: rgba(16, 185, 129, 0.05);
+}
+
+.pc-val {
+  font-family: var(--lynq-mono);
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--lynq-text-dim);
+}
+.pc-opt.protective .pc-val {
   color: var(--lynq-text);
 }
 
-/* ---- PolicyCard ----
-   Layout on the template (equal height via grid stretch). The pin transition +
-   pinned lift/glow (JS-toggled .is-pinned) stay here. */
-.policy-card {
-  transition: border-color 0.25s var(--lynq-ease), transform 0.25s var(--lynq-ease),
-    box-shadow 0.25s var(--lynq-ease);
+.pc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-family: var(--lynq-mono);
+  font-size: 0.66rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  color: var(--lynq-text-faint);
+  background: rgba(255, 255, 255, 0.05);
 }
-
-.policy-card.is-pinned {
-  border-color: var(--lynq-accent);
-  transform: translateY(-3px);
-  box-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.55);
-}
-
-/* Pin the code snippet to the bottom edge of the card (it is the last child). */
-.policy-card > :last-child {
-  margin-top: auto;
-}
-
-/* Base pill tint; the two value states below override it (values are always
-   0 or 1, so this is the fallback). */
-.current-value {
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--lynq-text-dim);
-}
-
-/* Default value (index 0) reads as the "safe" state -> green tint. The alternate
-   (index 1) uses the purple accent tint — amber stays reserved for genuine
-   Pending/Conflicted resource status, not for policy-value labels. */
-.current-value[data-value='0'] {
+.pc-opt.protective .pc-chip {
   color: var(--lynq-green);
   background: rgba(16, 185, 129, 0.14);
 }
-.current-value[data-value='1'] {
-  color: var(--lynq-accent);
-  background: color-mix(in srgb, var(--lynq-accent) 16%, transparent);
+.pc-chip .tick {
+  font-size: 0.72rem;
 }
 
-/* Segmented control base layout is on the template; the dim→bright pin state
-   transition (JS-toggled .active) stays here. */
-.segmented {
-  opacity: 0.85;
-  transition: opacity 0.2s var(--lynq-ease), border-color 0.2s var(--lynq-ease);
-}
-
-.segmented.active {
-  opacity: 1;
-  border-color: var(--lynq-accent);
-}
-
-.seg-btn {
-  appearance: none;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  flex: 1;
-  text-align: center;
-  font-family: var(--lynq-mono);
-  font-size: 0.74rem;
-  font-weight: 600;
+.pc-desc {
+  margin-top: 0.4rem;
+  min-height: 2.5em;
+  font-size: 0.82rem;
+  line-height: 1.45;
   color: var(--lynq-text-dim);
-  padding: 0.4rem 0.7rem;
-  border-radius: 999px;
-  transition: background 0.2s var(--lynq-ease), color 0.2s var(--lynq-ease);
 }
 
-.seg-btn.on {
-  background: var(--lynq-accent);
-  color: #fff;
+/* ── Motion: scroll-reveal stagger + guardrail chip "engage" ──
+   All gated on no-preference so reduced-motion renders the settled layout. */
+@media (prefers-reduced-motion: no-preference) {
+  .policy-card {
+    opacity: 0;
+    transform: translateY(16px);
+    transition: opacity 0.6s var(--lynq-ease), transform 0.6s var(--lynq-ease);
+  }
+  .policy-controls.in .policy-card {
+    opacity: 1;
+    transform: none;
+  }
+  .policy-controls.in .policy-card:nth-child(2) {
+    transition-delay: 0.1s;
+  }
+  .policy-controls.in .policy-card:nth-child(3) {
+    transition-delay: 0.2s;
+  }
+
+  .pc-opt.protective .pc-chip {
+    opacity: 0;
+  }
+  .policy-controls.in .pc-opt.protective .pc-chip {
+    animation: pc-chip-engage 0.5s var(--lynq-ease) 0.55s both;
+  }
+  .policy-controls.in .policy-card:nth-child(2) .pc-opt.protective .pc-chip {
+    animation-delay: 0.65s;
+  }
+  .policy-controls.in .policy-card:nth-child(3) .pc-opt.protective .pc-chip {
+    animation-delay: 0.75s;
+  }
 }
 
-.seg-btn:not(.on):hover {
-  color: var(--lynq-text);
-  background: rgba(255, 255, 255, 0.04);
-}
-
-.seg-btn:focus-visible {
-  outline: 2px solid var(--lynq-accent);
-  outline-offset: 2px;
-}
-
-/* card-demo fixed height (h-[9.5rem]) is on the template — reserves the row so
-   flipping a policy value never changes the card height (no reflow / CLS). */
-
-/* A "removed" resource: struck-through, faded, red-tinted. Layout on template;
-   the red tint / dashed border / fade stay here. */
-.removed-card {
-  background: rgba(239, 68, 68, 0.06);
-  border: 1px dashed rgba(239, 68, 68, 0.35);
-  opacity: 0.65;
-}
-
-.removed-kind {
-  font-family: var(--lynq-mono);
-  font-size: 0.7rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--lynq-red);
-}
-
-.removed-name {
-  font-family: var(--lynq-mono);
-  font-size: 0.9rem;
-  color: var(--lynq-text-dim);
-  text-decoration: line-through;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.removed-tag {
-  font-family: var(--lynq-mono);
-  font-size: 0.68rem;
-  color: var(--lynq-red);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+@keyframes pc-chip-engage {
+  from {
+    opacity: 0;
+    transform: scale(0.82);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 @media (max-width: 900px) {
