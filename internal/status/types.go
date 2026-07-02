@@ -102,9 +102,13 @@ type SkippedResourcesPayload struct {
 	Ids   []string
 }
 
-// ObservedGenerationPayload contains ObservedGeneration information
+// ObservedGenerationPayload contains ObservedGeneration information.
+// VariablesHash, when non-nil, also records the template-variable annotation
+// hash observed at this full reconcile (M2) — used to detect Hub-driven
+// variable changes that don't bump metadata.generation.
 type ObservedGenerationPayload struct {
 	ObservedGeneration int64
+	VariablesHash      *string
 }
 
 // LastFullReconcileAtPayload contains the timestamp of the most recent force-reapply
@@ -157,6 +161,9 @@ type StatusUpdate struct {
 
 	// Generation to update
 	ObservedGeneration *int64
+
+	// ObservedVariablesHash to update (nil means no update) — M2.
+	ObservedVariablesHash *string
 
 	// Resource counts (nil means no update)
 	ReadyResources       *int32
@@ -250,6 +257,9 @@ func (u *StatusUpdate) Apply(event StatusEvent) {
 	case EventObservedGenerationUpdated:
 		payload := event.Payload.(ObservedGenerationPayload)
 		u.ObservedGeneration = &payload.ObservedGeneration
+		if payload.VariablesHash != nil {
+			u.ObservedVariablesHash = payload.VariablesHash
+		}
 
 	case EventMetricsUpdate:
 		payload := event.Payload.(MetricsPayload)
@@ -271,6 +281,7 @@ func (u *StatusUpdate) Apply(event StatusEvent) {
 // HasChanges returns true if this update has any changes
 func (u *StatusUpdate) HasChanges() bool {
 	return u.ObservedGeneration != nil ||
+		u.ObservedVariablesHash != nil ||
 		u.ReadyResources != nil ||
 		u.FailedResources != nil ||
 		u.DesiredResources != nil ||

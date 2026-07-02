@@ -117,6 +117,23 @@ func (m *Manager) PublishObservedGeneration(node *lynqv1.LynqNode, generation in
 	})
 }
 
+// PublishObservedState records both the observed generation and the
+// template-variable hash observed at a full spec reconcile (M2). The variable
+// hash lets determineReconcileType detect Hub-driven variable changes (which
+// don't bump metadata.generation) and route them to a full reconcile, while
+// pure child-status events take the lightweight status-only path.
+func (m *Manager) PublishObservedState(node *lynqv1.LynqNode, generation int64, variablesHash string) {
+	m.Publish(StatusEvent{
+		Type:    EventObservedGenerationUpdated,
+		NodeKey: client.ObjectKeyFromObject(node),
+		Payload: ObservedGenerationPayload{
+			ObservedGeneration: generation,
+			VariablesHash:      &variablesHash,
+		},
+		Timestamp: time.Now(),
+	})
+}
+
 // PublishAppliedResources is a helper to publish applied resources list
 func (m *Manager) PublishAppliedResources(node *lynqv1.LynqNode, keys []string) {
 	m.Publish(StatusEvent{

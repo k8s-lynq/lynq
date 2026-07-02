@@ -18,6 +18,8 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	errorsStd "errors"
 	"fmt"
@@ -82,6 +84,28 @@ type LynqNodeReconciler struct {
 type renderCacheEntry struct {
 	inputKey string                     // cache key incorporating all render inputs
 	rendered *unstructured.Unstructured // the fully rendered resource
+}
+
+// computeVariablesHash hashes the template-variable annotations the Hub
+// rewrites for database-driven updates. These changes do NOT bump
+// metadata.generation, so determineReconcileType compares this hash against
+// status.observedVariablesHash to detect them and route to a full reconcile
+// (M2). Uses the same annotation set that feeds computeRenderCacheKey, minus
+// the identity/generation fields that are compared separately.
+func computeVariablesHash(node *lynqv1.LynqNode) string {
+	a := node.Annotations
+	// Key-prefixed and newline-separated so a value ending where the next
+	// begins cannot collide with a different split.
+	raw := strings.Join([]string{
+		"uid=" + a["lynq.sh/uid"],
+		"activate=" + a["lynq.sh/activate"],
+		"hostOrUrl=" + a["lynq.sh/hostOrUrl"],
+		"extra=" + a["lynq.sh/extra"],
+		"hubId=" + a["lynq.sh/hubId"],
+		"template-generation=" + a["lynq.sh/template-generation"],
+	}, "\n")
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:8]) // 16-char hex, sufficient for change detection
 }
 
 // computeRenderCacheKey builds a cache key from all inputs that affect renderResource output.
@@ -2095,16 +2119,39 @@ func (r *LynqNodeReconciler) determineReconcileType(node *lynqv1.LynqNode) Recon
 	}
 
 	// 4. Check if spec changed (generation mismatch)
-	// If observedGeneration doesn't match generation, it means spec or annotations changed
-	// and we need full reconcile to apply changes
+	// If observedGeneration doesn't match generation, it means spec changed
+	// and we need a full reconcile to apply changes.
 	if node.Status.ObservedGeneration != node.Generation {
 		return ReconcileTypeSpec
 	}
 
-	// 5. Always perform a full spec reconcile to detect annotation-driven changes
-	// (template variable updates) even when generation matches observedGeneration.
-	// This avoids missing database-sourced updates that don't bump generation.
-	return ReconcileTypeSpec
+	// 4b. Database-driven variable change (M2). The Hub rewrites the
+	// template-variable annotations (lynq.sh/uid, activate, extra, hubId,
+	// template-generation) WITHOUT bumping metadata.generation. Detect that by
+	// comparing the current variable hash against the last-observed one; a
+	// mismatch means the rendered spec would change, so full reconcile.
+	if computeVariablesHash(node) != node.Status.ObservedVariablesHash {
+		return ReconcileTypeSpec
+	}
+
+	// 4c. Periodic drift-correction backstop (M2). The ~10-min force-reapply
+	// sweep lives in reconcileSpec, gated by LastFullReconcileAt. A nil value
+	// means no baseline yet (fresh node / restart) — take the full path so
+	// reconcileSpec establishes it (stamp-now, defer-first-force). Otherwise,
+	// once the interval elapses, take the full path so drift on child
+	// resources whose applied-hash was preserved gets corrected.
+	if node.Status.LastFullReconcileAt == nil ||
+		time.Since(node.Status.LastFullReconcileAt.Time) >= ForceReapplyInterval {
+		return ReconcileTypeSpec
+	}
+
+	// 5. Pure status-propagation event (M2): generation matches, variables
+	// unchanged, no failures/degradation, and not yet due for a force-reapply.
+	// This is an HPA scale / pod restart / rollout-progress status change on a
+	// child resource — re-evaluate phases and update status via the lightweight
+	// path WITHOUT re-rendering or re-applying. This is what keeps routine
+	// third-party status churn from triggering unnecessary full applies.
+	return ReconcileTypeStatus
 }
 
 // hasOwnershipConflict checks if a resource has an ownership conflict with the node
@@ -2313,9 +2360,12 @@ func (r *LynqNodeReconciler) reconcileSpec(ctx context.Context, node *lynqv1.Lyn
 		false, // not progressing after reconciliation completes
 	)
 
-	// Update ObservedGeneration to mark this generation as reconciled
-	// This is critical to prevent repeated full reconciles
-	r.StatusManager.PublishObservedGeneration(node, node.Generation)
+	// Update ObservedGeneration + ObservedVariablesHash to mark this generation
+	// AND this set of template-variable annotations as reconciled. This is
+	// critical to prevent repeated full reconciles: it lets determineReconcileType
+	// route subsequent pure child-status events to the lightweight status path
+	// (M2) while still catching Hub-driven variable changes.
+	r.StatusManager.PublishObservedState(node, node.Generation, computeVariablesHash(node))
 
 	// Publish all status fields at once through StatusManager.
 	// PublishResourceCountsWithPhases is the phase-model extension of

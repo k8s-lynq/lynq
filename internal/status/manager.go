@@ -277,6 +277,11 @@ func (m *Manager) applyUpdate(ctx context.Context, update *StatusUpdate) error {
 		// Apply changes to status
 		statusChanged := false
 
+		if update.ObservedVariablesHash != nil {
+			node.Status.ObservedVariablesHash = *update.ObservedVariablesHash
+			statusChanged = true
+		}
+
 		if update.ObservedGeneration != nil {
 			node.Status.ObservedGeneration = *update.ObservedGeneration
 			statusChanged = true
