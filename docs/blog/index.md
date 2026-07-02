@@ -6,6 +6,7 @@ editLink: false
 aside: false
 prev: false
 next: false
+pageClass: blog-page
 ---
 
 <script setup>
@@ -74,61 +75,77 @@ const rest = posts.slice(1)
 </div>
 
 <style scoped>
+/* Tone-matched to the landing page: Pretendard headings, teal accent, pure
+   near-black cards with hairline borders and the 18px landing radius. Uses the
+   global --lynq-* tokens (declared in tailwind.css :root). */
 .blog-header {
   text-align: center;
-  margin-bottom: 3rem;
+  margin-bottom: 3.5rem;
   padding-bottom: 2rem;
-  border-bottom: 1px solid var(--vp-c-divider);
+  border-bottom: 1px solid var(--lynq-border);
 }
 
 .blog-header h1 {
-  font-size: 2.5rem;
-  margin: 0 0 0.5rem 0;
+  font-family: var(--lynq-font);
+  font-size: clamp(2.4rem, 5vw, 3.25rem);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  color: var(--lynq-text);
+  margin: 0 0 0.6rem 0;
   border: none;
   padding: 0;
 }
 
 .blog-header .subtitle {
   font-size: 1.1rem;
-  color: var(--vp-c-text-2);
+  color: var(--lynq-text-dim);
   margin: 0;
 }
 
 .featured-post {
-  background: var(--vp-c-bg-soft);
-  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--lynq-border);
+  border-radius: var(--lynq-radius);
   padding: 2rem;
-  margin-bottom: 3rem;
-  position: relative;
+  margin-bottom: 2.5rem;
+  transition: border-color 0.25s ease, transform 0.25s ease;
+}
+
+.featured-post:hover {
+  border-color: rgba(255, 255, 255, 0.16);
 }
 
 .featured-label {
   display: inline-block;
-  font-size: 0.75rem;
+  font-family: var(--lynq-mono);
+  font-size: 0.72rem;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--vp-c-brand-1);
-  background: var(--vp-c-brand-soft);
-  padding: 0.25rem 0.75rem;
-  border-radius: 4px;
-  margin-bottom: 1rem;
+  letter-spacing: 0.08em;
+  color: var(--lynq-accent);
+  background: color-mix(in srgb, var(--lynq-purple) 15%, transparent);
+  padding: 0.25rem 0.7rem;
+  border-radius: 999px;
+  margin-bottom: 1.1rem;
 }
 
 .featured-post h2 {
+  font-family: var(--lynq-font);
   margin: 0 0 0.75rem 0;
-  font-size: 1.75rem;
+  font-size: 1.8rem;
+  font-weight: 500;
+  letter-spacing: -0.02em;
   border: none;
   padding: 0;
 }
 
 .featured-post h2 a {
-  color: var(--vp-c-text-1);
+  color: var(--lynq-text);
   text-decoration: none;
 }
 
 .featured-post h2 a:hover {
-  color: var(--vp-c-brand-1);
+  color: var(--lynq-accent);
 }
 
 .featured-meta {
@@ -137,12 +154,13 @@ const rest = posts.slice(1)
   flex-wrap: wrap;
   gap: 0;
   font-size: 0.9rem;
-  color: var(--vp-c-text-2);
+  color: var(--lynq-text-faint);
   margin-bottom: 1rem;
 }
 
 .separator {
   margin: 0 0.5rem;
+  color: var(--lynq-text-faint);
 }
 
 .author-info {
@@ -151,12 +169,16 @@ const rest = posts.slice(1)
   gap: 0.5rem;
 }
 
+.author {
+  color: var(--lynq-text-dim);
+}
+
 .author-avatar {
   width: 28px;
   height: 28px;
   border-radius: 50%;
   object-fit: cover;
-  border: 2px solid var(--vp-c-divider);
+  border: 1px solid var(--lynq-border);
 }
 
 .author-avatar.small {
@@ -165,9 +187,9 @@ const rest = posts.slice(1)
 }
 
 .featured-description {
-  color: var(--vp-c-text-2);
+  color: var(--lynq-text-dim);
   line-height: 1.7;
-  margin: 0 0 1rem 0;
+  margin: 0 0 1.25rem 0;
   font-size: 1.05rem;
 }
 
@@ -178,43 +200,50 @@ const rest = posts.slice(1)
 }
 
 .tag {
-  font-size: 0.8rem;
-  padding: 0.25rem 0.75rem;
-  background: var(--vp-c-bg-alt);
-  border-radius: 4px;
-  color: var(--vp-c-text-2);
+  font-family: var(--lynq-mono);
+  font-size: 0.72rem;
+  padding: 0.2rem 0.6rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--lynq-border);
+  border-radius: 999px;
+  color: var(--lynq-text-dim);
 }
 
 .blog-list {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 1.25rem;
 }
 
 .blog-item {
-  padding: 1.5rem;
-  background: var(--vp-c-bg-soft);
-  border-radius: 8px;
-  transition: transform 0.2s, box-shadow 0.2s;
+  padding: 1.5rem 1.75rem;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--lynq-border);
+  border-radius: var(--lynq-radius);
+  transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
 }
 
 .blog-item:hover {
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.55);
 }
 
 .blog-item h3 {
+  font-family: var(--lynq-font);
   margin: 0 0 0.5rem 0;
-  font-size: 1.25rem;
+  font-size: 1.3rem;
+  font-weight: 500;
+  letter-spacing: -0.015em;
 }
 
 .blog-item h3 a {
-  color: var(--vp-c-text-1);
+  color: var(--lynq-text);
   text-decoration: none;
 }
 
 .blog-item h3 a:hover {
-  color: var(--vp-c-brand-1);
+  color: var(--lynq-accent);
 }
 
 .blog-meta {
@@ -223,12 +252,12 @@ const rest = posts.slice(1)
   flex-wrap: wrap;
   gap: 0;
   font-size: 0.85rem;
-  color: var(--vp-c-text-2);
+  color: var(--lynq-text-faint);
   margin-bottom: 0.75rem;
 }
 
 .description {
-  color: var(--vp-c-text-2);
+  color: var(--lynq-text-dim);
   margin: 0;
   line-height: 1.6;
   font-size: 0.95rem;
@@ -237,6 +266,6 @@ const rest = posts.slice(1)
 .empty-state {
   text-align: center;
   padding: 4rem 2rem;
-  color: var(--vp-c-text-2);
+  color: var(--lynq-text-dim);
 }
 </style>

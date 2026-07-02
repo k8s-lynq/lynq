@@ -1,19 +1,39 @@
 <template>
   <div class="landing-page">
-    <!-- Hero with 3D Particles -->
-    <HeroParticles />
+    <!-- Fixed ambient backdrop: brand radial glows + a faint, masked dot grid.
+         Sits behind every section (which are made transparent below) so the page
+         reads with depth and brand presence instead of a flat black void. -->
+    <div class="page-bg" aria-hidden="true">
+      <div class="pb-glow"></div>
+      <div class="pb-grid"></div>
+    </div>
+
+    <!-- Hero centerpiece: DB row -> K8s resources transform -->
+    <HeroDemo />
 
     <!-- Capabilities Strip -->
     <CapabilitiesStrip />
 
-    <!-- How It Works Pipeline -->
-    <InteractivePipeline />
+    <!-- Feature grid: animated capability cards (windflow-style) -->
+    <FeatureGrid />
 
-    <!-- Problem vs Solution -->
-    <ProblemSolution />
+    <!-- Reconcile Walkthrough: a row becoming a running app, step by step -->
+    <ReconcileWalkthrough />
 
-    <!-- Safety Policies -->
-    <SafetyControls />
+    <!-- Live Transform: from data to resources -->
+    <LiveTransform />
+
+    <!-- Before / After: the old way vs. Lynq -->
+    <BeforeAfter />
+
+    <!-- Policies That Protect -->
+    <PolicyControls />
+
+    <!-- Reconcile at scale without a thundering herd (topology-based) -->
+    <ScaleTopology />
+
+    <!-- Observability: Prometheus metrics + pre-built Grafana dashboard -->
+    <Observability />
 
     <!-- Dashboard Showcase -->
     <DashboardShowcase />
@@ -22,35 +42,34 @@
     <LatestBlog />
 
     <!-- Final CTA -->
-    <section class="cta-section">
-      <!-- Floating elements: positioned relative to full-width section -->
-      <div class="floating-elements">
-        <div class="float-item float-1"><code>LynqHub</code></div>
-        <div class="float-item float-2"><code>LynqForm</code></div>
-        <div class="float-item float-3"><code>LynqNode</code></div>
-        <div class="float-item float-4 db"><code>MySQL</code></div>
-        <div class="float-item float-5 k8s"><code>Deployment</code></div>
-        <div class="float-item float-6 k8s"><code>Service</code></div>
-        <div class="float-item float-7 k8s"><code>Ingress</code></div>
-        <div class="float-item float-8 k8s"><code>ConfigMap</code></div>
-        <div class="float-item float-9 k8s"><code>Secret</code></div>
-        <div class="float-item float-10 k8s"><code>StatefulSet</code></div>
-        <div class="float-item float-11 k8s"><code>CronJob</code></div>
-        <div class="float-item float-12 k8s"><code>PVC</code></div>
-        <div class="float-item float-13 k8s"><code>Namespace</code></div>
+    <section class="relative overflow-hidden bg-lynq-bg px-8 py-36">
+      <!-- Static, faint backdrop of supported resource kinds (decorative) -->
+      <div class="resource-grid" aria-hidden="true">
+        <code
+          v-for="kind in resourceKinds"
+          :key="kind"
+          class="rounded-lynq-sm border border-lynq-border px-3 py-[0.35rem] font-mono text-[0.8rem] whitespace-nowrap text-lynq-accent"
+        >{{ kind }}</code>
       </div>
-      <div class="cta-container">
-        <div class="cta-content fade-up">
-          <h2>Start Automating Infrastructure from Your Database</h2>
-          <p>Requires Kubernetes and cert-manager. The quickstart provisions a full local environment — MySQL, Lynq, and sample resources — using automated setup scripts.</p>
+      <div class="relative z-10 mx-auto max-w-[800px]">
+        <div class="cta-content fade-up relative z-10 text-center">
+          <h2 class="m-0 mb-6 text-lynq-text">Start Automating Infrastructure from Your Database</h2>
+          <p class="m-0 mb-10 text-[1.25rem] leading-[1.6] text-lynq-dim">Requires Kubernetes and cert-manager. The quickstart provisions a full local environment — MySQL, Lynq, and sample resources — using automated setup scripts.</p>
 
-          <div class="cta-buttons">
-            <a href="/quickstart" class="cta-primary">
+          <div class="cta-buttons flex flex-wrap justify-center gap-4">
+            <a
+              href="/quickstart"
+              class="cta-primary group inline-flex items-center justify-center gap-2 rounded-full bg-lynq-text! px-7 py-[0.8rem] text-[0.98rem] font-medium text-[#0a0a0a]! no-underline transition-opacity duration-200 hover:opacity-90"
+            >
               Start Quickstart
-              <span class="arrow">&#8594;</span>
+              <span class="arrow inline-block transition-transform duration-200 group-hover:translate-x-[3px]">&#8594;</span>
             </a>
-            <a href="https://github.com/k8s-lynq/lynq" class="cta-github" target="_blank">
-              <svg class="github-icon" viewBox="0 0 24 24" fill="currentColor">
+            <a
+              href="https://github.com/k8s-lynq/lynq"
+              class="cta-github inline-flex items-center justify-center gap-2 rounded-full border border-lynq-border bg-transparent px-7 py-[0.8rem] text-[0.98rem] font-medium text-lynq-text! no-underline transition-colors duration-200 hover:border-white/20 hover:bg-white/[0.06]"
+              target="_blank"
+            >
+              <svg class="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
               </svg>
               View on GitHub
@@ -66,7 +85,18 @@
 <script setup>
 import { defineAsyncComponent, h } from 'vue'
 
-const HeroParticlesSkeleton = {
+// Supported resource kinds rendered as a faint, static backdrop behind the CTA.
+const resourceKinds = [
+  'ServiceAccount', 'Deployment', 'StatefulSet', 'DaemonSet',
+  'Service', 'Ingress', 'ConfigMap', 'Secret',
+  'PersistentVolumeClaim', 'Job', 'CronJob', 'PodDisruptionBudget',
+  'NetworkPolicy', 'HorizontalPodAutoscaler', 'Namespace', 'Manifest',
+]
+
+// Invisible sizing skeleton mirroring HeroDemo's above-the-fold footprint to
+// prevent layout shift (CLS) while the async chunk loads. delay:0 shows it
+// immediately.
+const HeroDemoSkeleton = {
   render() {
     return h('div', {
       style: {
@@ -79,7 +109,7 @@ const HeroParticlesSkeleton = {
         alignItems: 'center',
         justifyContent: 'center',
         overflow: 'hidden',
-        background: 'radial-gradient(ellipse at center, rgba(102,126,234,0.1) 0%, transparent 60%), linear-gradient(180deg, #0a0a0f 0%, #111118 100%)',
+        background: 'radial-gradient(ellipse at center, rgba(51,172,168,0.1) 0%, transparent 60%), linear-gradient(180deg, #0a0a0f 0%, #111118 100%)',
       },
     }, [
       h('div', {
@@ -108,247 +138,109 @@ const HeroParticlesSkeleton = {
   }
 }
 
-const HeroParticles = defineAsyncComponent({
-  loader: () => import('./landing/HeroParticles.vue'),
-  loadingComponent: HeroParticlesSkeleton,
+const HeroDemo = defineAsyncComponent({
+  loader: () => import('./landing/sections/HeroDemo.vue'),
+  loadingComponent: HeroDemoSkeleton,
   delay: 0,
 })
-import ProblemSolution from './landing/ProblemSolution.vue'
-import InteractivePipeline from './landing/InteractivePipeline.vue'
-import SafetyControls from './landing/SafetyControls.vue'
+import BeforeAfter from './landing/sections/BeforeAfter.vue'
+import ReconcileWalkthrough from './landing/sections/ReconcileWalkthrough.vue'
+import FeatureGrid from './landing/sections/FeatureGrid.vue'
+import LiveTransform from './landing/sections/LiveTransform.vue'
+import PolicyControls from './landing/sections/PolicyControls.vue'
+// ScaleControl.vue (grid-based) is kept as a backup, unreferenced.
+import ScaleTopology from './landing/sections/ScaleTopology.vue'
+import Observability from './landing/sections/Observability.vue'
 import DashboardShowcase from './landing/DashboardShowcase.vue'
 import LatestBlog from './landing/LatestBlog.vue'
 import CapabilitiesStrip from './landing/CapabilitiesStrip.vue'
 </script>
 
 <style scoped>
+/* Root wrapper: keeps overflow-x clipping for the whole page. */
 .landing-page {
   width: 100%;
-  background: #0a0a0f;
+  background: var(--lynq-bg);
   color: #fff;
   overflow-x: hidden;
   position: relative;
 }
 
-/* CTA Section */
-.cta-section {
-  padding: 6rem 2rem;
-  background: linear-gradient(180deg, #111118 0%, #0a0a0f 50%, #111118 100%);
-  position: relative;
-  overflow: hidden;
+/* ── Ambient backdrop ──
+   A single fixed layer behind the whole page. Sections (except the hero, which
+   owns its own backdrop) are made transparent so these glows + grid show
+   through, giving the page depth and a consistent brand wash instead of flat
+   black. */
+.page-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
 }
-
-.cta-container {
-  max-width: 800px;
-  margin: 0 auto;
-  position: relative;
-}
-
-.cta-content {
-  text-align: center;
-  position: relative;
-  z-index: 10;
-}
-
-.cta-content h2 {
-  font-size: clamp(2rem, 4vw, 3rem);
-  font-weight: 700;
-  line-height: 1.3;
-  letter-spacing: -0.01em;
-  margin: 0 0 1.5rem;
-  background: linear-gradient(135deg, #fff 0%, rgba(255, 255, 255, 0.8) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-.cta-content p {
-  font-size: 1.25rem;
-  line-height: 1.6;
-  color: rgba(255, 255, 255, 0.6);
-  margin: 0 0 2.5rem;
-}
-
-.cta-buttons {
-  display: flex;
-  justify-content: center;
-  gap: 1rem;
-  flex-wrap: wrap;
-}
-
-.cta-primary {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 1rem 2rem;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: #fff;
-  font-weight: 600;
-  font-size: 1rem;
-  border-radius: 12px;
-  text-decoration: none;
-  transition: all 0.3s ease;
-  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
-}
-
-.cta-primary:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 25px rgba(102, 126, 234, 0.5);
-}
-
-.cta-primary .arrow {
-  transition: transform 0.3s ease;
-}
-
-.cta-primary:hover .arrow {
-  transform: translateX(4px);
-}
-
-.cta-github {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 1rem 2rem;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #fff;
-  font-weight: 500;
-  font-size: 1rem;
-  border-radius: 12px;
-  text-decoration: none;
-  transition: all 0.3s ease;
-}
-
-.cta-github:hover {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.2);
-}
-
-.github-icon {
-  width: 20px;
-  height: 20px;
-}
-
-/* Floating elements */
-.floating-elements {
+.pb-glow {
   position: absolute;
   inset: 0;
-  pointer-events: none;
+  transform-origin: 50% 42%;
+  background:
+    radial-gradient(58rem 48rem at 6% 0%, rgba(51, 172, 168, 0.22), transparent 58%),
+    radial-gradient(54rem 50rem at 100% 36%, rgba(59, 130, 246, 0.14), transparent 56%),
+    radial-gradient(60rem 50rem at 50% 108%, rgba(51, 172, 168, 0.18), transparent 58%);
+}
+/* Ambient breathing — a clearly visible swell, still calm. */
+@media (prefers-reduced-motion: no-preference) {
+  .pb-glow {
+    animation: pb-pulse 5s ease-in-out infinite;
+  }
+}
+@keyframes pb-pulse {
+  0%, 100% { opacity: 0.5; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.08); }
+}
+.pb-grid {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.09) 1.2px, transparent 1.4px);
+  background-size: 34px 34px;
+  opacity: 1;
+  /* Even texture across the viewport, fading only near the far edges so it
+     reads as a consistent surface rather than a band at the top. */
+  -webkit-mask-image: radial-gradient(ellipse 96% 96% at 50% 42%, #000 0%, rgba(0, 0, 0, 0.7) 58%, transparent 94%);
+  mask-image: radial-gradient(ellipse 96% 96% at 50% 42%, #000 0%, rgba(0, 0, 0, 0.7) 58%, transparent 94%);
+}
+
+/* Lift real content above the backdrop, and let the backdrop show through every
+   section except the self-contained hero. This also retires the leftover
+   off-palette gradient the blog section used. */
+.landing-page > *:not(.page-bg) {
+  position: relative;
   z-index: 1;
 }
+.landing-page > section:not(.hero-demo),
+.landing-page > div:not(.page-bg) {
+  background: transparent !important;
+  background-image: none !important;
+}
 
-.float-item {
+/* Static, decorative CTA backdrop: faint monospace grid of resource kinds.
+   Kept in scoped CSS for the radial mask + absolute fill (complex rules). */
+.resource-grid {
   position: absolute;
-  padding: 0.5rem 1rem;
-  background: rgba(102, 126, 234, 0.1);
-  border: 1px solid rgba(102, 126, 234, 0.2);
-  border-radius: 8px;
-  font-size: 0.8rem;
-  color: #a78bfa;
-  opacity: 0.4;
-  animation: float 6s ease-in-out infinite;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: center;
+  justify-content: center;
+  gap: 0.75rem 1rem;
+  padding: 3rem 2rem;
+  opacity: 0.12;
+  overflow: hidden;
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at center, transparent 30%, #000 85%);
+  mask-image: radial-gradient(ellipse 70% 60% at center, transparent 30%, #000 85%);
 }
 
-.float-item code {
-  font-family: 'SF Mono', Monaco, monospace;
-}
-
-.float-1 {
-  top: 15%;
-  left: 3%;
-  animation-delay: 0s;
-}
-
-.float-2 {
-  top: 25%;
-  right: 3%;
-  animation-delay: 2s;
-}
-
-.float-3 {
-  bottom: 15%;
-  left: 5%;
-  animation-delay: 4s;
-}
-
-.float-4 {
-  top: 10%;
-  left: 12%;
-  animation-delay: 1s;
-}
-
-.float-5 {
-  top: 40%;
-  right: 2%;
-  animation-delay: 3s;
-}
-
-.float-6 {
-  bottom: 25%;
-  right: 8%;
-  animation-delay: 5s;
-}
-
-.float-7 {
-  bottom: 10%;
-  left: 15%;
-  animation-delay: 2.5s;
-}
-
-.float-8 {
-  top: 18%;
-  right: 12%;
-  animation-delay: 1.5s;
-}
-
-.float-9 {
-  bottom: 35%;
-  left: 2%;
-  animation-delay: 3.5s;
-}
-
-.float-10 {
-  top: 50%;
-  left: 8%;
-  animation-delay: 0.5s;
-}
-
-.float-11 {
-  top: 5%;
-  right: 6%;
-  animation-delay: 4.5s;
-}
-
-.float-12 {
-  bottom: 5%;
-  right: 3%;
-  animation-delay: 2s;
-}
-
-.float-13 {
-  top: 35%;
-  left: 1%;
-  animation-delay: 5.5s;
-}
-
-.float-14 {
-  bottom: 30%;
-  right: 14%;
-  animation-delay: 3s;
-}
-
-.float-item.k8s {
-  background: rgba(16, 185, 129, 0.1);
-  border-color: rgba(16, 185, 129, 0.2);
-  color: #6ee7b7;
-}
-
-.float-item.db {
-  background: rgba(59, 130, 246, 0.1);
-  border-color: rgba(59, 130, 246, 0.2);
-  color: #93c5fd;
-}
-
+/* Entrance animation for the CTA content. */
 @keyframes fadeUp {
   from {
     opacity: 0;
@@ -364,33 +256,20 @@ import CapabilitiesStrip from './landing/CapabilitiesStrip.vue'
   animation: fadeUp 0.6s ease both;
 }
 
-@keyframes float {
-  0%, 100% {
-    transform: translateY(0) rotate(0deg);
-    opacity: 0.3;
-  }
-  50% {
-    transform: translateY(-20px) rotate(3deg);
-    opacity: 0.5;
-  }
-}
-
 @media (max-width: 768px) {
   .cta-buttons {
     flex-direction: column;
     align-items: center;
   }
 
-  .cta-primary,
-  .cta-github {
+  .cta-buttons .cta-primary,
+  .cta-buttons .cta-github {
     width: 100%;
     max-width: 280px;
-    justify-content: center;
   }
 
-  .floating-elements {
+  .resource-grid {
     display: none;
   }
 }
-
 </style>

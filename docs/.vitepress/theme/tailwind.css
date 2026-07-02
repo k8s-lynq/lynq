@@ -1,0 +1,87 @@
+/* Tailwind v4 — utilities only, NO preflight.
+ *
+ * VitePress ships its own base/theme styles for docs pages. Tailwind's preflight
+ * is a global reset that would clobber that, so we import the theme (design
+ * tokens) + utilities layers but deliberately SKIP `tailwindcss/preflight.css`.
+ * Utility classes (flex, p-4, text-center, …) are opt-in, so docs pages are
+ * unaffected unless a component actually uses them — this makes Tailwind safe to
+ * add to the existing themed site and available to the landing components. */
+@layer theme, base, components, utilities;
+
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+/* Scan the landing components (and any markdown) for class usage. Paths are
+   relative to this file (.vitepress/theme/). */
+@source "../components/**/*.{vue,js,ts}";
+@source "../../**/*.md";
+
+/* Brand design tokens exposed as Tailwind utilities — mirrors the --lynq-*
+   custom properties in custom.css so the landing can use utilities like
+   bg-lynq-card, text-lynq-dim, border-lynq-border, rounded-lynq, font-mono. */
+@theme {
+  --color-lynq-bg: #000000;
+  --color-lynq-bg2: #050505;
+  --color-lynq-card: #050505;
+  --color-lynq-border: rgba(255, 255, 255, 0.09);
+  /* Lynq signature color is teal #33aca8 (matches the logo), not purple.
+     "purple" is kept as the token NAME for the primary brand slot to avoid a
+     sweeping rename; its value is the signature teal. "accent" is a lighter
+     teal tint for highlighted text/icons on the dark background. */
+  --color-lynq-purple: #33aca8;
+  --color-lynq-accent: #4fd1cb;
+  --color-lynq-green: #10b981;
+  --color-lynq-blue: #3b82f6;
+  --color-lynq-red: #ef4444;
+  --color-lynq-amber: #f59e0b;
+  --color-lynq-text: #ededed;
+  --color-lynq-dim: rgba(255, 255, 255, 0.65);
+  --color-lynq-faint: rgba(255, 255, 255, 0.4);
+
+  --radius-lynq: 18px;
+  --radius-lynq-sm: 10px;
+
+  --font-mono: "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", monospace;
+  --font-sans: "Pretendard Variable", Pretendard, ui-sans-serif, system-ui,
+    -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --tracking-tightest: -0.03em;
+}
+
+/* Legacy --lynq-* design tokens (consumed by scoped component CSS via
+   var(--lynq-*)). These are also declared in custom.css's :root block, but that
+   block's custom properties are NOT surviving this project's CSS pipeline —
+   they resolve empty on the landing page, which left scoped colors falling back
+   to white, the mono font to Inter, section padding to 0, and the content
+   container unbounded (full-width). Re-declaring them here, adjacent to the
+   @theme output that DOES emit reliably, restores every var(--lynq-*) consumer.
+   Colors alias the @theme tokens above so there is a single source of truth. */
+:root {
+  --lynq-bg: var(--color-lynq-bg);
+  --lynq-bg-2: var(--color-lynq-bg2);
+  --lynq-card: var(--color-lynq-card);
+  --lynq-border: var(--color-lynq-border);
+  --lynq-purple: var(--color-lynq-purple);
+  --lynq-accent: var(--color-lynq-accent);
+  --lynq-green: var(--color-lynq-green);
+  --lynq-blue: var(--color-lynq-blue);
+  --lynq-red: var(--color-lynq-red);
+  --lynq-amber: var(--color-lynq-amber);
+  --lynq-text: var(--color-lynq-text);
+  --lynq-text-dim: var(--color-lynq-dim);
+  --lynq-text-faint: var(--color-lynq-faint);
+  --lynq-font: var(--font-sans);
+  --lynq-mono: var(--font-mono);
+  --lynq-section-y: 5.5rem;
+  --lynq-container: 1040px;
+  --lynq-radius: 18px;
+  --lynq-radius-sm: 10px;
+  --lynq-beat: 600ms;
+  --lynq-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --lynq-reveal: 0.6s;
+  --lynq-h1: clamp(2.6rem, 5.5vw, 3.75rem);
+  --lynq-h2: clamp(2rem, 5vw, 3.75rem);
+  --lynq-h1-weight: 400;
+  --lynq-heading-weight: 500;
+  --lynq-tracking: -0.03em;
+}

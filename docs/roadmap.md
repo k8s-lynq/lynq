@@ -1,5 +1,5 @@
 ---
-description: "Lynq roadmap: completed milestones in v1.0–v1.1, planned features for v1.2 (PostgreSQL, Helm) and v1.3 (horizontal scaling, OIDC) and beyond."
+description: "Lynq roadmap: completed milestones in v1.0–v1.1, planned features for v1.2 (PostgreSQL, enhanced observability) and v1.3 (node sharding, advanced multi-tenancy) and beyond."
 ---
 
 # Roadmap
@@ -26,6 +26,7 @@ Released
 - ✅ Multi-template support
 - ✅ Webhook validation
 - ✅ Prometheus metrics
+- ✅ Grafana dashboard and AlertManager alert rules
 - ✅ Comprehensive documentation
 
 ### Performance
@@ -60,6 +61,44 @@ Cross-namespace support and operational improvements
   - Respects DeletionPolicy (Delete/Retain)
   - Orphan labels for retained resources for easy identification
 
+- ✅ **Terraform Compatibility** (v1.1.2)
+  - Immutable `hubId` enforced via `x-kubernetes-validations`
+  - `x-kubernetes-list-type: map` on resource arrays enables in-place updates instead of full recreation
+  - `DeletionPolicy=Retain` resources use label-based tracking; deletion policy evaluated at creation time
+
+- ✅ **Complete Rebrand to Lynq** (v1.1.9)
+  - Project renamed from tenant-operator to Lynq
+  - CRDs renamed: TenantRegistry → LynqHub, TenantTemplate → LynqForm, Tenant → LynqNode
+  - API group migrated to `*.lynq.sh`
+
+- ✅ **Deprecation of `.hostOrUrl` / `.host` Variables** (v1.1.11)
+  - Deprecated in favor of `extraValueMappings` + `toHost()` template function
+  - Scheduled for removal in v1.3.0 (see Breaking Changes below)
+
+- ✅ **Dependency Skip Control and Strict Rendering** (v1.1.14)
+  - `skipOnDependencyFailure` field controls whether resources are created when dependencies fail
+  - Strict template rendering surfaces missing-variable errors instead of silently rendering empty values
+  - `ignoreFields` handling fixes
+
+- ✅ **Gradual Rollout with maxSkew** (v1.1.16)
+  - Limits concurrent LynqNode updates for safer large-scale rollouts
+  - Configurable log level with reduced default verbosity
+
+- ✅ **Lynq Dashboard v1.0** (v1.1.17)
+  - Web UI for visualizing and monitoring operator status
+  - Topology view of Hub → Form → Node relationships with Problem Mode highlighting
+  - Overview page, detail pages with conditions/events/YAML, global search
+  - i18n (English/Korean), dark/light mode, configurable auto-refresh
+
+- ✅ **Performance Optimizations** (v1.1.19)
+  - Template render cache and SSA apply skip
+  - Reduced CPU overhead and allocations in reconcile loops
+
+- ✅ **Drift Correction Redesign** (v1.1.20)
+  - Annotation-driven single skip path: exactly one API write per successful apply
+  - Periodic force-reapply (~10 min, configurable) as drift-correction backstop for external edits
+  - maxSkew deadlock fix (readiness timeout measured from apply start time)
+
 ## v1.2
 
 ::: info Focus
@@ -75,8 +114,6 @@ Additional datasources and enhanced observability
   - Query optimization
 
 - [ ] **Enhanced Metrics Dashboard**
-  - Pre-built Grafana dashboards
-  - Comprehensive AlertManager rules
   - Multi-node metrics visualization
   - Performance analytics
 

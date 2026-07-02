@@ -2,6 +2,7 @@ import { defineConfig, createContentLoader } from "vitepress";
 import { withMermaid } from "vitepress-plugin-mermaid";
 import { writeFileSync } from "fs";
 import path from "path";
+import tailwindcss from "@tailwindcss/vite";
 
 // https://vitepress.dev/reference/site-config
 export default withMermaid(
@@ -218,17 +219,7 @@ export default withMermaid(
     },
 
     vite: {
-      build: {
-        rollupOptions: {
-          output: {
-            manualChunks(id) {
-              if (id.includes('node_modules/three')) {
-                return 'three'
-              }
-            }
-          }
-        }
-      }
+      plugins: [tailwindcss()],
     },
 
     transformHead(context) {
@@ -439,6 +430,17 @@ export default withMermaid(
     },
 
     head: [
+      // Pretendard Variable — display font for the landing page (matches the
+      // windflow reference tone). Loaded from jsDelivr with preconnect.
+      ["link", { rel: "preconnect", href: "https://cdn.jsdelivr.net", crossorigin: "" }],
+      [
+        "link",
+        {
+          rel: "stylesheet",
+          href: "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css",
+        },
+      ],
+
       // Standard favicon
       ["link", { rel: "icon", type: "image/x-icon", href: "/favicon.ico" }],
       [

@@ -9,15 +9,21 @@
     "docs:preview": "vitepress preview"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.3.2",
     "mermaid": "^11.12.1",
+    "tailwindcss": "^4.3.2",
     "vitepress": "^1.0.0",
     "vitepress-plugin-mermaid": "^2.0.17"
   },
   "packageManager": "npm@10.0.0",
   "dependencies": {
     "@vueuse/core": "^10.7.0",
+    "d3-hierarchy": "^3.1.2",
+    "d3-selection": "^3.0.0",
+    "d3-shape": "^3.2.0",
+    "d3-transition": "^3.0.1",
+    "d3-zoom": "^3.0.0",
     "js-yaml": "^4.1.0",
-    "motion-v": "^1.7.4",
-    "three": "^0.160.0"
+    "motion-v": "^1.7.4"
   }
 }

@@ -15,6 +15,7 @@ import BlastRadiusAnimation from '../components/BlastRadiusAnimation.vue';
 import LynqFlowDiagram from '../components/LynqFlowDiagram.vue';
 import BlogPostMeta from '../components/BlogPostMeta.vue';
 import BlogPostFooter from '../components/BlogPostFooter.vue';
+import './tailwind.css';
 import './custom.css';
 
 export default {

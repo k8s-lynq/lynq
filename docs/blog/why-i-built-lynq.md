@@ -1,4 +1,5 @@
 ---
+pageClass: blog-page
 title: "Why I Built Lynq: From Internal Tool to Open Source 👶"
 date: 2025-12-17
 author: Tim Kang

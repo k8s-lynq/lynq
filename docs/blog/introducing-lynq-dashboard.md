@@ -1,4 +1,5 @@
 ---
+pageClass: blog-page
 title: "Introducing Lynq Dashboard"
 date: 2025-12-22
 author: Tim Kang

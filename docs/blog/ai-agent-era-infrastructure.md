@@ -1,4 +1,5 @@
 ---
+pageClass: blog-page
 title: "In the Age of AI Agents, How Should Infrastructure Change?"
 date: 2026-02-23
 author: Tim Kang

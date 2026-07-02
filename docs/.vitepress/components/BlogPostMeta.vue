@@ -31,17 +31,18 @@ const formatDate = (dateStr) => {
   margin-top: 1rem;
   margin-bottom: 2rem;
   padding-bottom: 1.5rem;
-  border-bottom: 1px solid var(--vp-c-divider);
+  border-bottom: 1px solid var(--lynq-border);
 }
 
 .meta-info {
   font-size: 0.95rem;
-  color: var(--vp-c-text-2);
+  color: var(--lynq-text-dim);
   margin-bottom: 0.75rem;
 }
 
 .separator {
   margin: 0 0.5rem;
+  color: var(--lynq-text-faint);
 }
 
 .tags {
@@ -51,10 +52,12 @@ const formatDate = (dateStr) => {
 }
 
 .tag {
-  font-size: 0.8rem;
-  padding: 0.25rem 0.75rem;
-  background: var(--vp-c-bg-soft);
-  border-radius: 4px;
-  color: var(--vp-c-text-2);
+  font-family: var(--lynq-mono);
+  font-size: 0.72rem;
+  padding: 0.2rem 0.6rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--lynq-border);
+  border-radius: 999px;
+  color: var(--lynq-text-dim);
 }
 </style>

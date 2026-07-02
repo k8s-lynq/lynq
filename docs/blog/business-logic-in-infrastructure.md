@@ -1,4 +1,5 @@
 ---
+pageClass: blog-page
 title: "Is It Okay to Delegate Business Logic to Infrastructure?"
 date: 2026-02-25
 author: Tim Kang
