@@ -22,7 +22,7 @@ html.dark body {
 /* Landing page full-width fix */
 .VPContent.is-home {
   padding: 0 !important;
-  background-color: #0a0a0f !important;
+  background-color: #000000 !important;
 }
 
 .VPContent.is-home .VPHome {
@@ -38,11 +38,11 @@ html.dark body {
 }
 
 html.dark .VPContent.is-home {
-  background-color: #0a0a0f !important;
+  background-color: #000000 !important;
 }
 
 html.dark .VPContent.is-home .VPHome {
-  background-color: #0a0a0f !important;
+  background-color: #000000 !important;
 }
 
 /* Remove VitePress home page default container */

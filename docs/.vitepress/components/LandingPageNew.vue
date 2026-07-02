@@ -1,5 +1,13 @@
 <template>
   <div class="landing-page">
+    <!-- Fixed ambient backdrop: brand radial glows + a faint, masked dot grid.
+         Sits behind every section (which are made transparent below) so the page
+         reads with depth and brand presence instead of a flat black void. -->
+    <div class="page-bg" aria-hidden="true">
+      <div class="pb-glow"></div>
+      <div class="pb-grid"></div>
+    </div>
+
     <!-- Hero centerpiece: DB row -> K8s resources transform -->
     <HeroDemo />
 
@@ -156,6 +164,61 @@ import CapabilitiesStrip from './landing/CapabilitiesStrip.vue'
   color: #fff;
   overflow-x: hidden;
   position: relative;
+}
+
+/* ── Ambient backdrop ──
+   A single fixed layer behind the whole page. Sections (except the hero, which
+   owns its own backdrop) are made transparent so these glows + grid show
+   through, giving the page depth and a consistent brand wash instead of flat
+   black. */
+.page-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+.pb-glow {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 42%;
+  background:
+    radial-gradient(58rem 48rem at 6% 0%, rgba(51, 172, 168, 0.22), transparent 58%),
+    radial-gradient(54rem 50rem at 100% 36%, rgba(59, 130, 246, 0.14), transparent 56%),
+    radial-gradient(60rem 50rem at 50% 108%, rgba(51, 172, 168, 0.18), transparent 58%);
+}
+/* Ambient breathing — a clearly visible swell, still calm. */
+@media (prefers-reduced-motion: no-preference) {
+  .pb-glow {
+    animation: pb-pulse 5s ease-in-out infinite;
+  }
+}
+@keyframes pb-pulse {
+  0%, 100% { opacity: 0.5; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.08); }
+}
+.pb-grid {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.09) 1.2px, transparent 1.4px);
+  background-size: 34px 34px;
+  opacity: 1;
+  /* Even texture across the viewport, fading only near the far edges so it
+     reads as a consistent surface rather than a band at the top. */
+  -webkit-mask-image: radial-gradient(ellipse 96% 96% at 50% 42%, #000 0%, rgba(0, 0, 0, 0.7) 58%, transparent 94%);
+  mask-image: radial-gradient(ellipse 96% 96% at 50% 42%, #000 0%, rgba(0, 0, 0, 0.7) 58%, transparent 94%);
+}
+
+/* Lift real content above the backdrop, and let the backdrop show through every
+   section except the self-contained hero. This also retires the leftover
+   off-palette gradient the blog section used. */
+.landing-page > *:not(.page-bg) {
+  position: relative;
+  z-index: 1;
+}
+.landing-page > section:not(.hero-demo),
+.landing-page > div:not(.page-bg) {
+  background: transparent !important;
+  background-image: none !important;
 }
 
 /* Static, decorative CTA backdrop: faint monospace grid of resource kinds.
