@@ -284,14 +284,17 @@ func (r *LynqNodeReconciler) applyResources(
 	resourcePhases []lynqv1.ResourcePhaseEntry,
 	replicaMetrics map[string]status.ResourceReplicaMetrics,
 ) {
-	// previousPhases lets the new phase-model path detect Available→Degraded,
+	// previousEntries lets the new phase-model path detect Available→Degraded,
 	// Degraded→Available, and Progressing/Pending→Available transitions for
-	// event emission and the phase_transitions_total counter. Reading from
-	// node.Status.ResourcePhases means restart behavior is consistent: a
-	// resource that was already Degraded at restart does NOT re-emit
-	// WorkloadDegraded (no transition observed).
-	previousPhases := buildPreviousPhasesMap(node)
+	// event emission and the phase_transitions_total counter, and carry forward
+	// DegradedSince. Reading from node.Status.ResourcePhases means restart
+	// behavior is consistent: a resource that was already Degraded at restart
+	// does NOT re-emit WorkloadDegraded (no transition observed).
+	previousEntries := buildPreviousPhasesMap(node)
 	replicaMetrics = make(map[string]status.ResourceReplicaMetrics)
+	// Non-nil so the status manager always overwrites status.degradedResourceIds
+	// — otherwise a nil slice on recovery leaves the previous IDs stale (F4).
+	degradedResourceIds = []string{}
 
 	logger := log.FromContext(ctx)
 	applier := r.getApplier()
@@ -410,6 +413,14 @@ func (r *LynqNodeReconciler) applyResources(
 				"Failed to render resource %s: %v", resource.ID, err)
 			failedResourceIds[resource.ID] = true
 			failedCount++
+			// F3: record a Failed phase entry so the resource is reflected in
+			// status.resourcePhases and its lynqnode_resource_phase stateset is
+			// (re)set to Failed — otherwise a previously-Available series would
+			// linger at 1. obj is nil here, so derive kind/name from the spec.
+			resourcePhases = append(resourcePhases, lynqv1.ResourcePhaseEntry{
+				ID: resource.ID, Kind: resource.Spec.GroupVersionKind().Kind, Name: resource.NameTemplate,
+				Phase: lynqv1.ResourcePhaseFailed, Reason: fmt.Sprintf("template render error: %v", err),
+			})
 			continue
 		}
 
@@ -421,10 +432,18 @@ func (r *LynqNodeReconciler) applyResources(
 			logger.Error(onceErr, "Failed to check Once policy", "id", resource.ID)
 			failedResourceIds[resource.ID] = true
 			failedCount++
+			resourcePhases = append(resourcePhases, lynqv1.ResourcePhaseEntry{
+				ID: resource.ID, Kind: obj.GetKind(), Name: obj.GetName(),
+				Phase: lynqv1.ResourcePhaseFailed, Reason: fmt.Sprintf("CreationPolicy=Once check failed: %v", onceErr),
+			})
 			continue
 		case onceAlreadyExists:
 			logger.V(1).Info("Skipping resource (CreationPolicy=Once, already created)", "id", resource.ID, "name", obj.GetName())
 			readyCount++
+			resourcePhases = append(resourcePhases, lynqv1.ResourcePhaseEntry{
+				ID: resource.ID, Kind: obj.GetKind(), Name: obj.GetName(),
+				Phase: lynqv1.ResourcePhaseAvailable, Reason: "CreationPolicy=Once, already created",
+			})
 			continue
 		}
 
@@ -445,6 +464,16 @@ func (r *LynqNodeReconciler) applyResources(
 		}
 
 		changed, applyErr := applier.ApplyResource(ctx, obj, node, resource.ConflictPolicy, resource.PatchStrategy, deletionPolicy, ignoreFields, forceReapply)
+
+		// M1: soft guardrail for multi-manager safety. `replace` (full Update)
+		// and `merge` (strategic merge) do NOT do field-level ownership like
+		// SSA — on shared workloads they can clobber webhook-injected sidecars,
+		// API-defaulted fields, and HPA-owned spec.replicas. Warn (once per real
+		// write) when either is used on a pod-based workload; only `apply` (SSA)
+		// is multi-manager-safe. No behavior change — visibility only.
+		if changed && applyErr == nil {
+			r.warnUnsafePatchStrategy(ctx, node, resource, obj.GetKind())
+		}
 
 		// Track changes and emit events on first change
 		if changed {
@@ -497,6 +526,13 @@ func (r *LynqNodeReconciler) applyResources(
 
 			failedResourceIds[resource.ID] = true
 			failedCount++
+			// F3: record a Failed phase entry (covers both conflict and other
+			// apply errors) so status.resourcePhases and the phase stateset
+			// reflect the failure instead of a stale Available.
+			resourcePhases = append(resourcePhases, lynqv1.ResourcePhaseEntry{
+				ID: resource.ID, Kind: kind, Name: obj.GetName(),
+				Phase: lynqv1.ResourcePhaseFailed, Reason: fmt.Sprintf("apply error: %v", applyErr),
+			})
 			continue
 		}
 
@@ -561,7 +597,7 @@ func (r *LynqNodeReconciler) applyResources(
 			// tracking + transition-based events. Extracted into a helper
 			// to keep applyResources's cyclomatic complexity manageable
 			// (gocyclo limit is 35).
-			entry, replicas, phase := r.evaluateResourcePhase(ctx, node, resource, current, kind, elapsed, timeoutDuration, previousPhases)
+			entry, replicas, phase := r.evaluateResourcePhase(ctx, node, resource, current, kind, elapsed, timeoutDuration, previousEntries)
 			r.aggregatePhaseCounters(phase, resource.ID,
 				&readyCount, &degradedCount, &progressingCount, &pendingCount, &failedCount,
 				&degradedResourceIds, failedResourceIds, notReadyResourceIds)
@@ -643,12 +679,12 @@ func (r *LynqNodeReconciler) evaluateResourcePhase(
 	current *unstructured.Unstructured,
 	kind string,
 	elapsed, timeoutDuration time.Duration,
-	previousPhases map[string]lynqv1.ResourcePhase,
+	previousEntries map[string]lynqv1.ResourcePhaseEntry,
 ) (lynqv1.ResourcePhaseEntry, status.ResourceReplicaMetrics, lynqv1.ResourcePhase) {
 	checker := r.getReadinessChecker()
 	phaseResult := checker.ClassifyPhase(current, elapsed, timeoutDuration)
-	previousPhase := previousPhases[resource.ID]
-	entry := r.processResourcePhase(ctx, node, resource, current.GetName(), kind, phaseResult, previousPhase, elapsed)
+	prevEntry := previousEntries[resource.ID]
+	entry := r.processResourcePhase(ctx, node, resource, current.GetName(), kind, phaseResult, prevEntry, elapsed)
 
 	replicas := status.ResourceReplicaMetrics{
 		Kind:                 kind,
@@ -718,11 +754,12 @@ func (r *LynqNodeReconciler) processResourcePhase(
 	resourceName string,
 	kind string,
 	phaseResult readiness.PhaseResult,
-	previousPhase lynqv1.ResourcePhase,
+	prevEntry lynqv1.ResourcePhaseEntry,
 	elapsed time.Duration,
 ) lynqv1.ResourcePhaseEntry {
 	logger := log.FromContext(ctx)
 	currentPhase := phaseResult.Phase
+	previousPhase := prevEntry.Phase
 
 	entry := lynqv1.ResourcePhaseEntry{
 		ID:     resource.ID,
@@ -732,21 +769,21 @@ func (r *LynqNodeReconciler) processResourcePhase(
 		Reason: phaseResult.Reason,
 	}
 
-	// degraded-since-seconds is anchored to the previous reconcile's transition.
-	// If the resource was already Degraded last reconcile, we don't know exactly
-	// when it entered Degraded — but we know elapsed since last apply, which is
-	// an upper bound. For freshly-degraded resources (previousPhase != Degraded
-	// and currentPhase == Degraded) start at 0; the next reconcile will see
-	// the same Degraded phase and report the accumulated time.
-	//
-	// Simpler heuristic: read SinceSeconds from the previous entry's
-	// SinceSeconds + reconcile interval. Approximated here as 0 on transition,
-	// elapsed on continuation. Acceptable approximation — the metric is for
-	// trend-watching, not millisecond precision.
+	// degraded-since tracks true time-in-Degraded via a persisted timestamp.
+	// On entry into Degraded (previous phase was not Degraded) stamp now; while
+	// still Degraded, carry forward the previous entry's DegradedSince. This is
+	// anchored to the transition, NOT to lynq.sh/apply-start-time — otherwise a
+	// workload applied days ago that degrades now would report days of
+	// "degraded" on its second reconcile and misfire the >30m severe alert.
 	if currentPhase == lynqv1.ResourcePhaseDegraded {
-		if previousPhase == lynqv1.ResourcePhaseDegraded {
-			entry.SinceSeconds = int64(elapsed.Seconds())
+		if previousPhase == lynqv1.ResourcePhaseDegraded && prevEntry.DegradedSince != nil {
+			entry.DegradedSince = prevEntry.DegradedSince
 		} else {
+			now := metav1.Now()
+			entry.DegradedSince = &now
+		}
+		entry.SinceSeconds = int64(time.Since(entry.DegradedSince.Time).Seconds())
+		if entry.SinceSeconds < 0 {
 			entry.SinceSeconds = 0
 		}
 	}
@@ -804,14 +841,57 @@ func (r *LynqNodeReconciler) processResourcePhase(
 }
 
 // buildPreviousPhasesMap indexes node.Status.ResourcePhases by resource ID so
-// per-resource transition detection has O(1) lookup. Returns an empty map
-// (not nil) so lookups on missing IDs return the zero value ("") cleanly.
-func buildPreviousPhasesMap(node *lynqv1.LynqNode) map[string]lynqv1.ResourcePhase {
-	out := make(map[string]lynqv1.ResourcePhase, len(node.Status.ResourcePhases))
+// per-resource transition detection has O(1) lookup. Returns the full previous
+// entry (not just the phase) so processResourcePhase can carry forward
+// DegradedSince to compute true time-in-Degraded. Returns an empty map (not
+// nil) so lookups on missing IDs return the zero-value entry (Phase == "")
+// cleanly.
+func buildPreviousPhasesMap(node *lynqv1.LynqNode) map[string]lynqv1.ResourcePhaseEntry {
+	out := make(map[string]lynqv1.ResourcePhaseEntry, len(node.Status.ResourcePhases))
 	for _, entry := range node.Status.ResourcePhases {
-		out[entry.ID] = entry.Phase
+		out[entry.ID] = entry
 	}
 	return out
+}
+
+// warnUnsafePatchStrategy emits a Warning event + log when a workload kind is
+// applied with a non-SSA patch strategy (replace/merge), which can clobber
+// fields owned by other managers (webhook sidecars, API defaults, HPA
+// spec.replicas). Visibility only — no behavior change (M1). Kubernetes dedups
+// events by reason+message so this doesn't spam despite firing per write.
+func (r *LynqNodeReconciler) warnUnsafePatchStrategy(ctx context.Context, node *lynqv1.LynqNode, resource lynqv1.TResource, kind string) {
+	if resource.PatchStrategy != lynqv1.PatchStrategyReplace && resource.PatchStrategy != lynqv1.PatchStrategyMerge {
+		return
+	}
+	switch kind {
+	case resourceKindDeployment, "StatefulSet", "DaemonSet":
+	default:
+		return
+	}
+	log.FromContext(ctx).Info("patchStrategy is not multi-manager-safe on a workload",
+		"id", resource.ID, "kind", kind, "patchStrategy", resource.PatchStrategy)
+	r.Recorder.Eventf(node, corev1.EventTypeWarning, "UnsafePatchStrategy",
+		"Resource '%s' (%s) uses patchStrategy=%s, which is NOT field-ownership-aware and can "+
+			"overwrite fields managed by other controllers (HPA spec.replicas, admission-webhook "+
+			"sidecars, API-server defaults). Prefer patchStrategy=apply (SSA); use ignoreFields for "+
+			"externally-owned fields such as $.spec.replicas.",
+		resource.ID, kind, resource.PatchStrategy)
+}
+
+// clearPhaseStateOnEarlyError zeroes per-resource phase state when a reconcile
+// aborts BEFORE evaluating any resource (VariablesBuildError / DependencyCycle)
+// (F6). Without it, a node that was healthy keeps its previous
+// status.resourcePhases array, status.degradedResourceIds, and per-resource
+// metric series (e.g. a lingering lynqnode_resource_phase{phase="Available"}=1)
+// even though nothing could be evaluated. The aggregate per-phase counts and
+// prom gauges are zeroed by the caller's existing PublishMetrics(0,0,0,0,…).
+func (r *LynqNodeReconciler) clearPhaseStateOnEarlyError(node *lynqv1.LynqNode) {
+	for _, e := range node.Status.ResourcePhases {
+		metrics.DeleteResourceSeries(node.Name, node.Namespace, e.ID, e.Kind)
+	}
+	// Non-nil empty slices so the status manager overwrites (clears) the fields.
+	r.StatusManager.PublishResourcePhases(node, []lynqv1.ResourcePhaseEntry{}, []string{}, nil)
+	r.StatusManager.PublishResourceCountsWithPhases(node, 0, 0, 0, 0, 0, 0, 0)
 }
 
 // emitTemplateAppliedEvent emits a detailed event when template changes are being applied
@@ -1889,6 +1969,15 @@ func (r *LynqNodeReconciler) deleteOrphanedResource(ctx context.Context, node *l
 		return err
 	}
 
+	// F5: the resource is orphaned (removed from the template), so Lynq no
+	// longer classifies it into a phase. Drop its per-resource metric series
+	// now — otherwise lynqnode_resource_phase / replica gauges / degraded-since
+	// for this resource_id linger until the whole LynqNode is deleted. Keyed by
+	// the LynqNode's name/namespace (the metric labels), not the resource's
+	// target namespace. Idempotent, and correct regardless of the delete/retain
+	// outcome below since the resource is no longer part of the node.
+	metrics.DeleteResourceSeries(node.Name, node.Namespace, resourceID, kind)
+
 	// Get DeletionPolicy from the resource's annotation
 	// This is necessary because orphaned resources are no longer in the template
 	// We stored DeletionPolicy as an annotation during resource creation
@@ -2119,6 +2208,7 @@ func (r *LynqNodeReconciler) reconcileSpec(ctx context.Context, node *lynqv1.Lyn
 		r.StatusManager.PublishMetrics(node, 0, 0, 0, 0, []metav1.Condition{
 			{Type: "Degraded", Status: metav1.ConditionTrue, Reason: "VariablesBuildError"},
 		}, true, "VariablesBuildError")
+		r.clearPhaseStateOnEarlyError(node) // F6
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 	}
 
@@ -2135,6 +2225,7 @@ func (r *LynqNodeReconciler) reconcileSpec(ctx context.Context, node *lynqv1.Lyn
 		r.StatusManager.PublishMetrics(node, 0, 0, 0, 0, []metav1.Condition{
 			{Type: "Degraded", Status: metav1.ConditionTrue, Reason: "DependencyCycle"},
 		}, true, "DependencyCycle")
+		r.clearPhaseStateOnEarlyError(node) // F6
 		return ctrl.Result{}, err
 	}
 
@@ -2148,6 +2239,7 @@ func (r *LynqNodeReconciler) reconcileSpec(ctx context.Context, node *lynqv1.Lyn
 		r.StatusManager.PublishMetrics(node, 0, 0, 0, 0, []metav1.Condition{
 			{Type: "Degraded", Status: metav1.ConditionTrue, Reason: "DependencyCycle"},
 		}, true, "DependencyCycle")
+		r.clearPhaseStateOnEarlyError(node) // F6
 		return ctrl.Result{}, err
 	}
 
@@ -2423,8 +2515,11 @@ func (r *LynqNodeReconciler) checkResourcesReadiness(
 ) {
 	logger := log.FromContext(ctx)
 	checker := r.getReadinessChecker()
-	previousPhases := buildPreviousPhasesMap(node)
+	previousEntries := buildPreviousPhasesMap(node)
 	replicaMetrics = make(map[string]status.ResourceReplicaMetrics)
+	// Non-nil so the status manager always overwrites status.degradedResourceIds
+	// — otherwise a nil slice on recovery leaves the previous IDs stale (F4).
+	degradedResourceIds = []string{}
 
 	for _, resource := range resources {
 		// Extract name/namespace without full spec rendering (metadata is already resolved by Hub)
@@ -2509,8 +2604,8 @@ func (r *LynqNodeReconciler) checkResourcesReadiness(
 		}
 
 		phaseResult := checker.ClassifyPhase(current, elapsed, timeoutDuration)
-		previousPhase := previousPhases[resource.ID]
-		entry := r.processResourcePhase(ctx, node, resource, name, gvk.Kind, phaseResult, previousPhase, elapsed)
+		prevEntry := previousEntries[resource.ID]
+		entry := r.processResourcePhase(ctx, node, resource, name, gvk.Kind, phaseResult, prevEntry, elapsed)
 
 		switch phaseResult.Phase {
 		case lynqv1.ResourcePhaseAvailable:

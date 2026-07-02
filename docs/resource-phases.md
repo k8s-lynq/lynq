@@ -100,6 +100,19 @@ Degraded     updatedNumberScheduled == desiredNumberScheduled
 
 Same regression guard as StatefulSet — `numberAvailable > 0` ensures the rollout reached partial health before classifying transient drops as Degraded.
 
+> **Known limitation (StatefulSet / DaemonSet).** The `readyReplicas > 0` /
+> `numberAvailable > 0` heuristic can't distinguish "reached full health once,
+> then lost some pods" (genuinely Degraded) from "never fully converged — one
+> pod is healthy, the rest permanently fail" (should be Progressing → Failed).
+> A parallel StatefulSet or a DaemonSet where a subset of pods permanently
+> crash-loop (e.g. a bad image on some nodes) while at least one stays Ready is
+> classified **Degraded indefinitely** rather than escalating to Failed.
+> Deployments are unaffected — they carry the native
+> `Progressing.reason == "NewReplicaSetAvailable"` signal that STS/DS lack. A
+> precise fix needs "was fully ready once this generation" history that Lynq
+> does not currently persist; until then, alert on
+> `lynqnode_resource_degraded_since_seconds` for prolonged STS/DS degradation.
+
 ### Everything else
 
 `ConfigMap`, `Secret`, `ServiceAccount`, `CronJob`, `PodDisruptionBudget`, `NetworkPolicy` — classified `Available` immediately upon creation. No phase transitions.
@@ -218,6 +231,11 @@ Events are emitted only on real transitions — i.e., when the previous reconcil
 - `ReadinessTimeout` event no longer fires during steady-state Degraded — only during active rollouts.
 - New alerts: `LynqNodeWorkloadDegraded` (Warning, 15+ min), `LynqNodeWorkloadSeverelyDegraded` (Critical, single resource > 30 min), `LynqNodeWorkloadFlapping`, `LynqNodeRolloutSlow`. See [Alert Runbooks](alert-runbooks.md).
 
+### Reconcile behavior under other managers
+
+- **Status-only events take a no-apply path.** A child-resource status change that does NOT change the desired spec — an HPA scale, a pod restart, rollout-progress updates from another manager — is reconciled through the lightweight status path: Lynq re-evaluates phases and updates `status`/metrics but does **not** re-render or re-apply. Spec changes, database-driven variable changes (Hub-rewritten annotations), resource failures, and the periodic ~10-min drift sweep still take the full apply path. This keeps routine third-party churn from triggering unnecessary applies.
+- **Ignored-field changes no longer churn.** With `patchStrategy: apply` + [`ignoreFields`](field-ignore.md) (e.g. `$.spec.replicas` for HPA), a change the field's owner makes is excluded from Lynq's desired-spec hash — so it triggers no re-apply and does not reset the readiness-timeout / degraded-since clocks. Lynq still reads the live value for phase classification.
+
 ## Rollback
 
 For emergency rollback to pre-phase-model behavior, set the controller flag:
@@ -227,6 +245,14 @@ For emergency rollback to pre-phase-model behavior, set the controller flag:
 ```
 
 Strict equality returns, `Degraded` phase is never observed, `WorkloadDegraded` events are never emitted, `ReadinessTimeout` fires on any partial availability past `timeoutSeconds`. The new metric series remain registered but the gauges stay at 0. This flag is slated for removal after one release cycle.
+
+> **Note on stale fields after enabling legacy mode.** The legacy path does not
+> populate `status.resourcePhases`, `status.degradedResourceIds`, or the
+> per-resource `lynqnode_resource_phase` series, so values written by the phase
+> model before the flip linger until they are otherwise overwritten. The
+> aggregate `degraded/progressing/pending` counts and prom gauges are cleared on
+> the next reconcile. If the stale per-resource fields matter for your tooling,
+> delete and recreate the affected LynqNodes after toggling the flag.
 
 ## See also
 

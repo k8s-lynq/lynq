@@ -2169,6 +2169,16 @@ spec:
                   controller
                 format: int64
                 type: integer
+              observedVariablesHash:
+                description: |-
+                  ObservedVariablesHash is a hash of the template-variable annotations
+                  (lynq.sh/uid, activate, extra, hubId, template-generation) observed at
+                  the last full spec reconcile. The Hub rewrites these annotations for
+                  database-driven updates WITHOUT bumping metadata.generation, so the
+                  controller compares this hash to detect var-only changes and route them
+                  to a full reconcile — while routing pure child-status events (HPA scale,
+                  pod restart) to the lightweight status-only path.
+                type: string
               pendingResources:
                 description: |-
                   PendingResources is the number of resources whose controllers have not
@@ -2203,6 +2213,16 @@ spec:
                     the source of truth for per-resource visibility (kubectl jsonpath / custom
                     columns query against this field).
                   properties:
+                    degradedSince:
+                      description: |-
+                        DegradedSince is the timestamp at which the resource entered the
+                        Degraded phase. Set when the phase transitions into Degraded, carried
+                        forward while it stays Degraded, and cleared on any other phase.
+                        SinceSeconds for a Degraded resource is computed as now - DegradedSince
+                        so the lynqnode_resource_degraded_since_seconds metric reflects true
+                        time-in-Degraded rather than time-since-last-apply.
+                      format: date-time
+                      type: string
                     id:
                       description: ID matches the TResource.ID from the LynqForm.
                       type: string
@@ -2235,6 +2255,7 @@ spec:
                         SinceSeconds is how long the resource has been in the current phase.
                         Reset on phase transition. Populated for Degraded (powers the
                         lynqnode_resource_degraded_since_seconds metric) and Progressing.
+                        Derived from DegradedSince for the Degraded phase.
                       format: int64
                       type: integer
                   required:

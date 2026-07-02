@@ -894,6 +894,21 @@ func TestChecker_ClassifyPhase_Deployment(t *testing.T) {
 			wantPhase: lynqv1.ResourcePhaseDegraded,
 		},
 		{
+			// F1 regression: an already-healthy Deployment gets a NEW
+			// generation (kubectl set image). observedGeneration has caught
+			// up, old pods keep availableReplicas high so Available=True
+			// PERSISTS, but the new ReplicaSet is still rolling out
+			// (updatedReplicas < replicas). Must be Progressing — NOT
+			// Available/Degraded — so dependents don't unblock early and
+			// Lynq's rollout timeout still engages. The Available=True
+			// fallback is gated on updatedReplicas==replicas precisely for
+			// this case.
+			name:      "Progressing — new generation mid-rollout, Available=True persists from old RS",
+			obj:       deploymentObjWithAvailable(3, 3, 4, 2, 4, 4, "ReplicaSetUpdated", "True"),
+			elapsed:   5 * time.Second,
+			wantPhase: lynqv1.ResourcePhaseProgressing,
+		},
+		{
 			name:      "Pending — spec.replicas=0 (parity with existing semantics, not Degraded)",
 			obj:       deploymentObj(1, 1, 0, 0, 0, 0, "NewReplicaSetAvailable"),
 			elapsed:   5 * time.Second,

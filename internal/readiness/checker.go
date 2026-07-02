@@ -512,9 +512,21 @@ func (c *Checker) classifyDeploymentPhase(
 	// busybox-style deployments to stick in Progressing because K8s never
 	// updated that specific reason field on fast rollouts.
 	//
-	// updatedReplicas==spec.replicas alone is NOT sufficient — a Deployment
-	// with a non-existent image creates pods (so updatedReplicas grows) that
-	// never reach Available, and we must NOT misclassify those as Degraded.
+	// CRITICAL — the Available=True fallback is gated on
+	// updatedReplicas==spec.replicas. The Available condition PERSISTS across
+	// generations: when an already-healthy Deployment gets a NEW generation
+	// (kubectl set image), old pods keep availableReplicas high and Available
+	// stays True while the new ReplicaSet is still rolling out. Without the
+	// updatedReplicas gate we would classify the in-progress new rollout as
+	// Available/Degraded immediately (unblocking dependents early and bypassing
+	// Lynq's rollout timeout). Requiring updatedReplicas==replicas means the
+	// new RS has created all its pods, so Available=True then genuinely
+	// reflects the current generation. NewReplicaSetAvailable already implies
+	// the current generation's RS is available, so it needs no extra gate.
+	//
+	// updatedReplicas==spec.replicas ALONE is still NOT sufficient — a
+	// Deployment with a non-existent image grows updatedReplicas as pods are
+	// created but never becomes Available; that path stays Progressing→Failed.
 	progressingReason := readDeploymentProgressingReason(obj)
 	if progressingReason == "ProgressDeadlineExceeded" {
 		return PhaseResult{
@@ -523,7 +535,8 @@ func (c *Checker) classifyDeploymentPhase(
 			Replicas: rs,
 		}
 	}
-	rolloutConverged := progressingReason == "NewReplicaSetAvailable" || readDeploymentAvailable(obj)
+	rolloutConverged := progressingReason == "NewReplicaSetAvailable" ||
+		(readDeploymentAvailable(obj) && updatedReplicas == replicas)
 
 	// 3. Available — rollout converged healthy at least once AND fully healthy now.
 	if rolloutConverged && availableReplicas == replicas {

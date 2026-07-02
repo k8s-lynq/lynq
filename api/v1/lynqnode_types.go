@@ -106,6 +106,16 @@ type LynqNodeStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
+	// ObservedVariablesHash is a hash of the template-variable annotations
+	// (lynq.sh/uid, activate, extra, hubId, template-generation) observed at
+	// the last full spec reconcile. The Hub rewrites these annotations for
+	// database-driven updates WITHOUT bumping metadata.generation, so the
+	// controller compares this hash to detect var-only changes and route them
+	// to a full reconcile — while routing pure child-status events (HPA scale,
+	// pod restart) to the lightweight status-only path.
+	// +optional
+	ObservedVariablesHash string `json:"observedVariablesHash,omitempty"`
+
 	// ReadyResources is the number of resources that are ready.
 	// Counts both Available and Degraded phases — a workload experiencing
 	// transient pod-level disruption (node drain, HPA scale-up, eviction) is

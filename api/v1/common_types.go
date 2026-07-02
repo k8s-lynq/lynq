@@ -17,6 +17,7 @@ limitations under the License.
 package v1
 
 import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -245,6 +246,16 @@ type ResourcePhaseEntry struct {
 	// SinceSeconds is how long the resource has been in the current phase.
 	// Reset on phase transition. Populated for Degraded (powers the
 	// lynqnode_resource_degraded_since_seconds metric) and Progressing.
+	// Derived from DegradedSince for the Degraded phase.
 	// +optional
 	SinceSeconds int64 `json:"sinceSeconds,omitempty"`
+
+	// DegradedSince is the timestamp at which the resource entered the
+	// Degraded phase. Set when the phase transitions into Degraded, carried
+	// forward while it stays Degraded, and cleared on any other phase.
+	// SinceSeconds for a Degraded resource is computed as now - DegradedSince
+	// so the lynqnode_resource_degraded_since_seconds metric reflects true
+	// time-in-Degraded rather than time-since-last-apply.
+	// +optional
+	DegradedSince *metav1.Time `json:"degradedSince,omitempty"`
 }
