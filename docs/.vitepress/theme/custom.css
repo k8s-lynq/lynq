@@ -10,6 +10,17 @@
   --vp-c-bg-elv: #1a1a2e;
 }
 
+/* Brand = Lynq signature teal (overrides VitePress' default indigo #a8b1ff) so
+   nav active state, links, buttons and badges are on-brand site-wide. */
+:root,
+.dark {
+  --vp-c-brand-1: #4fd1cb;
+  --vp-c-brand-2: #33aca8;
+  --vp-c-brand-3: #2b8f8c;
+  --vp-c-brand-soft: rgba(51, 172, 168, 0.14);
+  --vp-c-brand: #33aca8;
+}
+
 /* Ensure body background matches in dark mode */
 html.dark {
   background-color: #0a0a0f;
@@ -43,6 +54,52 @@ html.dark .VPContent.is-home {
 
 html.dark .VPContent.is-home .VPHome {
   background-color: #000000 !important;
+}
+
+/* ── Blog listing: match the landing tone (pure-black base + brand glow +
+   faint dot grid). pageClass: blog-page lands on the outer .Layout. ── */
+.blog-page {
+  background-color: #000000 !important;
+  position: relative;
+}
+.blog-page .VPContent,
+.blog-page .VPDoc {
+  background: transparent !important;
+}
+.blog-page::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(50rem 40rem at 10% 2%, rgba(51, 172, 168, 0.16), transparent 60%),
+    radial-gradient(44rem 40rem at 92% 26%, rgba(59, 130, 246, 0.08), transparent 58%);
+}
+.blog-page::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.06) 1.2px, transparent 1.4px);
+  background-size: 34px 34px;
+  -webkit-mask-image: radial-gradient(ellipse 96% 90% at 50% 22%, #000 0%, rgba(0, 0, 0, 0.55) 55%, transparent 92%);
+  mask-image: radial-gradient(ellipse 96% 90% at 50% 22%, #000 0%, rgba(0, 0, 0, 0.55) 55%, transparent 92%);
+}
+/* Lift content + footer above the fixed backdrop (leave VPNav's own layer). */
+.blog-page .VPContent,
+.blog-page .site-footer {
+  position: relative;
+  z-index: 1;
+}
+/* Blog post prose: Pretendard headings to match the landing type. */
+.blog-page .vp-doc :is(h1, h2, h3) {
+  font-family: var(--lynq-font);
+  letter-spacing: -0.02em;
+}
+.blog-page .vp-doc h1 {
+  font-weight: 500;
 }
 
 /* Remove VitePress home page default container */

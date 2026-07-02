@@ -1,4 +1,5 @@
 ---
+pageClass: blog-page
 title: "5 Kubernetes Lifecycle Mistakes and How Lynq Policies Prevent Them"
 date: 2025-12-18
 author: Tim Kang

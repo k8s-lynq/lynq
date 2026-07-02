@@ -1,4 +1,5 @@
 ---
+pageClass: blog-page
 title: "Implementing maxSkew: How to Safely Update Nodes at Scale"
 date: 2025-12-18
 author: Tim Kang
