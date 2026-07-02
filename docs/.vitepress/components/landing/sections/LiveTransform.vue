@@ -4,7 +4,7 @@
       <SectionHeader
         label="How It Works"
         title="From Data to Resources in Seconds"
-        subtitle="A real operator session — apply two manifests, then watch every row reconcile into named, running Kubernetes resources."
+        subtitle="A real operator session — apply the manifests, insert a row, deactivate another, and watch Lynq create and garbage-collect the matching Kubernetes resources. Only your database changes."
         accent="green"
       />
 
@@ -29,12 +29,27 @@
             :key="i"
             class="tline"
             :class="ln.tone"
-          ><span v-if="ln.prompt" class="tprompt">{{ ln.prompt }}</span><span class="ttxt">{{ ln.text || ' ' }}</span></div>
+          ><span v-if="ln.prompt" class="tprompt" :class="{ sql: ln.prompt !== '$' }">{{ ln.prompt }}</span><span class="ttxt">{{ ln.text || ' ' }}</span></div>
 
-          <div v-if="typing" class="tline cmd"><span class="tprompt">{{ typing.prompt }}</span><span class="ttxt">{{ typing.text }}</span><span class="caret" aria-hidden="true"></span></div>
+          <div v-if="typing" class="tline cmd"><span class="tprompt" :class="{ sql: typing.prompt !== '$' }">{{ typing.prompt }}</span><span class="ttxt">{{ typing.text }}</span><span class="caret" aria-hidden="true"></span></div>
           <div v-else-if="atPrompt" class="tline cmd"><span class="tprompt">$</span><span class="ttxt"> </span><span class="caret" aria-hidden="true"></span></div>
         </div>
       </div>
+
+      <!-- Run the exact session yourself in a browser sandbox. Same pill style
+           as the hero's secondary CTA (font-medium!/text-* important to beat the
+           .VPHome .landing-page a reset). -->
+      <p class="term-cta">
+        <a
+          class="inline-flex items-center gap-2 rounded-full border border-lynq-border bg-transparent px-6 py-[0.72rem] text-[0.95rem] font-medium! text-lynq-text! no-underline transition-colors duration-200 hover:border-white/20 hover:bg-white/[0.06]"
+          href="https://killercoda.com/lynq-operator/course/killercoda/lynq-quickstart"
+          target="_blank"
+          rel="noopener"
+        >
+          Try it on Killercoda
+          <span class="inline-block" aria-hidden="true">&#8599;</span>
+        </a>
+      </p>
     </div>
   </section>
 </template>
@@ -272,6 +287,10 @@ onBeforeUnmount(() => {
   margin-right: 0.6rem;
   user-select: none;
 }
+/* mysql> / -> continuation prompts read as neutral client text, not shell. */
+.tprompt.sql {
+  color: rgba(255, 255, 255, 0.68);
+}
 .tline.cmd .ttxt { color: var(--lynq-text); }
 .tline.ok .ttxt { color: #4fd1cb; }
 .tline.dim .ttxt { color: rgba(255, 255, 255, 0.38); }
@@ -288,6 +307,13 @@ onBeforeUnmount(() => {
 @keyframes term-caret {
   0%, 50% { opacity: 1; }
   50.01%, 100% { opacity: 0; }
+}
+
+/* ── Killercoda pill under the terminal (styling via Tailwind utilities to
+   match the hero CTAs; this rule only centres it) ── */
+.term-cta {
+  margin: 1.75rem 0 0;
+  text-align: center;
 }
 
 @media (prefers-reduced-motion: reduce) {

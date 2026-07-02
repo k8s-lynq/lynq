@@ -191,13 +191,18 @@ const ING_W = [26, 8, 20, 10, 8]
 /**
  * A scripted, end-to-end operator session for the LiveTransform section, played
  * inside a single authentic terminal. Each step is one of:
- *   - `cmd`  a command line typed character-by-character (prompt defaults to '$')
+ *   - `cmd`  a command line typed character-by-character. `prompt` defaults to
+ *            the shell '$'; SQL steps set it to 'mysql>' / '    ->'.
  *   - `out`  an output line printed after `delay` ms (default fast)
  *   - `gap`  a blank spacer line
- * `tone` tints a line: 'ok' (subtle green payoff), 'dim' (muted, e.g. ^C).
- * The `kubectl get lynqnodes -w` block streams READY 0/3 → 3/3 in real time,
- * which is what visually sells "in seconds". Domain-accurate: apiVersion
- * operator.lynq.sh/v1, CRD short names, `{uid}-app/-svc/-web` resource names.
+ * `tone` tints a line: 'ok' (subtle green payoff), 'dim' (muted — comments, ^C).
+ *
+ * Three scenarios play back-to-back so the whole data-driven lifecycle is
+ * visible in one shell: (1) apply the manifests and watch READY 0/3 → 3/3;
+ * (2) INSERT a new MySQL row → a new LynqNode + resources appear; (3) UPDATE
+ * is_active → 0 → Lynq garbage-collects that node's Deployment/Service/Ingress,
+ * with no `kubectl delete`. Domain-accurate: apiVersion operator.lynq.sh/v1,
+ * CRD short names, `{uid}-app/-svc/-web` resource names.
  * @type {{ type:'cmd'|'out'|'gap', text?:string, prompt?:string, tone?:'ok'|'dim', delay?:number }[]}
  */
 export const terminalSession = [
@@ -233,6 +238,61 @@ export const terminalSession = [
   { type: 'out', text: cols(ING_W, 'NAME', 'CLASS', 'HOSTS', 'PORTS', 'AGE') },
   { type: 'out', text: cols(ING_W, 'ingress/acme-corp-web', 'nginx', 'acme.example.com', '80', '5s') },
   { type: 'out', text: cols(ING_W, 'ingress/beta-inc-web', 'nginx', 'beta.example.com', '80', '5s') },
+  { type: 'gap' },
+
+  // ── Scenario 2: a new customer signs up → INSERT a row → a LynqNode appears.
+  { type: 'out', text: '# a new customer signs up — just insert the row', tone: 'dim', delay: 500 },
+  { type: 'cmd', text: 'mysql -h mysql.default.svc -u node_reader -p nodes' },
+  { type: 'out', text: 'Enter password:', delay: 300 },
+  { type: 'cmd', prompt: 'mysql>', text: 'INSERT INTO node_configs (node_id, is_active, subscription_plan, node_url)' },
+  { type: 'cmd', prompt: '    ->', text: "VALUES ('delta-co', 1, 'pro', 'delta.example.com');" },
+  { type: 'out', text: 'Query OK, 1 row affected (0.01 sec)', tone: 'ok', delay: 250 },
+  { type: 'cmd', prompt: 'mysql>', text: 'exit' },
+  { type: 'out', text: 'Bye', tone: 'dim' },
+  { type: 'gap' },
+
+  // LynqHub re-syncs and materialises a LynqNode for the new row.
+  { type: 'out', text: '# LynqHub re-syncs and reconciles the new row', tone: 'dim', delay: 500 },
+  { type: 'cmd', text: 'kubectl get lynqnodes -w' },
+  { type: 'out', text: cols(NODE_W, 'NAME', 'READY', 'DESIRED', 'CONDITIONS', 'AGE') },
+  { type: 'out', text: cols(NODE_W, 'acme-corp-web-stack', '3/3', '3', 'Reconciled', '3m') },
+  { type: 'out', text: cols(NODE_W, 'beta-inc-web-stack', '3/3', '3', 'Reconciled', '3m') },
+  { type: 'out', text: cols(NODE_W, 'delta-co-web-stack', '0/3', '3', 'Reconciling', '0s'), tone: 'ok', delay: 700 },
+  { type: 'out', text: cols(NODE_W, 'delta-co-web-stack', '2/3', '3', 'Reconciling', '2s'), delay: 900 },
+  { type: 'out', text: cols(NODE_W, 'delta-co-web-stack', '3/3', '3', 'Reconciled', '3s'), tone: 'ok', delay: 900 },
+  { type: 'out', text: '^C', tone: 'dim', delay: 500 },
+  { type: 'gap' },
+  { type: 'cmd', text: 'kubectl get deploy' },
+  { type: 'out', text: cols([16, 8], 'NAME', 'READY', 'AGE') },
+  { type: 'out', text: cols([16, 8], 'acme-corp-app', '1/1', '3m') },
+  { type: 'out', text: cols([16, 8], 'beta-inc-app', '1/1', '3m') },
+  { type: 'out', text: cols([16, 8], 'delta-co-app', '1/1', '4s'), tone: 'ok' },
+  { type: 'gap' },
+
+  // ── Scenario 3: deactivate a row (is_active → 0) → its resources are GC'd.
+  { type: 'out', text: '# acme-corp churns — flip is_active to 0, no kubectl delete', tone: 'dim', delay: 500 },
+  { type: 'cmd', text: 'mysql -h mysql.default.svc -u node_reader -p nodes' },
+  { type: 'out', text: 'Enter password:', delay: 300 },
+  { type: 'cmd', prompt: 'mysql>', text: "UPDATE node_configs SET is_active = 0 WHERE node_id = 'acme-corp';" },
+  { type: 'out', text: 'Query OK, 1 row affected (0.01 sec)' },
+  { type: 'out', text: 'Rows matched: 1  Changed: 1  Warnings: 0', tone: 'ok', delay: 250 },
+  { type: 'cmd', prompt: 'mysql>', text: 'exit' },
+  { type: 'out', text: 'Bye', tone: 'dim' },
+  { type: 'gap' },
+
+  // The LynqNode is deleted and its Deployment/Service/Ingress garbage-collected.
+  { type: 'out', text: '# Lynq deletes the LynqNode and cleans up its resources', tone: 'dim', delay: 500 },
+  { type: 'cmd', text: 'kubectl get lynqnodes' },
+  { type: 'out', text: cols(NODE_W, 'NAME', 'READY', 'DESIRED', 'CONDITIONS', 'AGE') },
+  { type: 'out', text: cols(NODE_W, 'beta-inc-web-stack', '3/3', '3', 'Reconciled', '4m') },
+  { type: 'out', text: cols(NODE_W, 'delta-co-web-stack', '3/3', '3', 'Reconciled', '1m') },
+  { type: 'out', text: '# acme-corp-web-stack is gone', tone: 'dim', delay: 400 },
+  { type: 'gap' },
+  { type: 'cmd', text: 'kubectl get deploy' },
+  { type: 'out', text: cols([16, 8], 'NAME', 'READY', 'AGE') },
+  { type: 'out', text: cols([16, 8], 'beta-inc-app', '1/1', '4m') },
+  { type: 'out', text: cols([16, 8], 'delta-co-app', '1/1', '1m') },
+  { type: 'out', text: '# acme-corp-app removed automatically — no manual cleanup', tone: 'ok', delay: 400 },
 ]
 
 /**
