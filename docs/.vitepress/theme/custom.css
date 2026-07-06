@@ -21,19 +21,15 @@
   --vp-c-brand: #33aca8;
 }
 
-/* Ensure body background matches in dark mode */
-html.dark {
-  background-color: #0a0a0f;
-}
-
-html.dark body {
-  background-color: #0a0a0f;
+/* VitePress base.css paints body with var(--vp-c-bg); replace it with a
+   dedicated page-canvas token, lifted slightly above pure black. */
+body {
+  background-color: var(--lynq-bg-page);
 }
 
 /* Landing page full-width fix */
 .VPContent.is-home {
   padding: 0 !important;
-  background-color: #000000 !important;
 }
 
 .VPContent.is-home .VPHome {
@@ -46,14 +42,6 @@ html.dark body {
 .VPContent.is-home .vp-doc {
   padding: 0 !important;
   max-width: none !important;
-}
-
-html.dark .VPContent.is-home {
-  background-color: #000000 !important;
-}
-
-html.dark .VPContent.is-home .VPHome {
-  background-color: #000000 !important;
 }
 
 /* ── Blog listing: match the landing tone (pure-black base + brand glow +
@@ -185,7 +173,9 @@ html.dark .VPContent.is-home .VPHome {
   border-radius: 0 !important;
 }
 
-.VPHome .landing-page code {
+/* Reset inline code inside the landing page — except the CTA flow chips,
+   which style themselves (surface, radius, padding) in scoped CSS. */
+.VPHome .landing-page code:not(.flow-chip) {
   background: none !important;
   padding: 0 !important;
   border-radius: 0 !important;
@@ -793,6 +783,9 @@ html.dark .VPContent.is-home .VPHome {
   --lynq-tracking: -0.03em;
 
   /* Surfaces — matched to the windflow reference (pure black, near-black cards) */
+  /* Page canvas painted on <body>: a step brighter than the section surfaces so
+     the page doesn't read as a flat black void behind transparent layers. */
+  --lynq-bg-page: #14141a;
   --lynq-bg: #000000;
   --lynq-bg-2: #050505;
   --lynq-card: #050505;
