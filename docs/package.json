@@ -13,6 +13,7 @@
     "mermaid": "^11.12.1",
     "tailwindcss": "^4.3.2",
     "vitepress": "^1.0.0",
+    "vitepress-plugin-llms": "^1.13.2",
     "vitepress-plugin-mermaid": "^2.0.17"
   },
   "packageManager": "npm@10.0.0",

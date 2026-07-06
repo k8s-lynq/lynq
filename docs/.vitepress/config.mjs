@@ -1,5 +1,6 @@
 import { defineConfig, createContentLoader } from "vitepress";
 import { withMermaid } from "vitepress-plugin-mermaid";
+import llmstxt from "vitepress-plugin-llms";
 import { writeFileSync } from "fs";
 import path from "path";
 import tailwindcss from "@tailwindcss/vite";
@@ -11,6 +12,10 @@ export default withMermaid(
     description: "Infrastructure as Data for Kubernetes - A RecordOps Platform",
     base: "/",
     srcDir: ".",
+    // Extensionless URLs everywhere (served natively by GitHub Pages). Keeps
+    // sitemap.xml and internal links consistent with the extensionless
+    // canonical URLs emitted in transformHead below.
+    cleanUrls: true,
     ignoreDeadLinks: false,
     appearance: "force-dark", // Force dark mode only
     sitemap: {
@@ -218,7 +223,12 @@ export default withMermaid(
     },
 
     vite: {
-      plugins: [tailwindcss()],
+      plugins: [
+        tailwindcss(),
+        // Generates llms.txt / llms-full.txt plus per-page .md files in dist
+        // so LLMs and AI search engines can consume the docs directly.
+        llmstxt({ domain: "https://lynq.sh" }),
+      ],
     },
 
     transformHead(context) {
