@@ -61,6 +61,7 @@ export default withMermaid(
           items: [
             { text: "Introduction", link: "/introduction" },
             { text: "Architecture", link: "/architecture" },
+            { text: "Resource Phases", link: "/resource-phases" },
           ],
         },
         // 3. Use it

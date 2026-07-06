@@ -214,18 +214,25 @@ func (a *Applier) ApplyResource(
 		}
 	}
 
-	// Apply ignoreFields filtering if resource already exists
-	// Instead of removing ignored fields, we COPY values from the existing resource.
-	// This ensures SSA doesn't delete fields that should be preserved.
-	if existsBeforeApply && len(ignoreFields) > 0 {
-		filter, err := fieldfilter.NewFilter(ignoreFields)
+	// Build the ignoreFields filter once (when configured). It serves two
+	// purposes below: preserving live values in the apply payload, and
+	// excluding those paths from the desired-spec hash (M3).
+	var ignoreFilter *fieldfilter.Filter
+	if len(ignoreFields) > 0 {
+		f, err := fieldfilter.NewFilter(ignoreFields)
 		if err != nil {
 			return false, fmt.Errorf("failed to create field filter: %w", err)
 		}
+		ignoreFilter = f
+	}
 
+	// Apply ignoreFields filtering if resource already exists.
+	// Instead of removing ignored fields, we COPY values from the existing resource.
+	// This ensures SSA doesn't delete fields that should be preserved.
+	if existsBeforeApply && ignoreFilter != nil {
 		// Preserve ignored fields by copying values from existing resource
 		// This ensures SSA doesn't delete fields that are externally controlled
-		if err := filter.PreserveIgnoredFields(obj, existing); err != nil {
+		if err := ignoreFilter.PreserveIgnoredFields(obj, existing); err != nil {
 			return false, fmt.Errorf("failed to preserve ignored fields: %w", err)
 		}
 
@@ -238,7 +245,11 @@ func (a *Applier) ApplyResource(
 
 	// Check if we can skip the apply (desired spec unchanged AND resource not externally modified).
 	// The hash is computed from the PRE-patch desired object (before server mutations).
-	preApplyDesiredHash := a.computeDesiredHash(obj)
+	// Ignored-field paths are EXCLUDED from the hash (M3): a third-party manager
+	// (e.g. HPA owning spec.replicas) changing an ignored field must NOT flip the
+	// hash — otherwise every such change triggers a re-apply that re-stamps
+	// apply-start-time and resets the rollout-timeout / degraded-since clocks.
+	preApplyDesiredHash := a.computeDesiredHash(obj, ignoreFilter)
 	if a.shouldSkipApply(existsBeforeApply, orphanReadopted, forceReapply, preApplyDesiredHash, existing) {
 		return false, nil
 	}
@@ -430,11 +441,22 @@ func setLynqTrackingAnnotations(obj *unstructured.Unstructured, hash string, app
 // The hash MUST exclude any annotations we write ourselves (applied-hash, apply-start-time),
 // otherwise the hash would change every time we re-apply (because we set apply-start-time
 // to now), defeating the cache check on the next reconcile.
-func (a *Applier) computeDesiredHash(obj *unstructured.Unstructured) string {
+func (a *Applier) computeDesiredHash(obj *unstructured.Unstructured, ignoreFilter *fieldfilter.Filter) string {
 	// Use JSON serialization of the spec for a deterministic hash.
 	// This is called at most once per resource per reconcile (on apply or skip-check).
 	// We marshal a sanitized COPY so the caller's obj is not mutated.
-	sanitized := sanitizeObjectForHashing(obj.Object)
+	hashInput := obj
+	if ignoreFilter != nil {
+		// Remove ignoreFields paths from the hash input so third-party changes
+		// to those fields (e.g. HPA-owned spec.replicas) don't perturb the hash
+		// (M3). DeepCopy first — RemoveIgnoredFields mutates, and obj is the
+		// apply payload that must keep the preserved live values for SSA.
+		hashInput = obj.DeepCopy()
+		if err := ignoreFilter.RemoveIgnoredFields(hashInput); err != nil {
+			return "" // Force apply on filter failure
+		}
+	}
+	sanitized := sanitizeObjectForHashing(hashInput.Object)
 	data, err := json.Marshal(sanitized)
 	if err != nil {
 		return "" // Force apply on hash failure

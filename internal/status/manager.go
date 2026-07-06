@@ -259,6 +259,12 @@ func (m *Manager) flushBatch(ctx context.Context, batch map[client.ObjectKey]*St
 func (m *Manager) applyUpdate(ctx context.Context, update *StatusUpdate) error {
 	logger := log.Log.WithName("status-manager")
 
+	// Tracks whether the LynqNode still exists. Queued (batched) events can
+	// arrive AFTER the node's finalizer ran CleanupNodeMetrics; writing
+	// metrics for a deleted node would silently re-create the just-deleted
+	// series and leave stale gauges/alerts behind forever.
+	nodeGone := false
+
 	// Update Kubernetes status
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		// Get latest version
@@ -269,6 +275,7 @@ func (m *Manager) applyUpdate(ctx context.Context, update *StatusUpdate) error {
 				logger.V(1).Info("LynqNode not found, skipping status update",
 					"node", update.Key.Name,
 					"namespace", update.Key.Namespace)
+				nodeGone = true
 				return nil
 			}
 			return err
@@ -276,6 +283,11 @@ func (m *Manager) applyUpdate(ctx context.Context, update *StatusUpdate) error {
 
 		// Apply changes to status
 		statusChanged := false
+
+		if update.ObservedVariablesHash != nil {
+			node.Status.ObservedVariablesHash = *update.ObservedVariablesHash
+			statusChanged = true
+		}
 
 		if update.ObservedGeneration != nil {
 			node.Status.ObservedGeneration = *update.ObservedGeneration
@@ -317,6 +329,31 @@ func (m *Manager) applyUpdate(ctx context.Context, update *StatusUpdate) error {
 			statusChanged = true
 		}
 
+		if update.DegradedResources != nil {
+			node.Status.DegradedResources = *update.DegradedResources
+			statusChanged = true
+		}
+
+		if update.ProgressingResources != nil {
+			node.Status.ProgressingResources = *update.ProgressingResources
+			statusChanged = true
+		}
+
+		if update.PendingResources != nil {
+			node.Status.PendingResources = *update.PendingResources
+			statusChanged = true
+		}
+
+		if update.DegradedResourceIds != nil {
+			node.Status.DegradedResourceIds = update.DegradedResourceIds
+			statusChanged = true
+		}
+
+		if update.ResourcePhases != nil {
+			node.Status.ResourcePhases = update.ResourcePhases
+			statusChanged = true
+		}
+
 		// Update conditions
 		for _, cond := range update.Conditions {
 			if m.updateCondition(&node.Status, cond) {
@@ -337,9 +374,18 @@ func (m *Manager) applyUpdate(ctx context.Context, update *StatusUpdate) error {
 
 	// Update metrics if provided (metrics don't require retry)
 	// CRITICAL: Always update metrics regardless of status changes
-	// This ensures Prometheus always gets the latest values during scraping
-	if update.Metrics != nil {
+	// This ensures Prometheus always gets the latest values during scraping.
+	// EXCEPT when the node no longer exists — a late queued event must not
+	// re-create series that CleanupNodeMetrics already deleted.
+	if update.Metrics != nil && !nodeGone {
 		m.updateMetrics(update.Key, update.Metrics)
+	}
+
+	// Per-resource phase + replica metrics. The phases array drives the
+	// lynqnode_resource_phase stateset; the replica map drives the
+	// lynqnode_resource_replicas_* gauges and lynqnode_resource_degraded_since_seconds.
+	if (update.ResourcePhases != nil || update.ResourceReplicaMetrics != nil) && !nodeGone {
+		m.updatePerResourceMetrics(update.Key, update.ResourcePhases, update.ResourceReplicaMetrics)
 	}
 
 	if err != nil {
@@ -381,6 +427,9 @@ func (m *Manager) updateMetrics(key client.ObjectKey, metricsPayload *MetricsPay
 	metrics.LynqNodeResourcesDesired.WithLabelValues(lynqnodeName, lynqnodeNamespace).Set(float64(metricsPayload.Desired))
 	metrics.LynqNodeResourcesFailed.WithLabelValues(lynqnodeName, lynqnodeNamespace).Set(float64(metricsPayload.Failed))
 	metrics.LynqNodeResourcesConflicted.WithLabelValues(lynqnodeName, lynqnodeNamespace).Set(float64(metricsPayload.Conflicted))
+	metrics.LynqNodeResourcesDegraded.WithLabelValues(lynqnodeName, lynqnodeNamespace).Set(float64(metricsPayload.Degraded))
+	metrics.LynqNodeResourcesProgressing.WithLabelValues(lynqnodeName, lynqnodeNamespace).Set(float64(metricsPayload.Progressing))
+	metrics.LynqNodeResourcesPending.WithLabelValues(lynqnodeName, lynqnodeNamespace).Set(float64(metricsPayload.Pending))
 
 	// Update condition metrics
 	for _, condition := range metricsPayload.Conditions {
@@ -416,5 +465,66 @@ func (m *Manager) updateMetrics(key client.ObjectKey, metricsPayload *MetricsPay
 		metrics.LynqNodeDegradedStatus.WithLabelValues(lynqnodeName, lynqnodeNamespace, "TemplateRenderError").Set(0)
 		metrics.LynqNodeDegradedStatus.WithLabelValues(lynqnodeName, lynqnodeNamespace, "DependencyCycle").Set(0)
 		metrics.LynqNodeDegradedStatus.WithLabelValues(lynqnodeName, lynqnodeNamespace, "VariablesBuildError").Set(0)
+		metrics.LynqNodeDegradedStatus.WithLabelValues(lynqnodeName, lynqnodeNamespace, "ResourcesDegraded").Set(0)
+		metrics.LynqNodeDegradedStatus.WithLabelValues(lynqnodeName, lynqnodeNamespace, "ResourceFailuresAndDegraded").Set(0)
 	}
+}
+
+// updatePerResourceMetrics emits the per-resource phase stateset, replica
+// gauges, and degraded-since-seconds gauge. Called from applyUpdate when the
+// reconcile pass produced a ResourcePhases array.
+//
+// Stale series — for resources that were tracked previously but are missing
+// from this reconcile's phases array — should be cleared via
+// metrics.DeleteResourceSeries(). Doing that requires a diff against the
+// previous reconcile's resource set; the controller owns that diff (it has
+// the previous status.appliedResources / status.resourcePhases). The status
+// manager just writes what the controller tells it.
+func (m *Manager) updatePerResourceMetrics(
+	key client.ObjectKey,
+	phases []lynqv1.ResourcePhaseEntry,
+	replicas map[string]ResourceReplicaMetrics,
+) {
+	lynqnodeName := key.Name
+	lynqnodeNamespace := key.Namespace
+
+	for _, entry := range phases {
+		// Phase stateset — exactly one phase reads 1, others 0.
+		metrics.SetResourcePhase(lynqnodeName, lynqnodeNamespace, entry.ID, entry.Kind, string(entry.Phase))
+
+		// Per-resource replica gauges, when supplied. Workloads only
+		// populate this map; non-workload kinds omit themselves.
+		if r, ok := replicas[entry.ID]; ok {
+			metrics.LynqNodeResourceReplicasDesired.WithLabelValues(lynqnodeName, lynqnodeNamespace, entry.ID, entry.Kind).Set(float64(r.Desired))
+			metrics.LynqNodeResourceReplicasAvailable.WithLabelValues(lynqnodeName, lynqnodeNamespace, entry.ID, entry.Kind).Set(float64(r.Available))
+			metrics.LynqNodeResourceReplicasReady.WithLabelValues(lynqnodeName, lynqnodeNamespace, entry.ID, entry.Kind).Set(float64(r.Ready))
+			metrics.LynqNodeResourceReplicasUpdated.WithLabelValues(lynqnodeName, lynqnodeNamespace, entry.ID, entry.Kind).Set(float64(r.Updated))
+		}
+
+		// Degraded-since gauge: reset to 0 unless this resource is currently
+		// Degraded. The controller computes the elapsed seconds from the
+		// previous reconcile's phase transition timestamp; we just write
+		// what it tells us.
+		degradedSince := float64(0)
+		if entry.Phase == lynqv1.ResourcePhaseDegraded {
+			if r, ok := replicas[entry.ID]; ok {
+				degradedSince = float64(r.DegradedSinceSeconds)
+			} else {
+				degradedSince = float64(entry.SinceSeconds)
+			}
+		}
+		metrics.LynqNodeResourceDegradedSinceSeconds.WithLabelValues(lynqnodeName, lynqnodeNamespace, entry.ID, entry.Kind).Set(degradedSince)
+	}
+}
+
+// CleanupNodeMetrics removes all metric series for a LynqNode. Call from the
+// finalizer cleanup path so deleted LynqNodes don't leave stale series in
+// Prometheus. resourcePhases is the LAST observed phase array (typically read
+// from node.Status.ResourcePhases before finalizer removal) so per-resource
+// series can be enumerated and deleted.
+func (m *Manager) CleanupNodeMetrics(key client.ObjectKey, resourcePhases []lynqv1.ResourcePhaseEntry) {
+	for _, entry := range resourcePhases {
+		metrics.DeleteResourceSeries(key.Name, key.Namespace, entry.ID, entry.Kind)
+	}
+	metrics.DeleteLynqNodeSeries(key.Name, key.Namespace)
 }

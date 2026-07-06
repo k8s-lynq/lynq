@@ -46,14 +46,28 @@ spec:
 status:
   observedGeneration: int64
   desiredResources: int32            # Total resources in the form
-  readyResources: int32              # Resources with ready condition met
-  failedResources: int32             # Resources that failed to apply or timed out
+  readyResources: int32              # Resources serving traffic (Available + Degraded)
+  failedResources: int32             # Resources that failed (rollout timeout / apply error / Job Failed)
+  degradedResources: int32           # Resources in Degraded phase (K8s converging — NOT a Lynq failure)
+  progressingResources: int32        # Resources currently rolling out
+  pendingResources: int32            # Resources awaiting controller observation
+  degradedResourceIds: []string      # IDs of currently-Degraded resources
   skippedResources: int32            # Resources skipped due to dependency failures
   skippedResourceIds: []string       # IDs of skipped resources
 
   appliedResources: []string         # Current set of tracked resources
                                      # Format: "Kind/namespace/name@id"
                                      # Example: "Deployment/default/acme-app@app"
+
+  resourcePhases:                    # Per-resource phase array (source of truth
+                                     # for kubectl jsonpath / custom-columns).
+                                     # See Resource Phases concept page.
+  - id: app-deployment
+    kind: Deployment
+    name: acme-prod-web
+    phase: "Available" | "Progressing" | "Pending" | "Degraded" | "Failed"
+    reason: string                   # Diagnostic (non-Available phases)
+    sinceSeconds: int64              # Seconds in current phase (Degraded only)
 
   lastFullReconcileAt: timestamp     # Baseline used to schedule the next
                                      # periodic force-reapply (drift correction).
@@ -76,6 +90,8 @@ status:
     status: "True" | "False"
     reason: string
 ```
+
+> **What changed in the phase model**: `readyResources` now counts both Available and Degraded phases — a Deployment with 2 of 3 pods running is still "ready enough" for LynqNode aggregation. The new `degradedResources` count surfaces steady-state pod-level disruption separately. See the [Resource Phases](resource-phases.md) concept page for the full classification rules and state diagram.
 
 ## Conditions
 
@@ -101,6 +117,8 @@ status:
 | `ResourceFailuresAndConflicts` | True | Both failed and conflicted resources |
 | `ResourceFailures` | True | Failed resources |
 | `ResourceConflicts` | True | Conflicted resources |
+| `ResourcesDegraded` | True | At least one resource in Degraded phase — Kubernetes is converging the workload; LynqNode.Ready stays True. [See Resource Phases](resource-phases.md). |
+| `ResourceFailuresAndDegraded` | True | Lynq-attributed failure plus steady-state Degraded resources |
 | `ResourcesNotReady` | True | Resources not yet ready (added v1.1.4) |
 
 ### Progressing

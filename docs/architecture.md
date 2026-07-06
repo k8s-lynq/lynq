@@ -152,8 +152,8 @@ The core reconciler. Runs on LynqNode create/update, child-resource changes (`Ow
 4. **Dependency resolution** — build DAG from `dependIds`; fail fast on cycles
 5. **Force-reapply gating** — if `time.Since(status.lastFullReconcileAt) >= ForceReapplyInterval` (default 10 min), set `forceReapply=true` so this cycle bypasses the per-resource skip check. Nil `lastFullReconcileAt` is treated as "stamp now, defer first force by one full interval" — protects against re-apply storms on controller restart.
 6. **Resource application** — apply in topological order; skip if `lynq.sh/applied-hash` on the live resource matches the desired-spec hash and `forceReapply` is false; skip if a dependency failed (respects `skipOnDependencyFailure`)
-7. **Readiness gate** — wait for Ready condition when `waitForReady: true` (default); timeout measured from `lynq.sh/apply-start-time` annotation (stamped at apply, preserved across reconciles when spec is unchanged) at `timeoutSeconds` (default: 300)
-8. **Status update** — write `readyResources`, `failedResources`, `desiredResources`, `appliedResources`; after a successful force-reapply, advance `lastFullReconcileAt` to `now`
+7. **Readiness gate (phase classification)** — classify each resource into one of five phases (`Pending`, `Progressing`, `Available`, `Degraded`, `Failed`) using native Kubernetes status. During `Progressing`, the rollout timeout (`lynq.sh/apply-start-time` + `timeoutSeconds`, default 300) escalates to `Failed`. Post-rollout pod-level disruption is classified `Degraded` — Lynq does NOT mark it Failed. See [Resource Phases](resource-phases.md).
+8. **Status update** — write `readyResources` (Available + Degraded), `failedResources`, `degradedResources`, `progressingResources`, `pendingResources`, `desiredResources`, `appliedResources`, and the per-resource `resourcePhases` array; after a successful force-reapply, advance `lastFullReconcileAt` to `now`
 
 ## Key Design Patterns
 

@@ -110,7 +110,7 @@ func TestLynqNodeResourcesFailed(t *testing.T) {
 	// Verify metric can be incremented
 	LynqNodeResourcesFailed.WithLabelValues("lynqnode1", "default").Inc()
 	expected := `
-# HELP lynqnode_resources_failed Number of failed resources for a LynqNode
+# HELP lynqnode_resources_failed Number of failed resources for a LynqNode (rollout timeout / ProgressDeadlineExceeded / apply error / Job Failed; NOT steady-state degradation)
 # TYPE lynqnode_resources_failed gauge
 lynqnode_resources_failed{lynqnode="lynqnode1",namespace="default"} 3
 `

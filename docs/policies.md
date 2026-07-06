@@ -164,6 +164,18 @@ Use only when exact resource state is required and **no other controller manages
 
 Lynq's `replace` path uses optimistic concurrency: the live `resourceVersion` is copied into the submitted object so benign external RV bumps (status writes, finalizers) do not cause spurious 409 retries.
 
+### Multi-manager safety (HPA / Terraform / Crossplane / webhooks)
+
+In production the same resource is often touched by several managers. Only `apply` (SSA) is field-ownership-aware and safe under co-management:
+
+| Strategy | Multi-manager safe? | Notes |
+|----------|--------------------|-------|
+| `apply` (SSA) | ✅ Yes | Lynq owns only the fields its template declares. HPA `spec.replicas`, admission-webhook sidecars, and API-server defaults owned by other managers are preserved automatically. |
+| `merge` | ⚠️ Partial | Keeps unspecified fields, but has no per-field ownership — controllers writing the same map/list can fight back. |
+| `replace` | ❌ No | Full `Update()` — wipes webhook-injected containers/volumes, API-defaulted fields, and HPA-owned `spec.replicas` on every apply. |
+
+When Lynq applies a **workload** (Deployment / StatefulSet / DaemonSet) with `replace` or `merge`, it emits a `UnsafePatchStrategy` Warning event on the LynqNode (visibility only — no behavior change). For a field a *different* controller legitimately owns (e.g. HPA-managed replicas), keep `patchStrategy: apply` and exclude that field with [`ignoreFields`](field-ignore.md) — Lynq then reads the live value for readiness but never re-applies or fights over it. See [Resource Phases](resource-phases.md) for how Lynq reports steady-state disruption from other managers without marking it a failure.
+
 ## Defaults
 
 ```yaml

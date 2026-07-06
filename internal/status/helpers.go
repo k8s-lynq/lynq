@@ -117,6 +117,23 @@ func (m *Manager) PublishObservedGeneration(node *lynqv1.LynqNode, generation in
 	})
 }
 
+// PublishObservedState records both the observed generation and the
+// template-variable hash observed at a full spec reconcile (M2). The variable
+// hash lets determineReconcileType detect Hub-driven variable changes (which
+// don't bump metadata.generation) and route them to a full reconcile, while
+// pure child-status events take the lightweight status-only path.
+func (m *Manager) PublishObservedState(node *lynqv1.LynqNode, generation int64, variablesHash string) {
+	m.Publish(StatusEvent{
+		Type:    EventObservedGenerationUpdated,
+		NodeKey: client.ObjectKeyFromObject(node),
+		Payload: ObservedGenerationPayload{
+			ObservedGeneration: generation,
+			VariablesHash:      &variablesHash,
+		},
+		Timestamp: time.Now(),
+	})
+}
+
 // PublishAppliedResources is a helper to publish applied resources list
 func (m *Manager) PublishAppliedResources(node *lynqv1.LynqNode, keys []string) {
 	m.Publish(StatusEvent{
@@ -155,6 +172,47 @@ func (m *Manager) PublishMetrics(node *lynqv1.LynqNode, ready, failed, desired, 
 			Conditions:     conditions,
 			IsDegraded:     isDegraded,
 			DegradedReason: degradedReason,
+		},
+		Timestamp: time.Now(),
+	})
+}
+
+// PublishResourcePhases publishes the per-reconcile snapshot of per-resource
+// phases — the source of truth for status.resourcePhases (kubectl jsonpath)
+// and the per-resource metrics (lynqnode_resource_phase stateset, replica
+// gauges, degraded-since-seconds).
+//
+// Pass an empty (non-nil) phases slice to clear the array; pass nil to leave
+// status.resourcePhases unchanged.
+func (m *Manager) PublishResourcePhases(node *lynqv1.LynqNode, phases []lynqv1.ResourcePhaseEntry, degradedIds []string, replicas map[string]ResourceReplicaMetrics) {
+	m.Publish(StatusEvent{
+		Type:    EventResourcePhasesUpdated,
+		NodeKey: client.ObjectKeyFromObject(node),
+		Payload: ResourcePhasesPayload{
+			Phases:              phases,
+			DegradedResourceIds: degradedIds,
+			ResourceReplicas:    replicas,
+		},
+		Timestamp: time.Now(),
+	})
+}
+
+// PublishResourceCountsWithPhases is an extension of PublishResourceCounts
+// that also carries the new per-phase aggregate counts (degraded,
+// progressing, pending). When all three are zero, behaves identically to
+// PublishResourceCounts (existing callers keep working).
+func (m *Manager) PublishResourceCountsWithPhases(node *lynqv1.LynqNode, ready, failed, desired, conflicted, degraded, progressing, pending int32) {
+	m.Publish(StatusEvent{
+		Type:    EventResourceCountsUpdated,
+		NodeKey: client.ObjectKeyFromObject(node),
+		Payload: ResourceCountsPayload{
+			Ready:       ready,
+			Failed:      failed,
+			Desired:     desired,
+			Conflicted:  conflicted,
+			Degraded:    degraded,
+			Progressing: progressing,
+			Pending:     pending,
 		},
 		Timestamp: time.Now(),
 	})

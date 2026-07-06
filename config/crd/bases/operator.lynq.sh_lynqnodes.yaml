@@ -23,7 +23,7 @@ spec:
       jsonPath: .spec.templateRef
       name: Form
       type: string
-    - description: Number of ready resources
+    - description: Resources serving traffic (Available + Degraded)
       jsonPath: .status.readyResources
       name: Ready
       type: integer
@@ -31,14 +31,14 @@ spec:
       jsonPath: .status.desiredResources
       name: Desired
       type: integer
-    - description: Resources skipped due to dependency failures
-      jsonPath: .status.skippedResources
-      name: Skipped
+    - description: Resources experiencing K8s-converged disruption (NOT a Lynq failure)
+      jsonPath: .status.degradedResources
+      name: Degraded
       type: integer
-    - description: Conflict status
-      jsonPath: .status.conditions[?(@.type=='Conflicted')].status
-      name: Conflicted
-      type: string
+    - description: Resources currently rolling out
+      jsonPath: .status.progressingResources
+      name: Progressing
+      type: integer
     - description: Condition reason
       jsonPath: .status.conditions[?(@.type=='Ready')].reason
       name: Conditions
@@ -46,6 +46,32 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
+    - description: Resources that failed (rollout timeout, ProgressDeadlineExceeded,
+        apply error)
+      jsonPath: .status.failedResources
+      name: Failed
+      priority: 1
+      type: integer
+    - description: Resources skipped due to dependency failures
+      jsonPath: .status.skippedResources
+      name: Skipped
+      priority: 1
+      type: integer
+    - description: Resources awaiting controller observation
+      jsonPath: .status.pendingResources
+      name: Pending
+      priority: 1
+      type: integer
+    - description: Conflict status
+      jsonPath: .status.conditions[?(@.type=='Conflicted')].status
+      name: Conflicted
+      priority: 1
+      type: string
+    - description: IDs of currently-Degraded resources
+      jsonPath: .status.degradedResourceIds
+      name: DegradedIds
+      priority: 1
+      type: string
     name: v1
     schema:
       openAPIV3Schema:
@@ -2089,12 +2115,35 @@ spec:
                   - type
                   type: object
                 type: array
+              degradedResourceIds:
+                description: |-
+                  DegradedResourceIds lists the IDs of resources currently in the
+                  Degraded phase. Surfaces in `kubectl get lynqnode -o wide` so
+                  operators can correlate the count with specific resources without
+                  inspecting status.resourcePhases.
+                items:
+                  type: string
+                type: array
+              degradedResources:
+                description: |-
+                  DegradedResources is the number of resources currently in the Degraded
+                  phase — rollout completed for the current generation, but availability
+                  has since dropped due to causes outside Lynq's rollout (node drain,
+                  HPA scale-up, pod eviction, etc.). Kubernetes is converging these;
+                  Lynq does NOT mark them Failed. See ResourcePhase.
+                format: int32
+                type: integer
               desiredResources:
                 description: DesiredResources is the total number of resources
                 format: int32
                 type: integer
               failedResources:
-                description: FailedResources is the number of resources that failed
+                description: |-
+                  FailedResources is the number of resources that failed.
+                  A resource enters Failed only via: rollout timeout while Progressing,
+                  Kubernetes-native ProgressDeadlineExceeded, apply error, or Job Failed
+                  condition. Steady-state pod-level disruption does NOT enter Failed —
+                  see DegradedResources.
                 format: int32
                 type: integer
               lastFullReconcileAt:
@@ -2120,10 +2169,101 @@ spec:
                   controller
                 format: int64
                 type: integer
-              readyResources:
-                description: ReadyResources is the number of resources that are ready
+              observedVariablesHash:
+                description: |-
+                  ObservedVariablesHash is a hash of the template-variable annotations
+                  (lynq.sh/uid, activate, extra, hubId, template-generation) observed at
+                  the last full spec reconcile. The Hub rewrites these annotations for
+                  database-driven updates WITHOUT bumping metadata.generation, so the
+                  controller compares this hash to detect var-only changes and route them
+                  to a full reconcile — while routing pure child-status events (HPA scale,
+                  pod restart) to the lightweight status-only path.
+                type: string
+              pendingResources:
+                description: |-
+                  PendingResources is the number of resources whose controllers have not
+                  yet observed the latest generation.
                 format: int32
                 type: integer
+              progressingResources:
+                description: |-
+                  ProgressingResources is the number of resources currently rolling out
+                  (observedGeneration matches but rollout criteria not yet met).
+                format: int32
+                type: integer
+              readyResources:
+                description: |-
+                  ReadyResources is the number of resources that are ready.
+                  Counts both Available and Degraded phases — a workload experiencing
+                  transient pod-level disruption (node drain, HPA scale-up, eviction) is
+                  still serving traffic and is counted Ready. See DegradedResources for
+                  the steady-state-disruption sub-count.
+                format: int32
+                type: integer
+              resourcePhases:
+                description: |-
+                  ResourcePhases records the observed phase of each child resource.
+                  One entry per resource in the LynqForm. This is the source of truth
+                  for per-resource phase visibility — query via kubectl jsonpath or
+                  custom-columns. See ResourcePhaseEntry.
+                items:
+                  description: |-
+                    ResourcePhaseEntry records the observed phase of a single child resource on
+                    LynqNode.status.resourcePhases. One entry per child resource — the array is
+                    the source of truth for per-resource visibility (kubectl jsonpath / custom
+                    columns query against this field).
+                  properties:
+                    degradedSince:
+                      description: |-
+                        DegradedSince is the timestamp at which the resource entered the
+                        Degraded phase. Set when the phase transitions into Degraded, carried
+                        forward while it stays Degraded, and cleared on any other phase.
+                        SinceSeconds for a Degraded resource is computed as now - DegradedSince
+                        so the lynqnode_resource_degraded_since_seconds metric reflects true
+                        time-in-Degraded rather than time-since-last-apply.
+                      format: date-time
+                      type: string
+                    id:
+                      description: ID matches the TResource.ID from the LynqForm.
+                      type: string
+                    kind:
+                      description: Kind is the Kubernetes resource kind (Deployment,
+                        StatefulSet, etc.).
+                      type: string
+                    name:
+                      description: |-
+                        Name is the rendered resource name in the cluster (after nameTemplate
+                        evaluation). Allows operators to map a phase back to a concrete object.
+                      type: string
+                    phase:
+                      description: Phase is the current classification — see ResourcePhase.
+                      enum:
+                      - Pending
+                      - Progressing
+                      - Available
+                      - Degraded
+                      - Failed
+                      type: string
+                    reason:
+                      description: |-
+                        Reason is a short human-readable diagnostic, populated for non-Available
+                        phases. Example for a Degraded Deployment:
+                        "availableReplicas=2/3, observedGeneration matched".
+                      type: string
+                    sinceSeconds:
+                      description: |-
+                        SinceSeconds is how long the resource has been in the current phase.
+                        Reset on phase transition. Populated for Degraded (powers the
+                        lynqnode_resource_degraded_since_seconds metric) and Progressing.
+                        Derived from DegradedSince for the Degraded phase.
+                      format: int64
+                      type: integer
+                  required:
+                  - id
+                  - kind
+                  - phase
+                  type: object
+                type: array
               skippedResourceIds:
                 description: SkippedResourceIds lists the IDs of resources that were
                   skipped due to dependency failures

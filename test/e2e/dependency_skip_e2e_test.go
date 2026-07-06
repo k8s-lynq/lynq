@@ -170,6 +170,19 @@ var _ = Describe("SkipOnDependencyFailure Behavior", Ordered, func() {
 					g.Expect(err).NotTo(HaveOccurred())
 					g.Expect(output).To(ContainSubstring("DependencySkipped"))
 				}, 30*time.Second, policyTestInterval).Should(Succeed())
+
+				By("And resourcePhases should report Failed for the failing deployment")
+				// Per-resource phase verification: the dependency that timed out
+				// must classify as Failed in status.resourcePhases so kubectl
+				// jsonpath / dashboards can locate the root-cause resource.
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "lynqnode", expectedNodeName, "-n", policyTestNamespace,
+						"-o", "jsonpath={.status.resourcePhases[*].phase}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(output).To(ContainSubstring("Failed"),
+						"resourcePhases should include at least one Failed entry for the failing deployment")
+				}, 30*time.Second, policyTestInterval).Should(Succeed())
 			})
 		})
 

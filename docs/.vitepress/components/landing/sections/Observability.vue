@@ -4,7 +4,7 @@
       <SectionHeader
         label="Observability"
         title="Catch Problems Before They Spread"
-        subtitle="15 Prometheus metrics, a pre-built Grafana dashboard, and 14 alert rules with runbooks. Whatever goes wrong — conflicts, failures, latency, a whole hub — the metric graphs it and the right alert pages you."
+        subtitle="26 Prometheus metrics, a pre-built Grafana dashboard, and 18 alert rules with runbooks. Whatever goes wrong — conflicts, failures, latency, workload degradation, a whole hub — the metric graphs it and the right alert pages you."
         accent="blue"
       />
 
@@ -101,7 +101,7 @@
  * threshold, the Alertmanager feed fires in the real escalation order shipped
  * in config/prometheus/alerts.yaml. The carousel cycles through distinct
  * failure modes (conflicts, resource failures, reconcile latency, hub-wide
- * failure) to show the breadth of what the 15 metrics + 14 alert rules catch.
+ * failure) to show the breadth of what the 26 metrics + 18 alert rules catch.
  *
  * All names/exprs/severities/thresholds are verified against the repo. Motion:
  * the active slide draws in and its alerts fire on a timer; the carousel

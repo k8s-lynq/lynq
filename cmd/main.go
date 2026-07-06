@@ -99,6 +99,12 @@ func main() {
 		"Number of concurrent reconciliations for LynqNode controller")
 	flag.BoolVar(&enablePprof, "enable-pprof", false,
 		"Enable pprof profiling endpoint on :6060 for CPU/memory diagnostics")
+	var legacyReadinessStrict bool
+	flag.BoolVar(&legacyReadinessStrict, "legacy-readiness-strict", false,
+		"Revert LynqNode readiness checks to the pre-phase-model strict behavior: "+
+			"any partial unavailability flips a workload to Failed after timeoutSeconds, "+
+			"no Degraded phase, no WorkloadDegraded events. Provided as a one-flag rollback "+
+			"if the new phase model surfaces unforeseen issues in production.")
 	opts := zap.Options{
 		Development: false,
 	}
@@ -251,13 +257,14 @@ func main() {
 	statusManager := status.NewManager(mgr.GetClient())
 
 	lynqnodeReconciler := &controller.LynqNodeReconciler{
-		Client:           mgr.GetClient(),
-		Scheme:           mgr.GetScheme(),
-		Recorder:         mgr.GetEventRecorderFor("lynqnode-controller"),
-		StatusManager:    statusManager,
-		TemplateEngine:   template.NewEngine(),
-		Applier:          apply.NewApplier(mgr.GetClient(), mgr.GetScheme()),
-		ReadinessChecker: readiness.NewChecker(mgr.GetClient()),
+		Client:                mgr.GetClient(),
+		Scheme:                mgr.GetScheme(),
+		Recorder:              mgr.GetEventRecorderFor("lynqnode-controller"),
+		StatusManager:         statusManager,
+		TemplateEngine:        template.NewEngine(),
+		Applier:               apply.NewApplier(mgr.GetClient(), mgr.GetScheme()),
+		ReadinessChecker:      readiness.NewChecker(mgr.GetClient()),
+		LegacyReadinessStrict: legacyReadinessStrict,
 	}
 
 	if err := lynqnodeReconciler.SetupWithManager(mgr, nodeConcurrency); err != nil {

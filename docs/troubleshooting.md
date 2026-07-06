@@ -29,7 +29,10 @@ What do you see?
 │     └─ → Dependency failures
 │
 ├─ Resources exist but not ready
-│  └─ → Readiness / degraded nodes
+│  ├─ Degraded count > 0 but Failed count = 0
+│  │  └─ → Resource degraded (steady-state)
+│  └─ Failed count > 0
+│     └─ → Readiness / degraded nodes
 │
 ├─ LynqNode stuck Terminating
 │  └─ → Stuck finalizer
@@ -225,9 +228,39 @@ kubectl get lynqnode <name> -o jsonpath='{.status.skippedResources}'
 
 - **Skipped (DependencySkipped event):** A dependency actually failed (apply error or timeout). Fix the failing dependency first, or set `skipOnDependencyFailure: false` on the dependent resource to let it proceed regardless.
 
-## Readiness / Degraded Nodes
+## Resource Degraded (Steady-State)
 
-**Symptom:** `readyResources < desiredResources`; `Degraded=True` with reason `ResourcesNotReady`.
+**Symptom:** `kubectl get lynqnode` shows `Degraded > 0` but `Failed == 0`; LynqNode `Ready=True`; `Degraded=True` with reason `ResourcesDegraded` or `ResourceFailuresAndDegraded`.
+
+This is **NOT a Lynq failure**. The workload's rollout completed for the current generation, but availability has since dropped — typically a node drain, HPA scale-up, pod eviction, image GC on a cold node, or kubelet restart. Kubernetes is converging the workload; Lynq is just surfacing the observation.
+
+```bash
+# Identify the degraded resources
+kubectl get lynqnode <name> -o jsonpath='{.status.degradedResourceIds}'
+
+# Inspect the specific resources' phase + reason
+kubectl get lynqnode <name> -o jsonpath=\
+'{range .status.resourcePhases[?(@.phase=="Degraded")]}{.id}{"\t"}{.kind}{"\t"}{.reason}{"\n"}{end}'
+
+# For a degraded Deployment, drill into pods
+kubectl get pods -l <deployment-selector> -o wide
+kubectl describe pod <pending-or-evicted-pod>
+
+# For a degraded DaemonSet, check node-level state
+kubectl get nodes
+kubectl describe node <affected-node>
+```
+
+**When to act:**
+- `LynqNodeWorkloadDegraded` (Warning, fires at 15 min): investigate the workload; usually self-resolves.
+- `LynqNodeWorkloadSeverelyDegraded` (Critical, fires at 30 min on a single resource): Kubernetes has not converged — likely a kubelet, scheduler, or node-level issue. Escalate.
+- `LynqNodeWorkloadFlapping` (Warning): pods churning Available↔Degraded — check PodDisruptionBudgets, HPA tuning, node health.
+
+If the workload SHOULD be considered Failed after sustained degradation, that's outside Lynq's responsibility — wire the Prometheus alert to your incident system. See [Resource Phases](resource-phases.md) for the design rationale.
+
+## Readiness / Degraded Nodes (Lynq-attributed failure)
+
+**Symptom:** `readyResources < desiredResources`; `Degraded=True` with reason `ResourcesNotReady` or `ResourceFailures`; `Failed > 0`.
 
 ```bash
 kubectl get lynqnode <name> -o jsonpath='{.status.readyResources}/{.status.desiredResources}'

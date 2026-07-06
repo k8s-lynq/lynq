@@ -1241,7 +1241,7 @@ func (r *LynqHubReconciler) isNodeResourcesActuallyReady(ctx context.Context, no
 					"availableReplicas", deploy.Status.AvailableReplicas)
 				return false
 			}
-		case "StatefulSet":
+		case resourceKindStatefulSet:
 			var sts appsv1.StatefulSet
 			if err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &sts); err != nil {
 				if errors.IsNotFound(err) {
@@ -1258,7 +1258,7 @@ func (r *LynqHubReconciler) isNodeResourcesActuallyReady(ctx context.Context, no
 					"readyReplicas", sts.Status.ReadyReplicas)
 				return false
 			}
-		case "DaemonSet":
+		case resourceKindDaemonSet:
 			var ds appsv1.DaemonSet
 			if err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &ds); err != nil {
 				if errors.IsNotFound(err) {

@@ -214,6 +214,72 @@ spec:
             dashboard: "https://grafana.example.com/d/lynq/controller-health"
             runbook_url: "https://lynq.sh/alert-runbooks#highapplyfailurerate"
 
+        # ========================================
+        # Resource-Phase Alerts (Native K8s Health Tracking)
+        # Distinct from LynqNodeResourcesFailed: these fire on STEADY-STATE
+        # workload disruption (node drain, HPA, pod eviction) — Kubernetes is
+        # converging, Lynq is NOT attributing failure. See docs/resource-phases.md.
+        # ========================================
+
+        # Warning: LynqNode has resources in Degraded phase (steady-state disruption)
+        - alert: LynqNodeWorkloadDegraded
+          expr: lynqnode_resources_degraded > 0
+          for: 15m
+          labels:
+            severity: warning
+            component: lynq
+          annotations:
+            summary: "LynqNode {{ $labels.lynqnode }} has {{ $value }} workload(s) in Degraded phase"
+            description: "LynqNode {{ $labels.lynqnode }} in namespace {{ $labels.namespace }} has {{ $value }} resources in Degraded phase for 15+ minutes. Rollout is complete but availability has dropped (node drain, HPA scale-up, pod eviction, image GC). Kubernetes is converging — this is NOT a Lynq failure. Investigate the underlying workload(s) (kubectl get pods, kubectl describe node)."
+            dashboard: "https://grafana.example.com/d/lynq/node-details?var-lynqnode={{ $labels.lynqnode }}&var-namespace={{ $labels.namespace }}"
+            runbook_url: "https://lynq.sh/alert-runbooks#lynqnodeworkloaddegraded"
+
+        # Warning: Workload flapping between Available and Degraded
+        - alert: LynqNodeWorkloadFlapping
+          expr: |
+            sum by (kind) (rate(lynqnode_resource_phase_transitions_total{from="Available",to="Degraded"}[15m])) > 0.1
+          for: 15m
+          labels:
+            severity: warning
+            component: lynq
+          annotations:
+            summary: "Workload kind {{ $labels.kind }} flapping between Available and Degraded"
+            description: "Resources of kind {{ $labels.kind }} are transitioning Available→Degraded at {{ printf \"%.3f\" $value }}/s (>0.1/s sustained for 15+ min). Indicates excessive pod churn — investigate node health, HPA tuning, or PodDisruptionBudgets."
+            dashboard: "https://grafana.example.com/d/lynq/controller-health"
+            runbook_url: "https://lynq.sh/alert-runbooks#lynqnodeworkloadflapping"
+
+        # Warning: Slow rollouts (P95 > 5 minutes)
+        - alert: LynqNodeRolloutSlow
+          expr: |
+            histogram_quantile(0.95,
+              sum by (le, kind) (rate(lynqnode_resource_rollout_duration_seconds_bucket{result="complete"}[1h]))
+            ) > 300
+          for: 30m
+          labels:
+            severity: warning
+            component: lynq
+          annotations:
+            summary: "Slow rollouts for {{ $labels.kind }} (P95 > 5 min)"
+            description: "95th percentile rollout duration for resource kind {{ $labels.kind }} is {{ printf \"%.0f\" $value }}s (threshold: 300s, sustained 30+ min). Investigate readiness-probe tuning, image pull latency, or resource constraints."
+            dashboard: "https://grafana.example.com/d/lynq/controller-health"
+            runbook_url: "https://lynq.sh/alert-runbooks#lynqnoderolloutslow"
+
+    - name: lynq.critical-phase
+      interval: 30s
+      rules:
+        # Critical: Single resource has been in Degraded phase for over 30 minutes
+        - alert: LynqNodeWorkloadSeverelyDegraded
+          expr: lynqnode_resource_degraded_since_seconds > 1800
+          for: 1m
+          labels:
+            severity: critical
+            component: lynq
+          annotations:
+            summary: "Resource {{ $labels.resource_id }} on {{ $labels.lynqnode }} severely degraded"
+            description: "Resource {{ $labels.resource_id }} ({{ $labels.kind }}) on LynqNode {{ $labels.lynqnode }}/{{ $labels.namespace }} has been in Degraded phase for {{ printf \"%.0f\" $value }} seconds (>30 minutes). Kubernetes has not converged the workload — investigate kubelet, scheduler, or node-level issues."
+            dashboard: "https://grafana.example.com/d/lynq/node-details?var-lynqnode={{ $labels.lynqnode }}&var-namespace={{ $labels.namespace }}"
+            runbook_url: "https://lynq.sh/alert-runbooks#lynqnodeworkloadseverelydegraded"
+
     # ========================================
     # Info Alerts - Informational
     # ========================================

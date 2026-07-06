@@ -471,8 +471,13 @@ ignoreFields: []  # ← Removed
 # Next reconciliation: replicas will be reset to 3
 ```
 
+## Multi-manager safety
+
+`ignoreFields` is the recommended way to co-manage a resource with another controller (HPA, Terraform, Crossplane). Keep `patchStrategy: apply` (SSA) — it is field-ownership-aware, so Lynq writes only the fields its template declares and the ignored fields are left entirely to their owner. Since the [phase model](resource-phases.md), a change an ignored-field owner makes (e.g. HPA scaling `spec.replicas`) no longer perturbs Lynq's desired-spec hash, so it triggers **no re-apply and no reset of the readiness-timeout clock**. Avoid `patchStrategy: replace`/`merge` on co-managed workloads — they are not ownership-aware and can clobber the other manager's fields (Lynq emits a `UnsafePatchStrategy` warning event in that case). See the "Multi-manager safety" section in [Policies](policies.md).
+
 ## Related Features
 
 - [Policies](./policies.md) - Overall resource management policies
 - [Dependencies](./dependencies.md) - Resource creation ordering
 - [Templates](./templates.md) - Template variable system
+- [Resource Phases](./resource-phases.md) - How Lynq reports other-manager disruption without marking it a failure
