@@ -18,6 +18,12 @@ description: "Get Lynq running on Minikube in under 5 minutes. Automated scripts
 
 System requirements: 1+ core, 1+ GB RAM, 5+ GB disk.
 
+All setup commands below run from the repository root:
+
+```bash
+git clone https://github.com/k8s-lynq/lynq && cd lynq
+```
+
 ## Setup (5 Steps)
 
 ### Step 1: Prepare Minikube Cluster
@@ -42,6 +48,23 @@ System requirements: 1+ core, 1+ GB RAM, 5+ GB disk.
   next-hint="Once the cluster objects are ready, continue with Step 2 to deploy the controller."
   next-target-id="qs-step-2"
 />
+
+<!-- Keep in sync with the QuickstartStep props above -->
+<llm-only>
+
+Run (~2 min): `./scripts/setup-minikube.sh`
+
+Bootstraps the base cluster with cert-manager and Lynq CRDs. Creates: Minikube control plane + kubeconfig, cert-manager v1.13.2, namespaces `lynq-system` / `lynq-test`, Lynq CRDs.
+
+Verify:
+
+```bash
+kubectl get nodes                  # shows Ready
+kubectl get pods -n cert-manager
+kubectl get crds | grep lynq
+```
+
+</llm-only>
 
 ### Step 2: Deploy Lynq
 
@@ -68,6 +91,23 @@ System requirements: 1+ core, 1+ GB RAM, 5+ GB disk.
   next-hint="With the controller online you can move to Step 3 and deploy the database."
   next-target-id="qs-step-3"
 />
+
+<!-- Keep in sync with the QuickstartStep props above -->
+<llm-only>
+
+Run (~2 min): `./scripts/deploy-to-minikube.sh`
+
+Requires Step 1 complete (Minikube + cert-manager running, kubectl context pointing to Minikube). Builds the controller image and deploys it into `lynq-system`. Creates: Lynq controller-manager Deployment/Service, webhook configuration and TLS Secret (via cert-manager), metrics and leader-election resources.
+
+Verify:
+
+```bash
+kubectl get pods -n lynq-system    # controller Ready
+kubectl logs -n lynq-system -l control-plane=controller-manager --tail=20
+kubectl get validatingwebhookconfiguration | grep lynq
+```
+
+</llm-only>
 
 ### Step 3: Deploy MySQL Test Database
 
@@ -96,6 +136,23 @@ System requirements: 1+ core, 1+ GB RAM, 5+ GB disk.
   next-target-id="qs-step-4"
 />
 
+<!-- Keep in sync with the QuickstartStep props above -->
+<llm-only>
+
+Run (~1 min): `./scripts/deploy-mysql.sh`
+
+Requires Step 2 complete (Lynq operator running; namespace `lynq-test` exists from Step 1). Installs a MySQL 8.0 instance with sample node rows inside `lynq-test`. Creates: mysql Deployment/Service, nodes database and node_configs table, three sample node rows, read-only user `node_reader` and its Secret.
+
+Verify:
+
+```bash
+kubectl get pods -n lynq-test | grep mysql
+kubectl exec -it deployment/mysql -n lynq-test -- mysql -e "SHOW DATABASES;"
+kubectl get secret mysql-credentials -n lynq-test
+```
+
+</llm-only>
+
 ### Step 4: Create LynqHub
 
 <QuickstartStep
@@ -122,6 +179,23 @@ System requirements: 1+ core, 1+ GB RAM, 5+ GB disk.
   next-target-id="qs-step-5"
 />
 
+<!-- Keep in sync with the QuickstartStep props above -->
+<llm-only>
+
+Run (~30 sec): `./scripts/deploy-lynqhub.sh`
+
+Requires Step 3 complete (MySQL endpoint Ready; `mysql-credentials` Secret exists). Creates the LynqHub CR that syncs MySQL rows every 30 seconds: LynqHub CR `test-hub`, column and extraValue mappings, recurring sync loop.
+
+Verify:
+
+```bash
+kubectl get lynqhub test-hub -n lynq-system -o yaml | grep syncInterval
+kubectl get lynqhub test-hub -o jsonpath="{.status.desiredNodes}" 2>/dev/null || true
+kubectl logs -n lynq-system -l control-plane=controller-manager --tail=20   # hub sync messages
+```
+
+</llm-only>
+
 ### Step 5: Apply LynqForm
 
 <QuickstartStep
@@ -147,6 +221,25 @@ System requirements: 1+ core, 1+ GB RAM, 5+ GB disk.
   next-hint="All steps are done. Adding a database row now provisions resources automatically."
   next-target-id="qs-success"
 />
+
+<!-- Keep in sync with the QuickstartStep props above -->
+<llm-only>
+
+Run (~30 sec): `./scripts/deploy-lynqform.sh`
+
+Requires Step 4 complete (`test-hub` reports Ready; permissions to create templates in the same namespace as the hub). Defines the blueprint (Deployment, Service, etc.) for each active node. Creates: LynqForm CR `test-template`, Deployment/Service definitions, hub-template linkage.
+
+Verify:
+
+```bash
+kubectl get lynqform test-template -n lynq-system
+kubectl get lynqnodes
+kubectl get deployments,services -n lynq-test -l lynq.sh/node
+```
+
+All steps are done. Adding a database row now provisions resources automatically.
+
+</llm-only>
 
 <div id="qs-success"></div>
 
@@ -204,8 +297,7 @@ kubectl describe lynqnode <name> -n lynq-system
 
 For detailed diagnostics, see [Troubleshooting](troubleshooting.md).
 
-<details>
-<summary>Cleanup</summary>
+## Cleanup
 
 ```bash
 # Remove everything except the cluster
@@ -218,7 +310,6 @@ kubectl delete lynqhub test-hub -n lynq-system
 ```
 
 Scripts support env var overrides — run `./scripts/<name>.sh --help` for options.
-</details>
 
 ## See Also
 
