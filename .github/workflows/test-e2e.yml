@@ -12,9 +12,9 @@ jobs:
       fail-fast: false
       matrix:
         k8s-version:
-          - "1.32"
           - "1.33"
           - "1.34"
+          - "1.35"
         test-group:
           - core
           - policies

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -57,6 +58,10 @@ type StatusEvent struct {
 
 	// NodeKey is the namespaced name of the LynqNode
 	NodeKey client.ObjectKey
+
+	// NodeUID is the UID of the LynqNode that produced this event.
+	// Used to discard stale events after same-name recreation.
+	NodeUID types.UID
 
 	// Payload contains event-specific data
 	Payload interface{}
@@ -115,6 +120,10 @@ type StatusUpdate struct {
 	// Key is the LynqNode's namespaced name
 	Key client.ObjectKey
 
+	// UID is the Kubernetes UID of the LynqNode instance that produced these events.
+	// A zero value means the UID guard is disabled (backwards-compatible).
+	UID types.UID
+
 	// Generation to update
 	ObservedGeneration *int64
 
@@ -154,6 +163,9 @@ func NewStatusUpdate(key client.ObjectKey) *StatusUpdate {
 // Apply applies an event to this status update
 func (u *StatusUpdate) Apply(event StatusEvent) {
 	u.LastEventTime = event.Timestamp
+	if event.NodeUID != "" {
+		u.UID = event.NodeUID
+	}
 
 	switch event.Type {
 	case EventResourceCountsUpdated:

@@ -90,25 +90,7 @@ func (r *LynqHubReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	// Handle finalizer logic
 	if !registry.DeletionTimestamp.IsZero() {
-		// Hub is being deleted
-		if containsString(registry.Finalizers, FinalizerLynqHub) {
-			// Run cleanup logic for DeletionPolicy.Retain resources
-			if err := r.cleanupRetainResources(ctx, registry); err != nil {
-				logger.Error(err, "Failed to cleanup retain resources")
-				r.Recorder.Eventf(registry, corev1.EventTypeWarning, "CleanupFailed",
-					"Failed to cleanup retain resources: %v", err)
-				return ctrl.Result{RequeueAfter: 10 * time.Second}, err
-			}
-
-			// Remove finalizer
-			registry.Finalizers = removeString(registry.Finalizers, FinalizerLynqHub)
-			if err := r.Update(ctx, registry); err != nil {
-				logger.Error(err, "Failed to remove finalizer")
-				return ctrl.Result{}, err
-			}
-			logger.Info("Finalizer removed, registry cleanup complete")
-		}
-		return ctrl.Result{}, nil
+		return r.handleHubDeletion(ctx, registry)
 	}
 
 	// Ensure finalizer is present
@@ -1459,4 +1441,38 @@ func (r *LynqHubReconciler) findRegistryForTemplate(ctx context.Context, obj cli
 			},
 		},
 	}
+}
+
+// handleHubDeletion runs finalizer cleanup when a LynqHub CR is being deleted.
+// Extracted from Reconcile to keep cyclomatic complexity within limits.
+func (r *LynqHubReconciler) handleHubDeletion(ctx context.Context, registry *lynqv1.LynqHub) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	if !containsString(registry.Finalizers, FinalizerLynqHub) {
+		return ctrl.Result{}, nil
+	}
+
+	if err := r.cleanupRetainResources(ctx, registry); err != nil {
+		logger.Error(err, "Failed to cleanup retain resources")
+		r.Recorder.Eventf(registry, corev1.EventTypeWarning, "CleanupFailed",
+			"Failed to cleanup retain resources: %v", err)
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, err
+	}
+
+	registry.Finalizers = removeString(registry.Finalizers, FinalizerLynqHub)
+	updateErr := r.Update(ctx, registry)
+	if updateErr != nil && !errors.IsNotFound(updateErr) {
+		logger.Error(updateErr, "Failed to remove finalizer")
+		return ctrl.Result{}, updateErr
+	}
+
+	// Clean up Prometheus series regardless of whether the CR still exists.
+	metrics.CleanupHubMetrics(registry.Name, registry.Namespace)
+
+	if errors.IsNotFound(updateErr) {
+		logger.Info("Hub CR already gone, metrics cleaned up", "hub", registry.Name)
+	} else {
+		logger.Info("Finalizer removed, registry cleanup complete")
+	}
+	return ctrl.Result{}, nil
 }

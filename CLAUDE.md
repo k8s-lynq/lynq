@@ -683,85 +683,71 @@ pkg/datasource/       # External datasource integrations
 - Integration tests: Controller reconciliation against real API server
 - E2E tests: Full workflow with MySQL datasource
 
+#### Development Workflow
+
+1. **Pre-commit lint check is mandatory** — Run `make lint` (or `golangci-lint run`) before every `git commit`. CI's `lint.yml` runs on every push; a clean local lint check avoids round-trip fix commits.
+
+2. **English in committed artifacts** — Commit messages, code comments, PR title, and PR body must be in English. Korean is fine in conversation and planning only (open-source repo convention).
+
+3. **PR template** — Use this repo's `.github/pull_request_template.md` (English open-source template). Do **not** substitute the in-house Korean PR template even if a generic create-PR skill suggests it.
+
+4. **Open PRs as drafts first** — `gh pr create --draft`. Mark ready for review only after CI (lint + e2e) is green.
+
+5. **Conventional commit titles** — `type(scope): short imperative` (e.g. `fix(metrics): ...`, `feat(controller): ...`). Match the existing history style (`git log --oneline -10`).
+
+6. **CI failures get a new commit** — Never `--amend` or force-push to fix a CI failure on a pushed branch; push an additional commit so reviewers can see the fix.
+
+7. **Second opinion for risky changes** — For race-window fixes, finalizer ordering, concurrency, or anything that touches Prometheus series identity, ask `peer:codex` to review the diff before pushing.
+
 #### E2E Test Execution Guidelines
 
-**IMPORTANT**: Always prefer focused test execution over running the full test suite to maximize development efficiency.
+**E2E is CI's responsibility. Do not run E2E locally during routine work.** Open a PR and let `.github/workflows/test-e2e.yml` exercise the matrix (K8s 1.33 / 1.34 / 1.35 × 6 test groups). If a CI E2E run fails, push a fix commit — do not amend a pushed commit.
 
-**Running Focused Tests (RECOMMENDED)**:
+**Local debugging only** — Use the commands below only when a specific test is failing and you need to reproduce it locally.
+
+**Running a focused test locally**:
 ```bash
 # Run specific test by description (substring match)
 make test-e2e-focus FOCUS="should convert string values to proper integer types"
 
 # Run tests matching a pattern
 make test-e2e-focus FOCUS="Template Functions"
-
-# Run multiple related tests
-make test-e2e-focus FOCUS="metrics update"
 ```
 
-**Running Full Test Suite (USE SPARINGLY)**:
-```bash
-# Only run when necessary (e.g., pre-commit, CI validation)
-# Takes 30-45 minutes to complete
-make test-e2e
-```
-
-**Critical Rules**:
-1. **Always use 60-minute timeout minimum**: E2E tests build Docker images, create Kind clusters, install cert-manager, and deploy the operator. This takes significant time.
+**Critical rules for local runs**:
+1. **Always use 60-minute timeout minimum**: E2E tests build Docker images, create Kind clusters, install cert-manager, and deploy the operator.
    ```bash
    # Correct timeout setting in Bash tool
    timeout: 3600000  # 60 minutes in milliseconds
    ```
 
-2. **NEVER use `grep` or `tail` to filter test output**: These commands buffer output and hide real-time progress, making it impossible to debug hanging tests. Always view full output or use Ginkgo's built-in filtering.
+2. **NEVER use `grep` or `tail` to filter test output**: These commands buffer output and hide real-time progress.
    ```bash
-   # ❌ WRONG - hides progress and makes debugging impossible
+   # ❌ WRONG
    make test-e2e-focus FOCUS="..." 2>&1 | tail -100
 
-   # ✅ CORRECT - shows full output with real-time progress
+   # ✅ CORRECT
    make test-e2e-focus FOCUS="..."
    ```
 
-3. **Clean up failed clusters**: If tests fail due to cluster issues (network timeouts, resource conflicts, cert-manager problems):
+3. **Clean up failed clusters**:
    ```bash
-   # Delete the test cluster and retry
    kind delete cluster --name lynq-test-e2e
-
-   # Then re-run your test
    make test-e2e-focus FOCUS="your test description"
    ```
 
-4. **Understanding FOCUS parameter**:
-   - Uses Ginkgo's focus filter (substring match on test descriptions)
-   - Case-sensitive
-   - Matches against the full test hierarchy: `Describe > Context > It`
-   - Examples:
-     - `FOCUS="Template Functions"` - runs all tests in "Template Functions" describe block
-     - `FOCUS="should convert string"` - runs specific test containing this phrase
-     - `FOCUS="Typed template functions"` - runs tests in that context
+4. **FOCUS parameter** uses Ginkgo's substring filter against the full `Describe > Context > It` hierarchy. Case-sensitive.
 
-5. **Test debugging workflow**:
+5. **Debugging workflow**:
    ```bash
-   # Step 1: Run the specific failing test
-   make test-e2e-focus FOCUS="exact test description from failure"
-
-   # Step 2: If cluster issues occur, clean up
-   kind delete cluster --name lynq-test-e2e
-
-   # Step 3: Re-run after cleanup
-   make test-e2e-focus FOCUS="exact test description from failure"
-
-   # Step 4: Check controller logs if test still fails
    kubectl logs -n lynq-system deployment/lynq-controller-manager --tail=100
-
-   # Step 5: Inspect test resources
    kubectl get lynqnodes,lynqforms,lynqhubs -A
    kubectl describe lynqnode <node-name> -n <namespace>
    ```
 
 6. **Performance expectations**:
    - Full test suite (`make test-e2e`): 30-45 minutes
-   - Single focused test: 3-5 minutes (includes cluster setup)
+   - Single focused test (fresh cluster): 3-5 minutes
    - Subsequent focused tests (cluster exists): 1-2 minutes
 
 **Common Test Failures and Solutions**:
@@ -789,6 +775,7 @@ make test-e2e
 - Always validate `dependIds` before topological sort
 - SSA requires `fieldManager` and correct content-type
 - `waitForReady=true` blocks the reconciliation pipeline
+- `gocyclo` is capped at 35 (`.golangci.yml`). When a Reconcile-like function grows past that, extract helpers — don't bump the limit.
 - **Readiness timeout is measured from `lynq.sh/apply-start-time` annotation, NOT `creationTimestamp`.**
   - Using `creationTimestamp` causes pre-existing resources (months old) to immediately exceed the
     timeout after apply, marking them as FAILED instantly. This is the root cause of the maxSkew deadlock.

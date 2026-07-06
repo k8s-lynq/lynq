@@ -29,6 +29,7 @@ func (m *Manager) PublishResourceCounts(node *lynqv1.LynqNode, ready, failed, de
 	m.Publish(StatusEvent{
 		Type:    EventResourceCountsUpdated,
 		NodeKey: client.ObjectKeyFromObject(node),
+		NodeUID: node.UID,
 		Payload: ResourceCountsPayload{
 			Ready:      ready,
 			Failed:     failed,
@@ -44,6 +45,7 @@ func (m *Manager) PublishCondition(node *lynqv1.LynqNode, conditionType string, 
 	m.Publish(StatusEvent{
 		Type:    EventConditionChanged,
 		NodeKey: client.ObjectKeyFromObject(node),
+		NodeUID: node.UID,
 		Payload: ConditionPayload{
 			Condition: metav1.Condition{
 				Type:               conditionType,
@@ -110,6 +112,7 @@ func (m *Manager) PublishObservedGeneration(node *lynqv1.LynqNode, generation in
 	m.Publish(StatusEvent{
 		Type:    EventObservedGenerationUpdated,
 		NodeKey: client.ObjectKeyFromObject(node),
+		NodeUID: node.UID,
 		Payload: ObservedGenerationPayload{
 			ObservedGeneration: generation,
 		},
@@ -122,6 +125,7 @@ func (m *Manager) PublishAppliedResources(node *lynqv1.LynqNode, keys []string) 
 	m.Publish(StatusEvent{
 		Type:    EventAppliedResourcesUpdated,
 		NodeKey: client.ObjectKeyFromObject(node),
+		NodeUID: node.UID,
 		Payload: AppliedResourcesPayload{
 			Keys: keys,
 		},
@@ -134,6 +138,7 @@ func (m *Manager) PublishSkippedResources(node *lynqv1.LynqNode, count int32, id
 	m.Publish(StatusEvent{
 		Type:    EventSkippedResourcesUpdated,
 		NodeKey: client.ObjectKeyFromObject(node),
+		NodeUID: node.UID,
 		Payload: SkippedResourcesPayload{
 			Count: count,
 			Ids:   ids,
@@ -147,6 +152,7 @@ func (m *Manager) PublishMetrics(node *lynqv1.LynqNode, ready, failed, desired, 
 	m.Publish(StatusEvent{
 		Type:    EventMetricsUpdate,
 		NodeKey: client.ObjectKeyFromObject(node),
+		NodeUID: node.UID,
 		Payload: MetricsPayload{
 			Ready:          ready,
 			Failed:         failed,
@@ -169,6 +175,7 @@ func (m *Manager) PublishLastFullReconcileAt(node *lynqv1.LynqNode, timestamp me
 	m.Publish(StatusEvent{
 		Type:    EventLastFullReconcileAtUpdated,
 		NodeKey: client.ObjectKeyFromObject(node),
+		NodeUID: node.UID,
 		Payload: LastFullReconcileAtPayload{
 			Timestamp: timestamp,
 		},
@@ -180,12 +187,14 @@ func (m *Manager) PublishLastFullReconcileAt(node *lynqv1.LynqNode, timestamp me
 // This is useful at the end of reconciliation to update everything together
 func (m *Manager) PublishFullStatus(node *lynqv1.LynqNode, ready, failed, desired, conflicted int32, conditions []metav1.Condition, appliedKeys []string, isDegraded bool, degradedReason string) {
 	key := client.ObjectKeyFromObject(node)
+	uid := node.UID
 	now := time.Now()
 
 	// Publish resource counts
 	m.Publish(StatusEvent{
 		Type:    EventResourceCountsUpdated,
 		NodeKey: key,
+		NodeUID: uid,
 		Payload: ResourceCountsPayload{
 			Ready:      ready,
 			Failed:     failed,
@@ -200,6 +209,7 @@ func (m *Manager) PublishFullStatus(node *lynqv1.LynqNode, ready, failed, desire
 		m.Publish(StatusEvent{
 			Type:    EventConditionChanged,
 			NodeKey: key,
+			NodeUID: uid,
 			Payload: ConditionPayload{
 				Condition: cond,
 			},
@@ -212,6 +222,7 @@ func (m *Manager) PublishFullStatus(node *lynqv1.LynqNode, ready, failed, desire
 		m.Publish(StatusEvent{
 			Type:    EventAppliedResourcesUpdated,
 			NodeKey: key,
+			NodeUID: uid,
 			Payload: AppliedResourcesPayload{
 				Keys: appliedKeys,
 			},
@@ -223,6 +234,7 @@ func (m *Manager) PublishFullStatus(node *lynqv1.LynqNode, ready, failed, desire
 	m.Publish(StatusEvent{
 		Type:    EventMetricsUpdate,
 		NodeKey: key,
+		NodeUID: uid,
 		Payload: MetricsPayload{
 			Ready:          ready,
 			Failed:         failed,

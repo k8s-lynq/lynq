@@ -1759,14 +1759,22 @@ func (r *LynqNodeReconciler) reconcileCleanup(ctx context.Context, node *lynqv1.
 
 		// ALWAYS remove finalizer after cleanup attempt
 		controllerutil.RemoveFinalizer(node, LynqNodeFinalizer)
-		if err := r.Update(ctx, node); err != nil {
-			logger.Error(err, "Failed to remove finalizer", "node", node.Name)
-			return ctrl.Result{}, err
+		updateErr := r.Update(ctx, node)
+		if updateErr != nil && !errors.IsNotFound(updateErr) {
+			logger.Error(updateErr, "Failed to remove finalizer", "node", node.Name)
+			return ctrl.Result{}, updateErr
 		}
 
-		logger.Info("LynqNode deletion completed, finalizer removed", "node", node.Name)
-		r.Recorder.Eventf(node, corev1.EventTypeNormal, "LynqNodeDeleted",
-			"LynqNode %s deleted successfully. Resources will be cleaned up by Kubernetes garbage collector.", node.Name)
+		// Clean up Prometheus series regardless of whether the CR still exists.
+		metrics.CleanupLynqNodeMetrics(node.Name, node.Namespace)
+
+		if errors.IsNotFound(updateErr) {
+			logger.Info("LynqNode already deleted by another actor, metrics cleaned up", "node", node.Name)
+		} else {
+			logger.Info("LynqNode deletion completed, finalizer removed", "node", node.Name)
+			r.Recorder.Eventf(node, corev1.EventTypeNormal, "LynqNodeDeleted",
+				"LynqNode %s deleted successfully. Resources will be cleaned up by Kubernetes garbage collector.", node.Name)
+		}
 		metrics.LynqNodeReconcileDuration.WithLabelValues("success").Observe(time.Since(startTime).Seconds())
 	}
 	return ctrl.Result{}, nil
