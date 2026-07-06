@@ -8,48 +8,48 @@
     <atom:link href="https://lynq.sh/feed.xml" rel="self" type="application/rss+xml"/>
     <item>
       <title>Is It Okay to Delegate Business Logic to Infrastructure?</title>
-      <link>https://lynq.sh/blog/business-logic-in-infrastructure.html</link>
-      <guid>https://lynq.sh/blog/business-logic-in-infrastructure.html</guid>
+      <link>https://lynq.sh/blog/business-logic-in-infrastructure</link>
+      <guid>https://lynq.sh/blog/business-logic-in-infrastructure</guid>
       <pubDate>Wed, 25 Feb 2026 00:00:00 GMT</pubDate>
       <description>Thoughts on delegating business logic to the infrastructure layer, through the lens of Uber embedding Rate Limiting into their service mesh</description>
       <author>Tim Kang</author>
     </item>
     <item>
       <title>In the Age of AI Agents, How Should Infrastructure Change?</title>
-      <link>https://lynq.sh/blog/ai-agent-era-infrastructure.html</link>
-      <guid>https://lynq.sh/blog/ai-agent-era-infrastructure.html</guid>
+      <link>https://lynq.sh/blog/ai-agent-era-infrastructure</link>
+      <guid>https://lynq.sh/blog/ai-agent-era-infrastructure</guid>
       <pubDate>Mon, 23 Feb 2026 00:00:00 GMT</pubDate>
       <description>The era of AI Agents autonomously managing infrastructure is coming. But do we have an answer to the question, &apos;When AI decides, who executes?&apos;</description>
       <author>Tim Kang</author>
     </item>
     <item>
       <title>Introducing Lynq Dashboard</title>
-      <link>https://lynq.sh/blog/introducing-lynq-dashboard.html</link>
-      <guid>https://lynq.sh/blog/introducing-lynq-dashboard.html</guid>
+      <link>https://lynq.sh/blog/introducing-lynq-dashboard</link>
+      <guid>https://lynq.sh/blog/introducing-lynq-dashboard</guid>
       <pubDate>Mon, 22 Dec 2025 00:00:00 GMT</pubDate>
       <description>Lynq Dashboard is now available. A web UI to visualize Hub-Form-Node relationships and quickly identify problematic resources.</description>
       <author>Tim Kang</author>
     </item>
     <item>
       <title>5 Kubernetes Lifecycle Mistakes and How Lynq Policies Prevent Them</title>
-      <link>https://lynq.sh/blog/managing-resource-lifecycle.html</link>
-      <guid>https://lynq.sh/blog/managing-resource-lifecycle.html</guid>
+      <link>https://lynq.sh/blog/managing-resource-lifecycle</link>
+      <guid>https://lynq.sh/blog/managing-resource-lifecycle</guid>
       <pubDate>Thu, 18 Dec 2025 00:00:00 GMT</pubDate>
       <description>Real-world problems that occur when managing Kubernetes resources at scale, and how Lynq&apos;s policy system prevents them.</description>
       <author>Tim Kang</author>
     </item>
     <item>
       <title>Implementing maxSkew: How to Safely Update Nodes at Scale</title>
-      <link>https://lynq.sh/blog/maxskew-implementation-lessons.html</link>
-      <guid>https://lynq.sh/blog/maxskew-implementation-lessons.html</guid>
+      <link>https://lynq.sh/blog/maxskew-implementation-lessons</link>
+      <guid>https://lynq.sh/blog/maxskew-implementation-lessons</guid>
       <pubDate>Thu, 18 Dec 2025 00:00:00 GMT</pubDate>
       <description>Lessons learned from implementing maxSkew to safely control large-scale rolling updates in a Kubernetes Operator.</description>
       <author>Tim Kang</author>
     </item>
     <item>
       <title>Why I Built Lynq: From Internal Tool to Open Source 👶</title>
-      <link>https://lynq.sh/blog/why-i-built-lynq.html</link>
-      <guid>https://lynq.sh/blog/why-i-built-lynq.html</guid>
+      <link>https://lynq.sh/blog/why-i-built-lynq</link>
+      <guid>https://lynq.sh/blog/why-i-built-lynq</guid>
       <pubDate>Wed, 17 Dec 2025 00:00:00 GMT</pubDate>
       <description>The journey of building Lynq - from solving internal provisioning challenges to discovering a new paradigm called Infrastructure as Data.</description>
       <author>Tim Kang</author>

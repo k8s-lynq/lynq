@@ -1,0 +1,94 @@
+# Infrastructure as Data for Kubernetes
+
+> Infrastructure as Data for Kubernetes - A RecordOps Platform
+
+## Table of Contents
+
+### Getting Started
+
+- [Quick Start](https://lynq.sh/quickstart.md): Get Lynq running on Minikube in under 5 minutes. Automated scripts set up a complete local environment with MySQL, sample data, and live node provisioning.
+- [Installation](https://lynq.sh/installation.md): Install Lynq on a Kubernetes cluster using Helm (recommended), Kustomize, or from source. Covers cert-manager setup, verification, and upgrades.
+
+### Concepts
+
+- [Introduction to Lynq](https://lynq.sh/introduction.md): What Lynq is and why it exists — database-driven Kubernetes infrastructure, the three CRDs (LynqHub, LynqForm, LynqNode), and when to use it.
+- [Architecture](https://lynq.sh/architecture.md): Three controllers, three CRDs, one SSA apply engine. Lynq's reconciliation flow, design patterns, and performance model.
+
+### Guides
+
+#### Datasources
+
+- [Datasource Configuration](https://lynq.sh/datasource.md): Connect Lynq to a MySQL database. Configure LynqHub with host, credentials, value mappings, and extraValueMappings for template variables.
+- [Datasource Views](https://lynq.sh/datasource-views.md): MySQL VIEW patterns for Lynq: transform status strings, combine columns, filter rows, add computed fields, and verify your VIEW before deployment.
+
+#### Templates
+
+- [Templates](https://lynq.sh/templates.md): Master Lynq's template system powered by Go text/template and 200+ Sprig functions. Learn template syntax, custom functions, variables, and best practices.
+- [Template Syntax Reference](https://lynq.sh/templates-syntax.md): Template syntax reference for Lynq: available variables, custom functions (toHost, trunc63, sha1sum, fromJson), Sprig library, and advanced techniques.
+- [Template Type Conversion](https://lynq.sh/templates-typed-values.md): Type conversion in Lynq templates: use int, float, and bool functions to produce correctly-typed values for Kubernetes resource fields.
+- [Template Debugging & Migration](https://lynq.sh/templates-troubleshooting.md): Debug Lynq templates: preview rendering, interpret error messages, and safely evolve templates over time with orphan cleanup and re-adoption.
+- [Form Builder](https://lynq.sh/template-builder.md): Interactive LynqForm builder — compose resource templates visually, configure dependencies and policies, and export ready-to-apply YAML.
+
+#### Policies
+
+- [Policies](https://lynq.sh/policies.md): Control resource lifecycle with Lynq's four policy types: CreationPolicy, DeletionPolicy, ConflictPolicy, and PatchStrategy.
+- [Policy Operations](https://lynq.sh/policies-operations.md): Runbooks for policy operations: cascade deletion protection, conflict resolution, and migrating between policy types.
+- [Policy Combinations - Practical Examples](https://lynq.sh/policies-examples.md): Practical examples of combining CreationPolicy, DeletionPolicy, ConflictPolicy, and PatchStrategy in real-world LynqForms.
+- [Field-Level Ignore](https://lynq.sh/field-ignore.md): How to use field-level ignore control to prevent Lynq from overwriting fields managed by other controllers.
+
+#### Dependencies
+
+- [Dependency Management](https://lynq.sh/dependencies.md): Define resource ordering with dependency graphs in Lynq. Learn about DAG-based topological sorting, cycle detection, and the interactive dependency visualizer.
+- [Dependency Graph Visualizer](https://lynq.sh/dependency-visualizer.md): Interactive dependency graph visualizer for LynqForm. Paste YAML to see execution order, detect cycles, and identify parallel resource groups.
+
+### Use Cases
+
+- [Advanced Use Cases](https://lynq.sh/advanced-use-cases.md): Real-world Lynq patterns: custom domains, blue-green deployments, multi-tier stacks, database-per-node, feature flags, and preview environments.
+- [Custom Domain Provisioning](https://lynq.sh/use-case-custom-domains.md): Per-node custom domains with automatic DNS records (ExternalDNS) and TLS certificates (cert-manager), driven by a database column. No manual DNS ops.
+- [Multi-Tier Application Stack](https://lynq.sh/use-case-multi-tier.md): Full-stack application stacks (web, API, worker, database) provisioned per node from a single database row, with dependency-ordered startup.
+- [Blue-Green Deployments](https://lynq.sh/use-case-blue-green.md): Zero-downtime blue-green deployments per node, controlled by a single database column. One SQL UPDATE switches traffic; another reverts it.
+- [Database per Node with Crossplane](https://lynq.sh/use-case-database-per-tenant.md): Provision a dedicated cloud database (RDS, Cloud SQL) per node using Lynq and Crossplane, driven by a database row.
+- [Feature Flags](https://lynq.sh/use-case-feature-flags.md): Database boolean columns as infrastructure switches — flip a column to provision or remove Kubernetes resources per node.
+- [Per-PR Preview Environments](https://lynq.sh/use-case-preview-environments.md): Per-PR preview environments provisioned from CI with a single SQL INSERT. The row exists while the PR is open; deleting it cleans up every resource.
+- [Developer Sandbox Environments](https://lynq.sh/use-case-sandbox-environments.md): Isolated Kubernetes sandbox environments per developer account — provisioned on account creation, updated on plan change, torn down on account closure. No manual ops.
+
+### Integrations
+
+- [Crossplane Integration](https://lynq.sh/integration-crossplane.md): Combine Lynq with Crossplane to provision cloud infrastructure per node. Covers database-per-node and cloud resource templates.
+- [Crossplane Full-Stack Production Walkthrough](https://lynq.sh/integration-crossplane-fullstack.md): Production full-stack Crossplane + Lynq walkthrough: RDS database, S3 bucket, CloudFront CDN, and Kubernetes workloads provisioned per node.
+- [ExternalDNS Integration Guide](https://lynq.sh/integration-external-dns.md): Automatically manage DNS records per node using ExternalDNS with Route53, Cloudflare, and other providers.
+- [Flux Integration Guide](https://lynq.sh/integration-flux.md): Use Lynq with Flux for GitOps-style node provisioning. Manage GitRepositories and Kustomizations per node from database records.
+- [Argo CD Integration Guide](https://lynq.sh/integration-argocd.md): Integrate Lynq with Argo CD for GitOps-driven node provisioning. Create and sync Argo CD Applications from database records.
+
+### Reference
+
+- [Configuration](https://lynq.sh/configuration.md): Lynq operator configuration reference: controller runtime flags, concurrency knobs (node, hub, form), requeue intervals, and feature gates.
+- [Dashboard](https://lynq.sh/dashboard.md): Install and configure the Lynq Dashboard web UI. Visualize Hub, Form, and Node topology, and monitor operator status in real-time.
+- [Glossary](https://lynq.sh/glossary.md): Definitions for Lynq-specific terms: CRDs, labels, annotations, policy types, template functions, and core Kubernetes concepts used throughout the docs.
+
+#### API Reference
+
+- [API Reference](https://lynq.sh/api.md): Lynq Kubernetes CRD reference index — LynqHub, LynqForm, LynqNode overview, common types, shared labels/annotations, and kubectl commands.
+- [LynqHub API Reference](https://lynq.sh/api-lynqhub.md): LynqHub CRD API reference — spec.source MySQL connection, syncInterval, valueMappings, status fields, and multi-template support.
+- [LynqForm API Reference](https://lynq.sh/api-lynqform.md): LynqForm CRD API reference — hubId, resource arrays, TResource spec fields, dependency ordering, creationPolicy, and deletionPolicy.
+- [LynqNode API Reference](https://lynq.sh/api-lynqnode.md): LynqNode CRD API reference — auto-generated spec, status conditions, readyResources, appliedResources, and lifecycle annotations.
+- [Resource Lifecycle](https://lynq.sh/api-lifecycle.md): Lynq resource lifecycle internals: tracking labels, orphan markers, finalizers, cross-namespace resources, and watch predicates.
+
+### Operations
+
+- [Monitoring & Observability](https://lynq.sh/monitoring.md): Set up Prometheus metrics, Grafana dashboards, and structured logging for Lynq. Includes metrics catalog, events reference, and alerting overview.
+- [Prometheus Query Examples](https://lynq.sh/prometheus-queries.md): Production-ready Prometheus query examples for Lynq: health, performance, conflicts, rollouts, and hub metrics.
+- [Alert Runbooks](https://lynq.sh/alert-runbooks.md): Step-by-step runbooks for each Lynq Prometheus alert. Covers diagnosis, root cause analysis, and resolution for every alert rule.
+- [Security Guide](https://lynq.sh/security.md): Security hardening for Lynq: credential management with SecretRef, RBAC least-privilege roles, audit logging, and namespace isolation practices.
+- [Multi-Tenant Isolation](https://lynq.sh/multi-tenant-isolation.md): Isolate node resources using namespace-per-node, NetworkPolicy, and ResourceQuota. Complete LynqForm templates for multi-tenant Kubernetes clusters.
+- [Performance Tuning Guide](https://lynq.sh/performance.md): Tuning guide for Lynq at scale. Covers concurrency flags, requeue intervals, watch predicates, and large node count recommendations.
+- [Controller Resource Sizing](https://lynq.sh/resource-sizing.md): Right-size the Lynq controller pod with real observed data — sub-100m CPU and sub-120MB memory at 300+ LynqNodes — and understand why resources scale the way they do.
+- [Troubleshooting](https://lynq.sh/troubleshooting.md): Diagnose Lynq issues by symptom: TLS errors, hub sync failures, nodes not provisioning, resource lifecycle problems, and performance.
+
+### Contributing
+
+- [Local Development with Minikube](https://lynq.sh/local-development-minikube.md): Set up a local Lynq development environment on Minikube with cert-manager, webhooks, and a sample MySQL datasource.
+- [Development Guide](https://lynq.sh/development.md): Developer guide for building and testing Lynq locally. Covers prerequisites, local cluster setup, build commands, and E2E tests.
+- [Contributing a New Datasource](https://lynq.sh/contributing-datasource.md): Guide for implementing a new datasource adapter for Lynq. Covers the Datasource interface, factory registration, API types, and testing.
+- [Roadmap](https://lynq.sh/roadmap.md): Lynq roadmap: completed milestones in v1.0–v1.1, planned features for v1.2 (PostgreSQL, enhanced observability) and v1.3 (node sharding, advanced multi-tenancy) and beyond.
+
