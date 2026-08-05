@@ -11,9 +11,26 @@ jobs:
       issues: write
       pull-requests: write
     steps:
-    - name: 'Auto-assign issue'
-      uses: pozil/auto-assign-issue@v1
-      with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          assignees: selenehyun
-          numOfAssignee: 1
+      # Assigns via the REST API rather than a third-party action.
+      #
+      # This previously used pozil/auto-assign-issue@v1. A floating major-version tag means the
+      # code that actually runs can change without any change here, and it did: runs began failing
+      # with "Couldn't find issue info in current context" on pull_request events, alongside a
+      # warning that numOfAssignee was not a valid input — while nothing in this repository had
+      # been touched. Pinning to a commit SHA would stop the drift but keeps a dependency whose
+      # only job here is assigning one fixed user.
+      #
+      # The issues endpoint covers pull requests too (every PR is an issue), so a single call
+      # handles both trigger types. Assigning someone already assigned is a no-op, and self-
+      # assignment is permitted — which is the normal case here.
+      - name: Assign default owner
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+          ASSIGNEE: selenehyun
+        run: |
+          gh api --method POST \
+            -H "Accept: application/vnd.github+json" \
+            "repos/${REPO}/issues/${NUMBER}/assignees" \
+            -f "assignees[]=${ASSIGNEE}"
