@@ -543,3 +543,83 @@ var _ = Describe("Dependency Graph - Core Behaviors", func() {
 		})
 	})
 })
+
+var _ = Describe("Dependency Graph - Ordering Stability", func() {
+	Context("Sorting the same resources more than once", func() {
+		Describe("Resources that share a dependency level", func() {
+			It("Should return the same order every time", func() {
+				By("Given several resources with no dependencies between them")
+				// Nodes are held in a map, and Go randomizes map iteration order. Resources
+				// on the same level have no dependency constraint to impose an order, so an
+				// unstable iteration leaks straight into the sorted result — and from there
+				// into LynqNode.Status.SkippedResourceIds, whose reordering is a real write
+				// that re-triggers reconciliation.
+				resources := []lynqv1.TResource{
+					{ID: "zeta"}, {ID: "alpha"}, {ID: "mike"}, {ID: "delta"},
+					{ID: "bravo"}, {ID: "yankee"}, {ID: "charlie"}, {ID: "oscar"},
+				}
+
+				By("When the graph is built and sorted repeatedly")
+				orderOf := func() []string {
+					g, err := BuildGraph(resources)
+					Expect(err).ToNot(HaveOccurred())
+
+					sorted, err := g.TopologicalSort()
+					Expect(err).ToNot(HaveOccurred())
+
+					ids := make([]string, 0, len(sorted))
+					for _, node := range sorted {
+						ids = append(ids, node.ID)
+					}
+					return ids
+				}
+
+				first := orderOf()
+
+				By("Then every subsequent sort produces an identical order")
+				for i := 0; i < 20; i++ {
+					Expect(orderOf()).To(Equal(first),
+						"TopologicalSort must be deterministic across calls")
+				}
+			})
+		})
+
+		Describe("Resources with dependencies", func() {
+			It("Should keep dependency ordering while remaining deterministic", func() {
+				By("Given a diamond dependency: base <- left, right <- top")
+				resources := []lynqv1.TResource{
+					{ID: "top", DependIds: []string{"left", "right"}},
+					{ID: "right", DependIds: []string{"base"}},
+					{ID: "left", DependIds: []string{"base"}},
+					{ID: "base"},
+				}
+
+				By("When the graph is sorted repeatedly")
+				var first []string
+				for i := 0; i < 20; i++ {
+					g, err := BuildGraph(resources)
+					Expect(err).ToNot(HaveOccurred())
+
+					sorted, err := g.TopologicalSort()
+					Expect(err).ToNot(HaveOccurred())
+
+					ids := make([]string, 0, len(sorted))
+					for _, node := range sorted {
+						ids = append(ids, node.ID)
+					}
+
+					By("Then dependencies still precede their dependents")
+					Expect(ids[0]).To(Equal("base"))
+					Expect(ids[3]).To(Equal("top"))
+
+					if first == nil {
+						first = ids
+						continue
+					}
+					By("And the order is identical to the previous sort")
+					Expect(ids).To(Equal(first))
+				}
+			})
+		})
+	})
+})

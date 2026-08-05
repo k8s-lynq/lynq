@@ -18,6 +18,7 @@ package graph
 
 import (
 	"fmt"
+	"sort"
 
 	lynqv1 "github.com/k8s-lynq/lynq/api/v1"
 )
@@ -130,10 +131,23 @@ func (g *DependencyGraph) TopologicalSort() ([]*Node, error) {
 	var result []*Node
 	processed := make(map[string]bool)
 
+	// Iterate IDs in a stable order. g.Nodes is a map and Go randomizes map iteration,
+	// so without this the order of resources *within* a level varies between calls. That
+	// leaks out through LynqNode.Status.SkippedResourceIds, whose reordering is a real
+	// etcd write that re-triggers reconciliation (see the appliedResources sort in
+	// reconcileSpec for the same failure mode). Dependency ordering *between* levels is
+	// unaffected — only the arbitrary intra-level order becomes deterministic.
+	ids := make([]string, 0, len(g.Nodes))
+	for id := range g.Nodes {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
 	// Process nodes level by level
 	maxLevel := g.getMaxLevel()
 	for level := 0; level <= maxLevel; level++ {
-		for _, node := range g.Nodes {
+		for _, id := range ids {
+			node := g.Nodes[id]
 			if node.Level == level && !processed[node.ID] {
 				result = append(result, node)
 				processed[node.ID] = true

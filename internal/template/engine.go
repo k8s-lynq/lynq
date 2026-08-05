@@ -61,6 +61,24 @@ type Engine struct {
 	funcMap template.FuncMap
 }
 
+// sharedEngine is the process-wide Engine returned by SharedEngine.
+var sharedEngine = sync.OnceValue(NewEngine)
+
+// SharedEngine returns a process-wide Engine.
+//
+// An Engine is immutable after construction — its funcMap is never written to again — and
+// Render is safe for concurrent use (the parsed-template cache is a sync.Map and
+// template.Template.Execute is concurrency-safe after parsing). Every Engine built by
+// NewEngine is therefore interchangeable.
+//
+// Prefer this over NewEngine on any per-item path: NewEngine calls sprig.TxtFuncMap(), which
+// allocates and populates a fresh ~200-entry map on every call. The hub previously built one
+// Engine per LynqNode create/update, so a rollout across N nodes allocated N such maps for no
+// benefit.
+func SharedEngine() *Engine {
+	return sharedEngine()
+}
+
 // NewEngine creates a new template engine with all functions
 func NewEngine() *Engine {
 	engine := &Engine{

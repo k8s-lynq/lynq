@@ -204,14 +204,16 @@ func (r *LynqHubReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	// updates made within this loop iteration
 	updatedInThisIteration := make(map[string]int32)
 
+	// Memoize the per-template "currently updating" count for the duration of this Reconcile.
+	skew := newRolloutSkewCounter(r, nodesByTemplate)
+
 	// Create/update nodes for each template-row combination
 	for key, desired := range desired {
 		tmpl := desired.Template
-		templateNodes := nodesByTemplate[tmpl.Name]
 
 		if existingLynqNode, exists := existing[key]; !exists {
 			// Create new LynqNode - check maxSkew before creating
-			if r.canUpdateNodeWithCount(ctx, tmpl, templateNodes, updatedInThisIteration[tmpl.Name]) {
+			if canUpdateNodeWithPrecount(tmpl, skew.count(ctx, tmpl), updatedInThisIteration[tmpl.Name]) {
 				if err := r.createLynqNode(ctx, registry, tmpl, desired.Row); err != nil {
 					// Ignore AlreadyExists errors (can happen due to concurrent reconciliations)
 					if !errors.IsAlreadyExists(err) {
@@ -229,7 +231,7 @@ func (r *LynqHubReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			// Update existing LynqNode if data or template changed
 			if r.shouldUpdateLynqNode(ctx, registry, existingLynqNode, desired.Row, templateMap) {
 				// Check maxSkew before updating
-				if r.canUpdateNodeWithCount(ctx, tmpl, templateNodes, updatedInThisIteration[tmpl.Name]) {
+				if canUpdateNodeWithPrecount(tmpl, skew.count(ctx, tmpl), updatedInThisIteration[tmpl.Name]) {
 					if err := r.updateLynqNode(ctx, registry, tmpl, existingLynqNode, desired.Row); err != nil {
 						logger.Error(err, "Failed to update LynqNode", "template", key.TemplateName, "uid", key.UID)
 					} else {
@@ -252,7 +254,7 @@ func (r *LynqHubReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 				r.Recorder.Eventf(registry, corev1.EventTypeNormal, "RolloutThrottled",
 					"LynqForm '%s': %d node updates throttled (maxSkew=%d, currently updating=%d)",
 					tmplName, throttledCount, tmpl.Spec.Rollout.MaxSkew,
-					r.countUpdatingNodes(ctx, nodesByTemplate[tmplName], tmpl.Generation))
+					skew.count(ctx, tmpl))
 				break
 			}
 		}
@@ -401,7 +403,7 @@ func (r *LynqHubReconciler) renderAllTemplateResources(
 	tmpl *lynqv1.LynqForm,
 	vars template.Variables,
 ) (*lynqv1.LynqNodeSpec, error) {
-	engine := template.NewEngine()
+	engine := template.SharedEngine()
 
 	spec := &lynqv1.LynqNodeSpec{
 		ServiceAccounts:          make([]lynqv1.TResource, 0),
@@ -1425,6 +1427,62 @@ func (r *LynqHubReconciler) canUpdateNodeWithCount(ctx context.Context, tmpl *ly
 
 	// Count nodes that are already updating based on their stored state
 	updatingCount := r.countUpdatingNodes(ctx, templateNodes, tmpl.Generation)
+
+	return canUpdateNodeWithPrecount(tmpl, updatingCount, additionalUpdates)
+}
+
+// rolloutSkewCounter memoizes countUpdatingNodes per template for the duration of one hub
+// Reconcile. See canUpdateNodeWithPrecount for why the count is stable within a Reconcile and
+// why recomputing it per desired node was expensive.
+type rolloutSkewCounter struct {
+	reconciler      *LynqHubReconciler
+	nodesByTemplate map[string][]*lynqv1.LynqNode
+	counts          map[string]int32
+}
+
+func newRolloutSkewCounter(r *LynqHubReconciler, nodesByTemplate map[string][]*lynqv1.LynqNode) *rolloutSkewCounter {
+	return &rolloutSkewCounter{
+		reconciler:      r,
+		nodesByTemplate: nodesByTemplate,
+		counts:          make(map[string]int32, len(nodesByTemplate)),
+	}
+}
+
+// count returns how many of the template's nodes are currently updating.
+//
+// Returns 0 without scanning when the template has no rollout limit: the result is not
+// consulted in that case (canUpdateNodeWithPrecount short-circuits), so paying for the scan
+// would be pure waste.
+func (c *rolloutSkewCounter) count(ctx context.Context, tmpl *lynqv1.LynqForm) int32 {
+	if tmpl.Spec.Rollout == nil || tmpl.Spec.Rollout.MaxSkew == 0 {
+		return 0
+	}
+	if cached, ok := c.counts[tmpl.Name]; ok {
+		return cached
+	}
+	count := c.reconciler.countUpdatingNodes(ctx, c.nodesByTemplate[tmpl.Name], tmpl.Generation)
+	c.counts[tmpl.Name] = count
+	return count
+}
+
+// canUpdateNodeWithPrecount is canUpdateNodeWithCount with the countUpdatingNodes result
+// supplied by the caller.
+//
+// countUpdatingNodes depends only on (templateNodes, tmpl.Generation). Both are fixed for the
+// duration of one Reconcile: nodesByTemplate is built from a single List snapshot before the
+// desired-set loop, and nothing in that loop mutates the slice or the LynqNode objects it points
+// at (updateLynqNode re-Gets its own `latest` copy). Calling it once per desired node therefore
+// recomputed an identical answer O(rows) times, and each computation scans every node for the
+// template and issues a cached workload GET (plus DeepCopy) per applied resource — in production
+// that was 360 desired x 120 nodes = 43,200 scans on every 30s hub sync.
+//
+// Updates made earlier in the same loop are already accounted for by the caller's
+// additionalUpdates counter, so hoisting the count out of the loop preserves maxSkew semantics
+// exactly.
+func canUpdateNodeWithPrecount(tmpl *lynqv1.LynqForm, updatingCount, additionalUpdates int32) bool {
+	if tmpl.Spec.Rollout == nil || tmpl.Spec.Rollout.MaxSkew == 0 {
+		return true
+	}
 
 	// Add the count of nodes we've updated in THIS iteration that aren't yet reflected in templateNodes
 	totalUpdating := updatingCount + additionalUpdates
