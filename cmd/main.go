@@ -235,6 +235,9 @@ func main() {
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("lynqhub-controller"),
+		// Rollout throttling must not be decided on a cache that may not yet contain this
+		// controller's own writes — see rolloutSkewCounter.
+		APIReader: mgr.GetAPIReader(),
 	}).SetupWithManager(mgr, hubConcurrency); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "LynqHub")
 		os.Exit(1)
