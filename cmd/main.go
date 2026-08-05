@@ -233,13 +233,11 @@ func main() {
 	}
 
 	// Datasource connections are held across syncs rather than rebuilt every syncInterval.
-	// Registering the pool as a Runnable ties its lifetime to the manager's, so connections
-	// are closed on shutdown.
+	// Closed after mgr.Start returns (see below) rather than via mgr.Add: a Runnable would be
+	// cancelled alongside the controllers, so it could close a datasource an in-flight
+	// reconcile is still using.
 	datasourcePool := datasource.NewPool()
-	if err := mgr.Add(datasourcePool); err != nil {
-		setupLog.Error(err, "unable to add datasource pool to manager")
-		os.Exit(1)
-	}
+	defer datasourcePool.CloseAll()
 
 	if err := (&controller.LynqHubReconciler{
 		Client:         mgr.GetClient(),

@@ -17,7 +17,6 @@ limitations under the License.
 package datasource
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -81,22 +80,50 @@ func NewPool() *Pool {
 func (p *Pool) Acquire(key PoolKey, sourceType SourceType, config Config) (Datasource, error) {
 	fingerprint := connectionFingerprint(sourceType, config)
 
+	// Fast path: an entry matching the current settings. Only the map lookup is locked.
 	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if entry, ok := p.entries[key]; ok {
-		if entry.fingerprint == fingerprint {
-			return entry.datasource, nil
-		}
-		// Connection settings changed (host, credentials, pool sizing, ...). Drop the stale
-		// datasource before building its replacement so we never hold two pools for one hub.
-		_ = entry.datasource.Close() // Best effort close
+	entry, ok := p.entries[key]
+	if ok && entry.fingerprint == fingerprint {
+		p.mu.Unlock()
+		return entry.datasource, nil
+	}
+	// Settings changed (host, credentials, pool sizing, ...) or nothing cached yet. Drop the
+	// stale entry now so no caller can be handed a datasource we are about to discard.
+	if ok {
 		delete(p.entries, key)
+	}
+	p.mu.Unlock()
+
+	// Everything below runs UNLOCKED. Construction performs a network round trip with a
+	// multi-second timeout (MySQL pings on connect), so holding the pool mutex across it would
+	// serialize every other hub behind one unreachable database: N hubs reconnecting after an
+	// outage would take N x the ping timeout even with several workers, and even hubs whose
+	// connections are healthy could not take the fast path above.
+	//
+	// Concurrent Acquire for the SAME key cannot happen in the controller — controller-runtime
+	// processes at most one reconcile per object key at a time — so this cannot race with
+	// itself in practice. The store below still handles it defensively.
+	if ok {
+		_ = entry.datasource.Close() // Best effort close
 	}
 
 	ds, err := p.newDatasource(sourceType, config)
 	if err != nil {
 		return nil, err
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Defensive: if something stored an entry for this key while we were constructing, keep
+	// whichever matches the settings we were asked for and discard the loser, so the map never
+	// holds a datasource nobody will close.
+	if current, exists := p.entries[key]; exists {
+		if current.fingerprint == fingerprint {
+			_ = ds.Close() // Best effort close
+			return current.datasource, nil
+		}
+		_ = current.datasource.Close() // Best effort close
 	}
 
 	p.entries[key] = &poolEntry{datasource: ds, fingerprint: fingerprint}
@@ -135,13 +162,17 @@ func (p *Pool) CloseAll() {
 	}
 }
 
-// Start implements manager.Runnable so the Pool's lifetime is tied to the manager's: it
-// holds connections open until shutdown, then closes them all.
-func (p *Pool) Start(ctx context.Context) error {
-	<-ctx.Done()
-	p.CloseAll()
-	return nil
-}
+// NOTE: the Pool is deliberately NOT a manager.Runnable.
+//
+// controller-runtime routes a Runnable that does not implement LeaderElectionRunnable into the
+// same group as the controllers (the `default` case of runnables.Add), so the pool would
+// receive shutdown cancellation *alongside* in-flight reconciles rather than after them —
+// CloseAll could then close a datasource a reconcile had already acquired, and its next query
+// would fail with "sql: database is closed". Implementing NeedLeaderElection() == false is
+// worse still: the "Others" group is stopped *before* the controllers.
+//
+// Callers should instead CloseAll after mgr.Start returns, at which point every controller
+// worker has stopped and no reconcile can be holding a datasource.
 
 // connectionFingerprint hashes every field that determines which server we connect to, as
 // whom, and how the underlying pool is sized. A change in any of them must produce a new

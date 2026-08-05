@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -51,6 +52,11 @@ import (
 const (
 	// Finalizer for LynqHub
 	FinalizerLynqHub = "lynq.sh/hub-finalizer"
+
+	// minQueryTimeout and maxQueryTimeout bound the per-sync datasource query deadline derived
+	// from syncInterval. See queryTimeoutFor.
+	minQueryTimeout = 10 * time.Second
+	maxQueryTimeout = 2 * time.Minute
 )
 
 // LynqHubReconciler reconciles a LynqHub object
@@ -60,19 +66,22 @@ type LynqHubReconciler struct {
 	Recorder record.EventRecorder
 
 	// DatasourcePool holds one live datasource per hub so connections survive across syncs.
-	// Optional: when nil, a process-wide pool is used instead (see getDatasourcePool), which
-	// keeps reconcilers constructed directly in tests working.
+	// Production wiring injects one whose lifetime it owns (see cmd/main.go). When nil, this
+	// reconciler lazily creates its own so reconcilers constructed directly in tests keep
+	// working; that fallback is per-reconciler rather than package-wide so tests cannot hand
+	// each other datasources, or close one another's, through a shared global.
 	DatasourcePool *datasource.Pool
-}
 
-// fallbackDatasourcePool backs reconcilers constructed without an explicit DatasourcePool.
-var fallbackDatasourcePool = datasource.NewPool()
+	fallbackPoolOnce sync.Once
+	fallbackPool     *datasource.Pool
+}
 
 func (r *LynqHubReconciler) getDatasourcePool() *datasource.Pool {
 	if r.DatasourcePool != nil {
 		return r.DatasourcePool
 	}
-	return fallbackDatasourcePool
+	r.fallbackPoolOnce.Do(func() { r.fallbackPool = datasource.NewPool() })
+	return r.fallbackPool
 }
 
 // datasourceKey identifies this hub's entry in the datasource pool.
@@ -113,6 +122,13 @@ func (r *LynqHubReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	// Handle finalizer logic
 	if !registry.DeletionTimestamp.IsZero() {
+		// Release the pooled connection as soon as we know the hub is terminating, before any
+		// cleanup that can fail. A hub with a DeletionTimestamp will never query again, and
+		// cleanupRetainResources does not touch the datasource — so waiting until after cleanup
+		// (which can fail permanently on e.g. an RBAC error and return early) would hold the
+		// connection open for the life of the process.
+		r.getDatasourcePool().Release(datasourceKey(registry.Namespace, registry.Name))
+
 		// Hub is being deleted
 		if containsString(registry.Finalizers, FinalizerLynqHub) {
 			// Run cleanup logic for DeletionPolicy.Retain resources
@@ -131,9 +147,6 @@ func (r *LynqHubReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			}
 			logger.Info("Finalizer removed, registry cleanup complete")
 		}
-		// The hub is being deleted and will not sync again — release its connection now
-		// rather than waiting for the NotFound path on some later event.
-		r.getDatasourcePool().Release(datasourceKey(registry.Namespace, registry.Name))
 		return ctrl.Result{}, nil
 	}
 
@@ -376,7 +389,45 @@ func (r *LynqHubReconciler) queryDatabase(ctx context.Context, registry *lynqv1.
 		ExtraMappings: registry.Spec.ExtraValueMappings,
 	}
 
-	return ds.QueryNodes(ctx, queryConfig)
+	// Bound the query.
+	//
+	// Reusing connections removed the per-sync Ping that used to put a 5s ceiling on detecting
+	// an unreachable database. Without a deadline here, a connection whose peer has silently
+	// stopped responding — packets blackholed by a security-group change, a NAT timeout, a
+	// partition — blocks until the OS TCP timeout, which can be many minutes. database/sql
+	// retries connections it can tell are broken, but a blackholed socket looks alive to it.
+	// Meanwhile Reconcile never reaches updateStatus(..., synced=false), so the hub keeps
+	// reporting Ready while it has silently stopped syncing.
+	//
+	// The deadline covers the whole query including row iteration. There is deliberately no
+	// readTimeout on the connection itself: that would also kill legitimately slow queries over
+	// large tables, whereas this ceiling is per-sync and scales with how often the user asked
+	// us to sync.
+	queryCtx, cancel := context.WithTimeout(ctx, queryTimeoutFor(registry))
+	defer cancel()
+
+	return ds.QueryNodes(queryCtx, queryConfig)
+}
+
+// queryTimeoutFor returns how long a single datasource query may take before the hub is
+// treated as unable to reach its datasource.
+//
+// It tracks syncInterval so a query can never outlive the cadence the user configured — an
+// unreachable database then surfaces as a failed sync within roughly one interval instead of
+// hanging indefinitely. The bounds keep very short intervals from failing healthy-but-slow
+// queries, and very long ones from delaying outage detection for hours.
+func queryTimeoutFor(registry *lynqv1.LynqHub) time.Duration {
+	interval, err := time.ParseDuration(registry.Spec.Source.SyncInterval)
+	if err != nil {
+		interval = 30 * time.Second // Matches Reconcile's fallback for an unparseable interval
+	}
+	if interval < minQueryTimeout {
+		return minQueryTimeout
+	}
+	if interval > maxQueryTimeout {
+		return maxQueryTimeout
+	}
+	return interval
 }
 
 // buildDatasourceConfig builds datasource configuration from LynqHub spec

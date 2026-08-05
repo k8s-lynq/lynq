@@ -19,6 +19,7 @@ package datasource
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -240,7 +241,8 @@ func TestPool_ReplacementFailureLeavesNoStaleEntry(t *testing.T) {
 	assert.Equal(t, 0, p.Len(), "no closed datasource may remain cached")
 }
 
-// TestPool_CloseAllReleasesEverything covers manager shutdown via Start.
+// TestPool_CloseAllReleasesEverything covers shutdown, which the process performs after
+// mgr.Start returns rather than from a Runnable (see the note in pool.go).
 func TestPool_CloseAllReleasesEverything(t *testing.T) {
 	p, _ := newTestPool()
 
@@ -253,24 +255,94 @@ func TestPool_CloseAllReleasesEverything(t *testing.T) {
 	}
 	require.Equal(t, 3, p.Len())
 
-	// When the manager's context is cancelled
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- p.Start(ctx) }()
-	cancel()
-
-	select {
-	case err := <-done:
-		require.NoError(t, err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("Start did not return after context cancellation")
-	}
+	// When the process shuts down
+	p.CloseAll()
 
 	// Then every connection is closed
 	for i, ds := range held {
 		assert.True(t, ds.(*fakeDatasource).closed.Load(), "datasource %d should be closed", i)
 	}
 	assert.Equal(t, 0, p.Len())
+}
+
+// TestPool_ConstructionDoesNotBlockOtherHubs pins the reason construction happens outside the
+// pool mutex: building a datasource performs a network round trip with a multi-second timeout,
+// so holding the lock across it would serialize every hub behind one unreachable database.
+func TestPool_ConstructionDoesNotBlockOtherHubs(t *testing.T) {
+	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	p := &Pool{
+		entries: make(map[PoolKey]*poolEntry),
+		newDatasource: func(_ SourceType, config Config) (Datasource, error) {
+			if config.Host == "slow.example.com" {
+				entered <- struct{}{}
+				<-release // Stand in for a connect attempt hanging until its timeout
+			}
+			return &fakeDatasource{}, nil
+		},
+	}
+
+	// Given one hub stuck constructing a connection to an unreachable database
+	go func() {
+		slow := testConfig()
+		slow.Host = "slow.example.com"
+		_, _ = p.Acquire(PoolKey{Namespace: "default", Name: "slow-hub"}, SourceTypeMySQL, slow)
+	}()
+	<-entered
+
+	// When an unrelated hub acquires its own connection
+	done := make(chan error, 1)
+	go func() {
+		_, err := p.Acquire(PoolKey{Namespace: "default", Name: "other-hub"}, SourceTypeMySQL, testConfig())
+		done <- err
+	}()
+
+	// Then it is not blocked behind the stuck one
+	select {
+	case err := <-done:
+		assert.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("Acquire for an unrelated hub blocked behind another hub's construction")
+	}
+	close(release)
+}
+
+// TestConnectionFingerprint_CoversEveryConfigField fails when a field is added to Config
+// without being added to connectionFingerprint.
+//
+// That omission would otherwise be silent and permanent: the new setting would change, the
+// fingerprint would not, and Acquire would keep handing out a datasource built for the old
+// settings forever. A reflection sweep turns that into a test failure at the moment the field
+// is introduced.
+func TestConnectionFingerprint_CoversEveryConfigField(t *testing.T) {
+	base := testConfig()
+	baseline := connectionFingerprint(SourceTypeMySQL, base)
+
+	typ := reflect.TypeOf(Config{})
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		t.Run(field.Name, func(t *testing.T) {
+			mutated := base
+			v := reflect.ValueOf(&mutated).Elem().Field(i)
+
+			// Perturb the field to a value that differs from the baseline.
+			switch v.Kind() {
+			case reflect.String:
+				v.SetString(v.String() + "-changed")
+			case reflect.Int, reflect.Int32, reflect.Int64:
+				v.SetInt(v.Int() + 1)
+			default:
+				t.Fatalf("Config.%s has unhandled kind %s — extend this test and "+
+					"connectionFingerprint together", field.Name, v.Kind())
+			}
+
+			assert.NotEqual(t, baseline, connectionFingerprint(SourceTypeMySQL, mutated),
+				"changing Config.%s did not change the fingerprint, so a hub that changes this "+
+					"setting would silently keep using its old connection. Add the field to "+
+					"connectionFingerprint.", field.Name)
+		})
+	}
 }
 
 // TestPool_ConcurrentAcquireIsSafe exercises the lock: hub-concurrency defaults to 3, so
