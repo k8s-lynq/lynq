@@ -58,6 +58,26 @@ type LynqHubReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
+
+	// DatasourcePool holds one live datasource per hub so connections survive across syncs.
+	// Optional: when nil, a process-wide pool is used instead (see getDatasourcePool), which
+	// keeps reconcilers constructed directly in tests working.
+	DatasourcePool *datasource.Pool
+}
+
+// fallbackDatasourcePool backs reconcilers constructed without an explicit DatasourcePool.
+var fallbackDatasourcePool = datasource.NewPool()
+
+func (r *LynqHubReconciler) getDatasourcePool() *datasource.Pool {
+	if r.DatasourcePool != nil {
+		return r.DatasourcePool
+	}
+	return fallbackDatasourcePool
+}
+
+// datasourceKey identifies this hub's entry in the datasource pool.
+func datasourceKey(namespace, name string) datasource.PoolKey {
+	return datasource.PoolKey{Namespace: namespace, Name: name}
 }
 
 // +kubebuilder:rbac:groups=operator.lynq.sh,resources=lynqhubs,verbs=get;list;watch;create;update;patch;delete
@@ -75,6 +95,9 @@ func (r *LynqHubReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	registry := &lynqv1.LynqHub{}
 	if err := r.Get(ctx, req.NamespacedName, registry); err != nil {
 		if errors.IsNotFound(err) {
+			// The hub is gone — drop its pooled connection so it does not outlive the CR.
+			// Covers hubs removed without the finalizer path ever running.
+			r.getDatasourcePool().Release(datasourceKey(req.Namespace, req.Name))
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "Failed to get LynqHub")
@@ -108,6 +131,9 @@ func (r *LynqHubReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			}
 			logger.Info("Finalizer removed, registry cleanup complete")
 		}
+		// The hub is being deleted and will not sync again — release its connection now
+		// rather than waiting for the NotFound path on some later event.
+		r.getDatasourcePool().Release(datasourceKey(registry.Namespace, registry.Name))
 		return ctrl.Result{}, nil
 	}
 
@@ -329,14 +355,15 @@ func (r *LynqHubReconciler) queryDatabase(ctx context.Context, registry *lynqv1.
 		return nil, err
 	}
 
-	// Create datasource adapter
-	ds, err := datasource.NewDatasource(sourceType, config)
+	// Acquire this hub's datasource. The pool reuses the connection across syncs and rebuilds
+	// it only when the connection settings above change, so the adapter's pool sizing and
+	// ConnMaxLifetime finally apply beyond a single sync. The returned datasource is owned by
+	// the pool and must not be closed here — Release handles that when the hub goes away.
+	ds, err := r.getDatasourcePool().Acquire(
+		datasourceKey(registry.Namespace, registry.Name), sourceType, config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create datasource: %w", err)
 	}
-	defer func() {
-		_ = ds.Close() // Best effort close
-	}()
 
 	// Query nodes
 	queryConfig := datasource.QueryConfig{

@@ -42,6 +42,7 @@ import (
 	lynqv1 "github.com/k8s-lynq/lynq/api/v1"
 	"github.com/k8s-lynq/lynq/internal/apply"
 	"github.com/k8s-lynq/lynq/internal/controller"
+	"github.com/k8s-lynq/lynq/internal/datasource"
 	"github.com/k8s-lynq/lynq/internal/readiness"
 	"github.com/k8s-lynq/lynq/internal/status"
 	"github.com/k8s-lynq/lynq/internal/template"
@@ -231,10 +232,20 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Datasource connections are held across syncs rather than rebuilt every syncInterval.
+	// Registering the pool as a Runnable ties its lifetime to the manager's, so connections
+	// are closed on shutdown.
+	datasourcePool := datasource.NewPool()
+	if err := mgr.Add(datasourcePool); err != nil {
+		setupLog.Error(err, "unable to add datasource pool to manager")
+		os.Exit(1)
+	}
+
 	if err := (&controller.LynqHubReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("lynqhub-controller"),
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		Recorder:       mgr.GetEventRecorderFor("lynqhub-controller"),
+		DatasourcePool: datasourcePool,
 	}).SetupWithManager(mgr, hubConcurrency); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "LynqHub")
 		os.Exit(1)
