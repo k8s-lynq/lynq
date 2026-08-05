@@ -22,10 +22,12 @@ import (
 	errorsStd "errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -100,7 +102,7 @@ func (r *LynqNodeReconciler) getTemplateEngine() *template.Engine {
 	if r.TemplateEngine != nil {
 		return r.TemplateEngine
 	}
-	return template.NewEngine()
+	return template.SharedEngine()
 }
 
 func (r *LynqNodeReconciler) getApplier() *apply.Applier {
@@ -260,6 +262,9 @@ func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.Ly
 	progressingSet := false
 	templateAppliedEventEmitted := false
 
+	// Rate-limits the mid-loop "is this LynqNode being deleted?" probe. See isDeleting.
+	deletionGate := &nodeDeletionGate{}
+
 	// Track failed resource IDs to skip dependent resources (actual failures)
 	failedResourceIds := make(map[string]bool)
 	// Track not-ready resource IDs to block dependent resources (still progressing, not failed)
@@ -334,21 +339,16 @@ func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.Ly
 			continue
 		}
 
-		// Check if node is being deleted before processing each resource
-		// This allows quick exit when node is deleted during reconciliation
-		currentLynqNode := &lynqv1.LynqNode{}
-		if err := r.Get(ctx, client.ObjectKeyFromObject(node), currentLynqNode); err != nil {
-			if errors.IsNotFound(err) {
-				// LynqNode was deleted, stop processing
-				logger.Info("LynqNode deleted during reconciliation, stopping resource application")
-				return readyCount, failedCount, changedCount, conflictedCount, skippedCount, skippedIds
-			}
-			// Continue on other errors
-		} else if !currentLynqNode.DeletionTimestamp.IsZero() {
-			// LynqNode is being deleted, stop processing immediately
-			logger.Info("LynqNode deletion in progress, stopping resource application",
-				"node", node.Name,
-				"processedResources", readyCount+failedCount)
+		// Check if node is being deleted before processing each resource.
+		// This allows quick exit when node is deleted during reconciliation.
+		//
+		// Throttled: this Get is a cache read, but the cached client hands back a DeepCopy of
+		// the whole LynqNode, and a LynqNode carries every resolved resource spec (~24KB in
+		// production). Doing that once per resource meant re-copying the entire CR R times per
+		// reconcile for a single timestamp check. The loop body is non-blocking (readiness is
+		// sampled, never waited on), so re-checking on a time interval rather than on every
+		// iteration detects deletion just as promptly in wall-clock terms.
+		if deletionGate.isDeleting(ctx, r.Client, node, logger, readyCount+failedCount) {
 			return readyCount, failedCount, changedCount, conflictedCount, skippedCount, skippedIds
 		}
 
@@ -527,6 +527,65 @@ func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.Ly
 	}
 
 	return readyCount, failedCount, changedCount, conflictedCount, skippedCount, skippedIds
+}
+
+// nodeDeletionCheckInterval bounds how often applyResources re-reads the LynqNode to notice
+// that it has been deleted mid-loop. The loop body never blocks, so a resource-count-driven
+// check and a time-driven check are equivalent in wall-clock terms; the time-driven one just
+// does not scale its cost with the number of resources in the template.
+const nodeDeletionCheckInterval = 250 * time.Millisecond
+
+// nodeDeletionGate throttles the mid-loop LynqNode deletion probe in applyResources.
+//
+// The probe is a cached read, but the cached client returns a DeepCopy, and a LynqNode embeds
+// every resolved resource spec (~24KB in production). Probing per resource re-copied the whole
+// CR R times per reconcile to read one timestamp. The zero value is ready to use and probes on
+// first call.
+type nodeDeletionGate struct {
+	lastCheck time.Time
+	deleting  bool
+}
+
+// isDeleting reports whether the LynqNode has been deleted or has a DeletionTimestamp, so the
+// caller should stop applying resources. Results are reused for nodeDeletionCheckInterval.
+//
+// Transient read errors other than NotFound are treated as "not deleting" and are not cached,
+// matching the previous behavior of falling through to continue processing.
+func (g *nodeDeletionGate) isDeleting(
+	ctx context.Context,
+	c client.Client,
+	node *lynqv1.LynqNode,
+	logger logr.Logger,
+	processedResources int32,
+) bool {
+	if g.deleting {
+		return true
+	}
+	if !g.lastCheck.IsZero() && time.Since(g.lastCheck) < nodeDeletionCheckInterval {
+		return false
+	}
+	g.lastCheck = time.Now()
+
+	current := &lynqv1.LynqNode{}
+	if err := c.Get(ctx, client.ObjectKeyFromObject(node), current); err != nil {
+		if errors.IsNotFound(err) {
+			logger.Info("LynqNode deleted during reconciliation, stopping resource application")
+			g.deleting = true
+			return true
+		}
+		// Continue on other errors
+		return false
+	}
+
+	if !current.DeletionTimestamp.IsZero() {
+		logger.Info("LynqNode deletion in progress, stopping resource application",
+			"node", node.Name,
+			"processedResources", processedResources)
+		g.deleting = true
+		return true
+	}
+
+	return false
 }
 
 // emitTemplateAppliedEvent emits a detailed event when template changes are being applied
@@ -1883,11 +1942,23 @@ func (r *LynqNodeReconciler) reconcileSpec(ctx context.Context, node *lynqv1.Lyn
 		r.StatusManager.PublishLastFullReconcileAt(node, now)
 	}
 
-	// Build applied resource keys
+	// Build applied resource keys.
+	//
+	// MUST be sorted. currentKeys is a map, and Go randomizes map iteration order, so an
+	// unsorted slice here produces a differently-ordered status.appliedResources on every
+	// reconcile. The API server only elides an update when the serialized object is
+	// byte-identical, so a reordered slice is a real etcd write -> resourceVersion bump ->
+	// LynqNode watch event -> another reconcile -> another reordering. That closed a
+	// self-sustaining full-reconcile loop that ran continuously in production (measured:
+	// 200 of 360 LynqNodes written per minute on a fully-Ready, idle cluster).
+	//
+	// Order is not otherwise observable: appliedResources is consumed as a set by
+	// findOrphanedResources and parsed per-element by parseAppliedResource.
 	appliedResourceKeys := make([]string, 0, len(currentKeys))
 	for key := range currentKeys {
 		appliedResourceKeys = append(appliedResourceKeys, key)
 	}
+	sort.Strings(appliedResourceKeys)
 
 	// Calculate complete status using centralized logic
 	statusUpdate := r.calculateLynqNodeStatus(
