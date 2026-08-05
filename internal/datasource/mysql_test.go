@@ -20,6 +20,7 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/assert"
@@ -428,4 +429,72 @@ func TestMySQLAdapter_Close(t *testing.T) {
 	nilAdapter := &MySQLAdapter{db: nil}
 	err = nilAdapter.Close()
 	assert.NoError(t, err)
+}
+
+// TestResolvePoolSettings pins the connection-pool defaults.
+//
+// These are not arbitrary numbers: a hub issues exactly one query per sync and returns the
+// connection immediately, and controller-runtime never reconciles the same hub concurrently,
+// so one connection is all a hub uses. Now that the pool holds datasources open across syncs
+// rather than discarding them, these values are what actually bounds the operator's footprint
+// on the user's database — so a change to them should be a deliberate edit here, not a drift.
+func TestResolvePoolSettings(t *testing.T) {
+	tests := []struct {
+		name   string
+		config Config
+		want   poolSettings
+	}{
+		{
+			name:   "unset config uses defaults sized to a hub's single connection",
+			config: Config{},
+			want: poolSettings{
+				maxOpenConns:    3,
+				maxIdleConns:    2,
+				connMaxLifetime: 5 * time.Minute,
+			},
+		},
+		{
+			name: "explicit settings win",
+			config: Config{
+				MaxOpenConns:    10,
+				MaxIdleConns:    4,
+				ConnMaxLifetime: "90s",
+			},
+			want: poolSettings{
+				maxOpenConns:    10,
+				maxIdleConns:    4,
+				connMaxLifetime: 90 * time.Second,
+			},
+		},
+		{
+			name:   "unparseable lifetime falls back rather than failing the sync",
+			config: Config{ConnMaxLifetime: "not-a-duration"},
+			want: poolSettings{
+				maxOpenConns:    3,
+				maxIdleConns:    2,
+				connMaxLifetime: 5 * time.Minute,
+			},
+		},
+		{
+			name:   "partial config only defaults what is missing",
+			config: Config{MaxOpenConns: 7},
+			want: poolSettings{
+				maxOpenConns:    7,
+				maxIdleConns:    2,
+				connMaxLifetime: 5 * time.Minute,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, resolvePoolSettings(tt.config))
+		})
+	}
+
+	// Idle must not exceed open: database/sql silently reduces maxIdle to maxOpen, which would
+	// make the configured values quietly disagree with reality.
+	defaults := resolvePoolSettings(Config{})
+	assert.LessOrEqual(t, defaults.maxIdleConns, defaults.maxOpenConns,
+		"maxIdleConns must not exceed maxOpenConns")
 }
