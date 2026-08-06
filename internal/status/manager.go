@@ -19,6 +19,7 @@ package status
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -274,45 +275,53 @@ func (m *Manager) applyUpdate(ctx context.Context, update *StatusUpdate) error {
 			return err
 		}
 
-		// Apply changes to status
+		// Apply changes to status.
+		//
+		// Every field below is compared against the value already on the object before
+		// being marked as changed. A published field is a *candidate* value, not proof
+		// that anything differs: reconcileSpec/reconcileStatus republish the full set on
+		// every pass, so treating "published" as "changed" issues a Status().Update() on
+		// every reconcile. Each such write bumps resourceVersion, fires a LynqNode watch
+		// event, and re-enqueues the node — a self-sustaining reconcile loop. Comparing
+		// values keeps the write (and the event) for genuine transitions only.
 		statusChanged := false
 
-		if update.ObservedGeneration != nil {
+		if update.ObservedGeneration != nil && node.Status.ObservedGeneration != *update.ObservedGeneration {
 			node.Status.ObservedGeneration = *update.ObservedGeneration
 			statusChanged = true
 		}
 
-		if update.ReadyResources != nil {
+		if update.ReadyResources != nil && node.Status.ReadyResources != *update.ReadyResources {
 			node.Status.ReadyResources = *update.ReadyResources
 			statusChanged = true
 		}
 
-		if update.FailedResources != nil {
+		if update.FailedResources != nil && node.Status.FailedResources != *update.FailedResources {
 			node.Status.FailedResources = *update.FailedResources
 			statusChanged = true
 		}
 
-		if update.DesiredResources != nil {
+		if update.DesiredResources != nil && node.Status.DesiredResources != *update.DesiredResources {
 			node.Status.DesiredResources = *update.DesiredResources
 			statusChanged = true
 		}
 
-		if update.AppliedResources != nil {
+		if update.AppliedResources != nil && !slices.Equal(node.Status.AppliedResources, update.AppliedResources) {
 			node.Status.AppliedResources = update.AppliedResources
 			statusChanged = true
 		}
 
-		if update.SkippedResources != nil {
+		if update.SkippedResources != nil && node.Status.SkippedResources != *update.SkippedResources {
 			node.Status.SkippedResources = *update.SkippedResources
 			statusChanged = true
 		}
 
-		if update.SkippedResourceIds != nil {
+		if update.SkippedResourceIds != nil && !slices.Equal(node.Status.SkippedResourceIds, update.SkippedResourceIds) {
 			node.Status.SkippedResourceIds = update.SkippedResourceIds
 			statusChanged = true
 		}
 
-		if update.LastFullReconcileAt != nil {
+		if update.LastFullReconcileAt != nil && !node.Status.LastFullReconcileAt.Equal(update.LastFullReconcileAt) {
 			node.Status.LastFullReconcileAt = update.LastFullReconcileAt
 			statusChanged = true
 		}

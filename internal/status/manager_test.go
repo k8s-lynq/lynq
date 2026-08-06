@@ -440,3 +440,107 @@ func TestNewStatusUpdate(t *testing.T) {
 	assert.Nil(t, update.ReadyResources)
 	assert.Nil(t, update.FailedResources)
 }
+
+// TestManager_NoWriteWhenValuesUnchanged verifies that republishing identical status values
+// does not issue an API write.
+//
+// Reconcilers republish their full status on every pass, so "a field was published" is not
+// evidence that anything changed. Treating it as such issued a Status().Update() on every
+// reconcile; each write bumps resourceVersion, fires a LynqNode watch event, and re-enqueues
+// the node, which sustained a full-reconcile loop in production.
+func TestManager_NoWriteWhenValuesUnchanged(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	require.NoError(t, lynqv1.AddToScheme(scheme))
+
+	node := &lynqv1.LynqNode{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-node", Namespace: "default"},
+		Spec:       lynqv1.LynqNodeSpec{UID: "node1"},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(node).
+		WithStatusSubresource(node).
+		Build()
+
+	m := NewManager(fakeClient, WithSyncMode())
+	key := types.NamespacedName{Name: node.Name, Namespace: node.Namespace}
+
+	resourceVersion := func() string {
+		current := &lynqv1.LynqNode{}
+		require.NoError(t, fakeClient.Get(ctx, key, current))
+		return current.ResourceVersion
+	}
+
+	publishAll := func() {
+		m.PublishObservedGeneration(node, 1)
+		m.PublishResourceCounts(node, 3, 0, 3, 0)
+		m.PublishAppliedResources(node, []string{"ConfigMap/default/a@a", "Secret/default/b@b"})
+		m.PublishSkippedResources(node, 0, nil)
+		m.PublishReadyCondition(node, true, "Reconciled", "Successfully reconciled all resources")
+	}
+
+	// Given a node whose status has been published once
+	publishAll()
+	settled := resourceVersion()
+	assert.NotEqual(t, node.ResourceVersion, settled, "the first publish should write")
+
+	// When the identical status is published again, repeatedly
+	for i := 0; i < 5; i++ {
+		publishAll()
+	}
+
+	// Then no further writes occur
+	assert.Equal(t, settled, resourceVersion(),
+		"republishing unchanged status wrote to the API server")
+}
+
+// TestManager_WritesWhenValueActuallyChanges guards the other direction: the equality checks
+// must not suppress genuine transitions.
+func TestManager_WritesWhenValueActuallyChanges(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	require.NoError(t, lynqv1.AddToScheme(scheme))
+
+	node := &lynqv1.LynqNode{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-node", Namespace: "default"},
+		Spec:       lynqv1.LynqNodeSpec{UID: "node1"},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(node).
+		WithStatusSubresource(node).
+		Build()
+
+	m := NewManager(fakeClient, WithSyncMode())
+	key := types.NamespacedName{Name: node.Name, Namespace: node.Namespace}
+
+	read := func() *lynqv1.LynqNode {
+		current := &lynqv1.LynqNode{}
+		require.NoError(t, fakeClient.Get(ctx, key, current))
+		return current
+	}
+
+	// Given a settled status
+	m.PublishResourceCounts(node, 3, 0, 3, 0)
+	m.PublishAppliedResources(node, []string{"ConfigMap/default/a@a"})
+	settled := read()
+
+	// When a resource starts failing
+	m.PublishResourceCounts(node, 2, 1, 3, 0)
+
+	// Then the change is persisted
+	afterCounts := read()
+	assert.NotEqual(t, settled.ResourceVersion, afterCounts.ResourceVersion, "changed counts should write")
+	assert.Equal(t, int32(1), afterCounts.Status.FailedResources)
+	assert.Equal(t, int32(2), afterCounts.Status.ReadyResources)
+
+	// And when the tracked resource set changes
+	m.PublishAppliedResources(node, []string{"ConfigMap/default/a@a", "Secret/default/b@b"})
+
+	afterApplied := read()
+	assert.NotEqual(t, afterCounts.ResourceVersion, afterApplied.ResourceVersion, "changed applied set should write")
+	assert.Len(t, afterApplied.Status.AppliedResources, 2)
+}

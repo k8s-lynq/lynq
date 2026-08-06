@@ -72,6 +72,12 @@ type LynqHubReconciler struct {
 	// each other datasources, or close one another's, through a shared global.
 	DatasourcePool *datasource.Pool
 
+	// APIReader reads straight from the API server, bypassing the informer cache. Required for
+	// the rollout-skew decision, which must not be made on a cache that has yet to observe this
+	// controller's own writes — see rolloutSkewCounter. Optional: falls back to the cached
+	// client when nil, so reconcilers constructed directly in tests keep working.
+	APIReader client.Reader
+
 	fallbackPoolOnce sync.Once
 	fallbackPool     *datasource.Pool
 }
@@ -82,6 +88,14 @@ func (r *LynqHubReconciler) getDatasourcePool() *datasource.Pool {
 	}
 	r.fallbackPoolOnce.Do(func() { r.fallbackPool = datasource.NewPool() })
 	return r.fallbackPool
+}
+
+// uncachedReader returns a reader guaranteed to reflect writes that have already completed.
+func (r *LynqHubReconciler) uncachedReader() client.Reader {
+	if r.APIReader != nil {
+		return r.APIReader
+	}
+	return r.Client
 }
 
 // datasourceKey identifies this hub's entry in the datasource pool.
@@ -229,12 +243,6 @@ func (r *LynqHubReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		existing[key] = node
 	}
 
-	// Group existing nodes by template for maxSkew checking
-	nodesByTemplate := make(map[string][]*lynqv1.LynqNode)
-	for key, node := range existing {
-		nodesByTemplate[key.TemplateName] = append(nodesByTemplate[key.TemplateName], node)
-	}
-
 	// Track throttled updates for events
 	throttledByTemplate := make(map[string]int)
 
@@ -243,17 +251,25 @@ func (r *LynqHubReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	// updates made within this loop iteration
 	updatedInThisIteration := make(map[string]int32)
 
+	// Memoize the per-template "currently updating" count for the duration of this Reconcile.
+	skew := newRolloutSkewCounter(r, registry)
+
 	// Create/update nodes for each template-row combination
 	for key, desired := range desired {
 		tmpl := desired.Template
-		templateNodes := nodesByTemplate[tmpl.Name]
 
 		if existingLynqNode, exists := existing[key]; !exists {
 			// Create new LynqNode - check maxSkew before creating
-			if r.canUpdateNodeWithCount(ctx, tmpl, templateNodes, updatedInThisIteration[tmpl.Name]) {
+			if canUpdateNodeWithPrecount(tmpl, skew.count(ctx, tmpl), updatedInThisIteration[tmpl.Name]) {
 				if err := r.createLynqNode(ctx, registry, tmpl, desired.Row); err != nil {
-					// Ignore AlreadyExists errors (can happen due to concurrent reconciliations)
-					if !errors.IsAlreadyExists(err) {
+					// AlreadyExists means the node is present in the API server but absent from the
+					// list we planned against — a stale read, not a real failure. It still consumed
+					// a rollout slot, so count it: treating it as a no-op would let this pass admit
+					// one more node than maxSkew allows, which is the create-side twin of the
+					// stale-read race that rolloutSkewCounter guards the update side against.
+					if errors.IsAlreadyExists(err) {
+						updatedInThisIteration[tmpl.Name]++
+					} else {
 						logger.Error(err, "Failed to create LynqNode", "template", key.TemplateName, "uid", key.UID)
 					}
 				} else {
@@ -268,7 +284,7 @@ func (r *LynqHubReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			// Update existing LynqNode if data or template changed
 			if r.shouldUpdateLynqNode(ctx, registry, existingLynqNode, desired.Row, templateMap) {
 				// Check maxSkew before updating
-				if r.canUpdateNodeWithCount(ctx, tmpl, templateNodes, updatedInThisIteration[tmpl.Name]) {
+				if canUpdateNodeWithPrecount(tmpl, skew.count(ctx, tmpl), updatedInThisIteration[tmpl.Name]) {
 					if err := r.updateLynqNode(ctx, registry, tmpl, existingLynqNode, desired.Row); err != nil {
 						logger.Error(err, "Failed to update LynqNode", "template", key.TemplateName, "uid", key.UID)
 					} else {
@@ -291,7 +307,7 @@ func (r *LynqHubReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 				r.Recorder.Eventf(registry, corev1.EventTypeNormal, "RolloutThrottled",
 					"LynqForm '%s': %d node updates throttled (maxSkew=%d, currently updating=%d)",
 					tmplName, throttledCount, tmpl.Spec.Rollout.MaxSkew,
-					r.countUpdatingNodes(ctx, nodesByTemplate[tmplName], tmpl.Generation))
+					skew.count(ctx, tmpl))
 				break
 			}
 		}
@@ -479,7 +495,7 @@ func (r *LynqHubReconciler) renderAllTemplateResources(
 	tmpl *lynqv1.LynqForm,
 	vars template.Variables,
 ) (*lynqv1.LynqNodeSpec, error) {
-	engine := template.NewEngine()
+	engine := template.SharedEngine()
 
 	spec := &lynqv1.LynqNodeSpec{
 		ServiceAccounts:          make([]lynqv1.TResource, 0),
@@ -690,7 +706,7 @@ func (r *LynqHubReconciler) createLynqNode(ctx context.Context, registry *lynqv1
 				"lynq.sh/extra":                         string(extraJSON),
 				lynqv1.AnnotationTemplateGeneration:     fmt.Sprintf("%d", tmpl.Generation),
 				"lynq.sh/hubId":                         registry.Name,
-				lynqv1.AnnotationRolloutUpdateStartTime: time.Now().Format(time.RFC3339),
+				lynqv1.AnnotationRolloutUpdateStartTime: time.Now().Format(time.RFC3339Nano),
 			},
 		},
 		Spec: *renderedSpec,
@@ -787,7 +803,7 @@ func (r *LynqHubReconciler) updateLynqNode(ctx context.Context, registry *lynqv1
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		// Get the latest version of the LynqNode
 		latest := &lynqv1.LynqNode{}
-		if err := r.Get(ctx, client.ObjectKeyFromObject(node), latest); err != nil {
+		if err := r.uncachedReader().Get(ctx, client.ObjectKeyFromObject(node), latest); err != nil {
 			return err
 		}
 
@@ -801,7 +817,7 @@ func (r *LynqHubReconciler) updateLynqNode(ctx context.Context, registry *lynqv1
 		latest.Annotations[lynqv1.AnnotationTemplateGeneration] = newTemplateGeneration
 		latest.Annotations["lynq.sh/hubId"] = registry.Name
 		// Update rollout start time for progress deadline tracking
-		latest.Annotations[lynqv1.AnnotationRolloutUpdateStartTime] = time.Now().Format(time.RFC3339)
+		latest.Annotations[lynqv1.AnnotationRolloutUpdateStartTime] = time.Now().Format(time.RFC3339Nano)
 
 		// Update spec with newly rendered resources
 		latest.Spec = *renderedSpec
@@ -1271,7 +1287,11 @@ func (r *LynqHubReconciler) countUpdatingNodes(ctx context.Context, nodes []*lyn
 }
 
 // isNodeResourcesActuallyReady checks if all resources managed by a LynqNode are actually ready
-// by querying the cluster directly instead of relying on cached LynqNode status.
+// by querying the API server directly, bypassing both the LynqNode status and the informer cache.
+//
+// The cache is not usable here for the same reason it is not usable for the skew count: this runs
+// moments after the LynqNode controller applied those workloads, so a cached read can still show
+// the pre-update, still-Ready Deployment and release a rollout slot that is in fact occupied.
 // This is critical for maxSkew enforcement to ensure we don't start updating the next node
 // before the current node's resources (especially Deployments with slow-starting Pods) are truly ready.
 //
@@ -1303,7 +1323,7 @@ func (r *LynqHubReconciler) isNodeResourcesActuallyReady(ctx context.Context, no
 		switch kind {
 		case resourceKindDeployment:
 			var deploy appsv1.Deployment
-			if err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &deploy); err != nil {
+			if err := r.uncachedReader().Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &deploy); err != nil {
 				if errors.IsNotFound(err) {
 					logger.V(1).Info("Deployment not found, considering not ready",
 						"deployment", name, "namespace", namespace, "lynqnode", node.Name)
@@ -1321,7 +1341,7 @@ func (r *LynqHubReconciler) isNodeResourcesActuallyReady(ctx context.Context, no
 			}
 		case "StatefulSet":
 			var sts appsv1.StatefulSet
-			if err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &sts); err != nil {
+			if err := r.uncachedReader().Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &sts); err != nil {
 				if errors.IsNotFound(err) {
 					logger.V(1).Info("StatefulSet not found, considering not ready",
 						"statefulset", name, "namespace", namespace, "lynqnode", node.Name)
@@ -1338,7 +1358,7 @@ func (r *LynqHubReconciler) isNodeResourcesActuallyReady(ctx context.Context, no
 			}
 		case "DaemonSet":
 			var ds appsv1.DaemonSet
-			if err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &ds); err != nil {
+			if err := r.uncachedReader().Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &ds); err != nil {
 				if errors.IsNotFound(err) {
 					logger.V(1).Info("DaemonSet not found, considering not ready",
 						"daemonset", name, "namespace", namespace, "lynqnode", node.Name)
@@ -1504,7 +1524,112 @@ func (r *LynqHubReconciler) canUpdateNodeWithCount(ctx context.Context, tmpl *ly
 	// Count nodes that are already updating based on their stored state
 	updatingCount := r.countUpdatingNodes(ctx, templateNodes, tmpl.Generation)
 
-	// Add the count of nodes we've updated in THIS iteration that aren't yet reflected in templateNodes
+	return canUpdateNodeWithPrecount(tmpl, updatingCount, additionalUpdates)
+}
+
+// rolloutSkewCounter answers "how many of this template's nodes are mid-update?" for the
+// duration of one hub Reconcile.
+//
+// It reads nodes through the API server, not the informer cache. The cache is not safe for this
+// decision: the hub is re-enqueued from several independent sources — the LynqNode watch, the
+// LynqHub watch fed by our own status writes, the LynqForm watch, and timed requeues — and only
+// the LynqNode watch guarantees that the cache already contains the node update that triggered
+// it. Any of the others can start a reconcile whose cached node list predates the update we just
+// made, so a node we just moved to the new generation still looks old, is not counted as
+// updating, and a second node is admitted past maxSkew. That is exactly the flake seen in the
+// "maxSkew strict enforcement with slow-starting Pods" E2E test, where two Deployments began
+// rolling 0.2s apart under maxSkew=1.
+//
+// `updatedInThisIteration` covers updates made later in the same pass; the uncached read covers
+// updates made by previous passes that the cache has not caught up with. Together they make the
+// admission decision correct for a single active reconciler, which is what leader election
+// gives us. It does not fence two simultaneously-active leaders — that would need a durable,
+// atomically-acquired reservation, which is deliberately out of scope here.
+//
+// Cost is confined to rollouts: callers only consult this when a node actually needs creating or
+// updating, so a steady-state sync performs no extra reads at all.
+type rolloutSkewCounter struct {
+	reconciler *LynqHubReconciler
+	hub        *lynqv1.LynqHub
+	counts     map[string]int32
+}
+
+func newRolloutSkewCounter(r *LynqHubReconciler, hub *lynqv1.LynqHub) *rolloutSkewCounter {
+	return &rolloutSkewCounter{
+		reconciler: r,
+		hub:        hub,
+		counts:     make(map[string]int32),
+	}
+}
+
+// count returns how many of the template's nodes are currently updating.
+//
+// Returns 0 without reading anything when the template has no rollout limit: the result is not
+// consulted in that case (canUpdateNodeWithPrecount short-circuits), so the read would be pure
+// waste — and this is what keeps steady-state syncs free of uncached reads.
+//
+// A read failure returns maxSkew, which denies admission. Refusing to start another update
+// because we could not establish how many are already running is the safe direction; the next
+// sync retries.
+func (c *rolloutSkewCounter) count(ctx context.Context, tmpl *lynqv1.LynqForm) int32 {
+	if tmpl.Spec.Rollout == nil || tmpl.Spec.Rollout.MaxSkew == 0 {
+		return 0
+	}
+	if cached, ok := c.counts[tmpl.Name]; ok {
+		return cached
+	}
+
+	nodes, err := c.reconciler.listTemplateNodesUncached(ctx, c.hub, tmpl.Name)
+	if err != nil {
+		log.FromContext(ctx).Error(err, "Failed to read nodes for rollout skew check, denying further updates this sync",
+			"template", tmpl.Name)
+		c.counts[tmpl.Name] = tmpl.Spec.Rollout.MaxSkew
+		return tmpl.Spec.Rollout.MaxSkew
+	}
+
+	count := c.reconciler.countUpdatingNodes(ctx, nodes, tmpl.Generation)
+	c.counts[tmpl.Name] = count
+	return count
+}
+
+// listTemplateNodesUncached reads this template's LynqNodes straight from the API server.
+//
+// See rolloutSkewCounter for why the informer cache cannot be trusted for the skew decision.
+func (r *LynqHubReconciler) listTemplateNodesUncached(ctx context.Context, hub *lynqv1.LynqHub, templateName string) ([]*lynqv1.LynqNode, error) {
+	nodeList := &lynqv1.LynqNodeList{}
+	if err := r.uncachedReader().List(ctx, nodeList,
+		client.InNamespace(hub.Namespace),
+		client.MatchingLabels{"lynq.sh/hub": hub.Name},
+	); err != nil {
+		return nil, err
+	}
+
+	nodes := make([]*lynqv1.LynqNode, 0, len(nodeList.Items))
+	for i := range nodeList.Items {
+		node := &nodeList.Items[i]
+		if node.Spec.TemplateRef == templateName {
+			nodes = append(nodes, node)
+		}
+	}
+	return nodes, nil
+}
+
+// canUpdateNodeWithPrecount is canUpdateNodeWithCount with the "currently updating" count
+// supplied by the caller, which rolloutSkewCounter obtains once per template per Reconcile.
+//
+// Recomputing it per desired node was both wasteful and, now that the count comes from the API
+// server, would issue one LIST per desired node: in production that shape was 360 desired x 120
+// nodes = 43,200 scans plus a workload GET each, on every 30s sync.
+//
+// Memoizing is safe because the count is a point-in-time admission snapshot. Updates made later
+// in the same loop are tracked by the caller's additionalUpdates counter, so the pair still
+// enforces maxSkew exactly.
+func canUpdateNodeWithPrecount(tmpl *lynqv1.LynqForm, updatingCount, additionalUpdates int32) bool {
+	if tmpl.Spec.Rollout == nil || tmpl.Spec.Rollout.MaxSkew == 0 {
+		return true
+	}
+
+	// Add the nodes we've updated in THIS pass, which the snapshot above cannot include
 	totalUpdating := updatingCount + additionalUpdates
 
 	return totalUpdating < tmpl.Spec.Rollout.MaxSkew
