@@ -278,12 +278,25 @@ spec:
 
 1. Get all LynqForms that reference this hub
 2. Query datasource at `syncInterval`
+   - The datasource is held across syncs by `datasource.Pool`, keyed by hub. It is rebuilt
+     only when a connection setting changes (host, port, user, password, database, pool
+     sizing) and released when the hub is deleted or disappears.
+   - Each query carries a deadline from `queryTimeoutFor` — see Common Pitfalls for why
+     removing it would let an unreachable database go unnoticed.
 3. Filter rows where `activate=true`
 4. Calculate desired LynqNode set (all template-row combinations)
    - For each template and each row, create key: `{template-name}-{uid}`
    - Desired count = `len(templates) * len(activeRows)`
 5. Create missing LynqNodes (naming: `{uid}-{template-name}`), update existing, delete excess
+   - Gated by `maxSkew` when the LynqForm configures a rollout. The "currently updating"
+     count is read through `APIReader`, not the cache, and memoized per template per
+     reconcile; `updatedInThisIteration` covers updates made later in the same pass. A
+     failed read denies admission rather than admitting blindly.
+   - Only consulted when a node actually needs creating or updating, so a steady-state sync
+     performs no uncached reads at all.
 6. Update `status.{referencingTemplates, desired, ready, failed}`
+   - `updateStatus` skips the write when the status is unchanged. It must stay that way: a
+     no-op write here is a LynqHub watch event, which is another reconcile.
 
 ### LynqNode Controller Flow ✅
 
@@ -781,6 +794,9 @@ make test-e2e
 3. SSA fieldManager MUST be `lynq`
 4. Dependency cycles MUST be rejected
 5. Naming MUST respect 63-char K8s limit
+6. A reconcile that changes nothing MUST NOT write. Any write is a watch event, and a
+   watch event is another reconcile.
+7. The rollout-skew decision MUST be made on API-server state, never on the informer cache.
 
 ### Common Pitfalls
 
@@ -836,6 +852,69 @@ make test-e2e
     `applied-hash` annotation on the live resource matches the desired hash, the apply
     is elided regardless of RV.
 - `conflictPolicy:Force` has no effect when `patchStrategy:replace` is used. Force only applies to SSA.
+- **Any slice published into LynqNode status MUST be sorted before it is published.**
+  - `status.appliedResources` is assembled by ranging over a map, and Go randomizes map
+    iteration. `status.skippedResourceIds` inherits its order from `TopologicalSort`, which
+    also iterates a map. Both must be given a deterministic order — `sort.Strings` for the
+    former, sorted IDs within each level for the latter.
+  - Why it matters: the API server only elides an update when the serialized object is
+    byte-identical. A reordered slice is a real etcd write → `resourceVersion` bump →
+    LynqNode watch event → another reconcile → another reordering. That closed a
+    self-sustaining full-reconcile loop that pinned the manager at ~2.7x its CPU request on
+    an idle, fully-Ready cluster, rewriting a majority of LynqNodes every minute.
+  - Churn tracked `1 - 1/k!` in the number of resources almost exactly (k=1: none, k=3:
+    ~53%, k=7: ~97%), which is how the mechanism was confirmed.
+  - Guarded by `TestRegression_SteadyStateReconcileDoesNotWriteStatus` and
+    `TestRegression_AppliedResourcesIsSorted`.
+- **"A field was published" is not "a field changed".**
+  - Reconcilers republish their whole status every pass, so `StatusManager.applyUpdate`
+    must compare each field against the stored value before marking the update dirty.
+    Treating a published field as changed issues `Status().Update()` on every reconcile,
+    which feeds the same loop as above.
+  - Guarded by `TestManager_NoWriteWhenValuesUnchanged` (and its inverse,
+    `TestManager_WritesWhenValueActuallyChanges`, so the comparison cannot swallow real
+    transitions).
+- **Rollout throttling must not read LynqNodes from the informer cache.**
+  - The hub is re-enqueued from several independent sources. Only `Owns(&LynqNode{})`
+    guarantees a fresh node view, because an informer updates its store *before*
+    dispatching to handlers. The `For(&LynqHub{})` watch (fed by our own `updateStatus`
+    writes), the `Watches(&LynqForm{})` watch, timed requeues, and any already-queued
+    event carry no such ordering with the LynqNode cache.
+  - On any of those, a cached list can predate an update we just made: the node still
+    carries the old `template-generation`, `countUpdatingNodes` skips it, the count comes
+    out zero, and a second node is admitted past `maxSkew`.
+  - `rolloutSkewCounter` therefore reads through `APIReader`. `updatedInThisIteration`
+    covers updates made later in the same pass; the uncached read covers updates the cache
+    has not caught up with. Together they are correct for a single active reconciler, which
+    is what leader election provides — two simultaneously-active leaders are NOT fenced.
+  - The same applies to the slot-*release* side: `isNodeResourcesActuallyReady` must also
+    read uncached, or it sees the pre-update, still-Ready Deployment and frees a slot that
+    is still occupied.
+  - Suppressing the hub-status trigger does NOT fix this — the other triggers produce the
+    same unsafe reconcile.
+  - Guarded by `internal/controller/maxskew_stale_cache_test.go`, which drives a split
+    client whose cache is frozen behind its `APIReader` so the race is deterministic rather
+    than timing-dependent.
+- **The hub holds one datasource per LynqHub across syncs; the query deadline is what bounds
+  outage detection.**
+  - Rebuilding the datasource every sync made the adapter's pool settings meaningless and
+    paid a DNS lookup, TCP handshake, TLS negotiation and auth round trip per sync — which
+    failed intermittently in production. `datasource.Pool` keeps it alive, keyed by hub and
+    fingerprinted over every connection setting, so a rotated password or moved endpoint
+    still rebuilds on the next sync.
+  - That removed the per-sync `Ping`, which was the only ceiling on noticing an unreachable
+    database. Nothing else bounds it: the reconcile context has no deadline and the DSN sets
+    no dial/read/write timeouts, so a *blackholed* connection (packets dropped rather than
+    the socket closed) would block until the OS TCP timeout while the hub kept reporting
+    Ready. `queryTimeoutFor` supplies the replacement ceiling, derived from `syncInterval`
+    and clamped to `[10s, 2m]`. Do not remove it without providing another bound.
+  - The pool is deliberately NOT a `manager.Runnable`: controller-runtime routes a Runnable
+    that does not implement `LeaderElectionRunnable` into the same group as the controllers,
+    so shutdown could close a datasource an in-flight reconcile is using. `main` closes it
+    after `mgr.Start` returns. Implementing `NeedLeaderElection() == false` is worse — the
+    "Others" group stops *before* the controllers.
+  - Pool defaults (3 open / 2 idle) describe actual usage: a hub runs one query at a time,
+    and `database/sql` opens connections lazily, so a hub holds exactly one connection.
 
 ---
 
