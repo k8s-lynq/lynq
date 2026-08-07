@@ -42,6 +42,7 @@ import (
 	lynqv1 "github.com/k8s-lynq/lynq/api/v1"
 	"github.com/k8s-lynq/lynq/internal/apply"
 	"github.com/k8s-lynq/lynq/internal/controller"
+	"github.com/k8s-lynq/lynq/internal/datasource"
 	"github.com/k8s-lynq/lynq/internal/readiness"
 	"github.com/k8s-lynq/lynq/internal/status"
 	"github.com/k8s-lynq/lynq/internal/template"
@@ -231,10 +232,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Datasource connections are held across syncs rather than rebuilt every syncInterval.
+	// Closed after mgr.Start returns (see below) rather than via mgr.Add: a Runnable would be
+	// cancelled alongside the controllers, so it could close a datasource an in-flight
+	// reconcile is still using.
+	datasourcePool := datasource.NewPool()
+	defer datasourcePool.CloseAll()
+
 	if err := (&controller.LynqHubReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("lynqhub-controller"),
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		Recorder:       mgr.GetEventRecorderFor("lynqhub-controller"),
+		DatasourcePool: datasourcePool,
 		// Rollout throttling must not be decided on a cache that may not yet contain this
 		// controller's own writes — see rolloutSkewCounter.
 		APIReader: mgr.GetAPIReader(),

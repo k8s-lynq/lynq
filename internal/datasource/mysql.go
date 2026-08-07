@@ -26,6 +26,55 @@ import (
 	_ "github.com/go-sql-driver/mysql" // MySQL driver
 )
 
+// Connection pool defaults, applied when Config leaves the corresponding field unset.
+//
+// Sized to what a hub actually uses — one connection — plus a little headroom. See
+// NewMySQLAdapter for why anything larger is only a ceiling, never an allocation.
+const (
+	defaultMaxOpenConns    = 3
+	defaultMaxIdleConns    = 2
+	defaultConnMaxLifetime = 5 * time.Minute
+)
+
+// poolSettings holds the effective connection-pool configuration for one adapter.
+type poolSettings struct {
+	maxOpenConns    int
+	maxIdleConns    int
+	connMaxLifetime time.Duration
+}
+
+// resolvePoolSettings fills in defaults for anything Config leaves unset.
+//
+// The defaults are sized to what a hub actually uses: exactly one connection. QueryNodes runs
+// a single QueryContext per sync and returns the connection via `defer rows.Close()`, and
+// controller-runtime processes at most one reconcile per hub at a time, so there is never a
+// second concurrent query. database/sql opens connections lazily, so a larger ceiling was never
+// an allocation — it just failed to describe what the code does. These values state the real
+// requirement and cap what a future concurrent caller could open against the user's database,
+// while leaving one connection of headroom for the overlap when ConnMaxLifetime recycles.
+//
+// An unparseable ConnMaxLifetime falls back to the default rather than failing: connection
+// recycling is a tuning detail, not something worth refusing to sync over.
+func resolvePoolSettings(config Config) poolSettings {
+	settings := poolSettings{
+		maxOpenConns:    config.MaxOpenConns,
+		maxIdleConns:    config.MaxIdleConns,
+		connMaxLifetime: defaultConnMaxLifetime,
+	}
+	if settings.maxOpenConns == 0 {
+		settings.maxOpenConns = defaultMaxOpenConns
+	}
+	if settings.maxIdleConns == 0 {
+		settings.maxIdleConns = defaultMaxIdleConns
+	}
+	if config.ConnMaxLifetime != "" {
+		if parsed, err := time.ParseDuration(config.ConnMaxLifetime); err == nil {
+			settings.connMaxLifetime = parsed
+		}
+	}
+	return settings
+}
+
 // MySQLAdapter implements the Datasource interface for MySQL
 type MySQLAdapter struct {
 	db *sql.DB
@@ -46,26 +95,10 @@ func NewMySQLAdapter(config Config) (*MySQLAdapter, error) {
 		return nil, fmt.Errorf("failed to open MySQL connection: %w", err)
 	}
 
-	// Set connection pool settings
-	maxOpenConns := config.MaxOpenConns
-	if maxOpenConns == 0 {
-		maxOpenConns = 25 // Default
-	}
-	db.SetMaxOpenConns(maxOpenConns)
-
-	maxIdleConns := config.MaxIdleConns
-	if maxIdleConns == 0 {
-		maxIdleConns = 5 // Default
-	}
-	db.SetMaxIdleConns(maxIdleConns)
-
-	connMaxLifetime := 5 * time.Minute // Default
-	if config.ConnMaxLifetime != "" {
-		if parsed, err := time.ParseDuration(config.ConnMaxLifetime); err == nil {
-			connMaxLifetime = parsed
-		}
-	}
-	db.SetConnMaxLifetime(connMaxLifetime)
+	settings := resolvePoolSettings(config)
+	db.SetMaxOpenConns(settings.maxOpenConns)
+	db.SetMaxIdleConns(settings.maxIdleConns)
+	db.SetConnMaxLifetime(settings.connMaxLifetime)
 
 	// Test connection
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
