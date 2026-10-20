@@ -30,6 +30,8 @@ import (
 const (
 	// ConditionStatusTrue represents a true condition status
 	ConditionStatusTrue = "True"
+
+	kindDeployment = "Deployment"
 )
 
 // Checker checks if resources are ready
@@ -96,7 +98,7 @@ func (c *Checker) IsReady(obj *unstructured.Unstructured) bool {
 		return true // These are ready immediately
 	case "Service":
 		return c.isServiceReady(obj)
-	case "Deployment":
+	case kindDeployment:
 		return c.isDeploymentReady(obj)
 	case "StatefulSet":
 		return c.isStatefulSetReady(obj)
@@ -350,6 +352,34 @@ func (c *Checker) hasReadyCondition(obj *unstructured.Unstructured) bool {
 		condStatus, _, _ := unstructured.NestedString(condMap, "status")
 
 		if condType == "Ready" && condStatus == ConditionStatusTrue {
+			return true
+		}
+	}
+
+	return false
+}
+
+// HasRolloutFailed reports whether the resource's own controller has declared its rollout
+// failed. Today that is only a Deployment whose Progressing condition is False with reason
+// ProgressDeadlineExceeded — Kubernetes' verdict that the rollout stopped making progress
+// within spec.progressDeadlineSeconds. Not-ready on its own is never a rollout failure.
+func (c *Checker) HasRolloutFailed(obj *unstructured.Unstructured) bool {
+	if obj.GroupVersionKind().Kind != kindDeployment {
+		return false
+	}
+
+	conditions, _, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
+	for _, cond := range conditions {
+		condMap, ok := cond.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		condType, _, _ := unstructured.NestedString(condMap, "type")
+		condStatus, _, _ := unstructured.NestedString(condMap, "status")
+		condReason, _, _ := unstructured.NestedString(condMap, "reason")
+
+		if condType == "Progressing" && condStatus == "False" && condReason == "ProgressDeadlineExceeded" {
 			return true
 		}
 	}

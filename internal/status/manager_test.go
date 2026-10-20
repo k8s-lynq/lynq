@@ -22,6 +22,8 @@ import (
 	"time"
 
 	lynqv1 "github.com/k8s-lynq/lynq/api/v1"
+	"github.com/k8s-lynq/lynq/internal/metrics"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -543,4 +545,34 @@ func TestManager_WritesWhenValueActuallyChanges(t *testing.T) {
 	afterApplied := read()
 	assert.NotEqual(t, afterCounts.ResourceVersion, afterApplied.ResourceVersion, "changed applied set should write")
 	assert.Len(t, afterApplied.Status.AppliedResources, 2)
+}
+
+// TestManager_DegradedReasonTransitionClearsPreviousReasonSeries guards against a stale
+// lynqnode_degraded_status series: when a node stays degraded but its reason changes, the
+// previous reason's series must drop to 0 instead of staying at 1 and keeping its alert firing.
+func TestManager_DegradedReasonTransitionClearsPreviousReasonSeries(t *testing.T) {
+	m := &Manager{}
+	key := client.ObjectKey{Name: "reason-transition-node", Namespace: "default"}
+	degradedStatus := func(reason string) float64 {
+		return testutil.ToFloat64(metrics.LynqNodeDegradedStatus.WithLabelValues(key.Name, key.Namespace, reason))
+	}
+
+	// Given a node degraded because of failed resources
+	m.updateMetrics(key, &MetricsPayload{IsDegraded: true, DegradedReason: "ResourceFailures"})
+	require.Equal(t, float64(1), degradedStatus("ResourceFailures"))
+
+	// When it stays degraded but the reason becomes a conflict
+	m.updateMetrics(key, &MetricsPayload{IsDegraded: true, DegradedReason: "ResourceConflicts"})
+
+	// Then only the current reason reports degraded
+	assert.Equal(t, float64(1), degradedStatus("ResourceConflicts"))
+	assert.Equal(t, float64(0), degradedStatus("ResourceFailures"),
+		"the previous reason's series must be reset when the degraded reason changes")
+	assert.Equal(t, float64(0), degradedStatus("ResourcesNotReady"))
+
+	// And when the node recovers, every reason reports healthy
+	m.updateMetrics(key, &MetricsPayload{IsDegraded: false, DegradedReason: "Healthy"})
+	for _, reason := range knownDegradedReasons {
+		assert.Equal(t, float64(0), degradedStatus(reason), "reason %s must be cleared after recovery", reason)
+	}
 }

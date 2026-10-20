@@ -736,3 +736,76 @@ func TestChecker_WaitForReady(t *testing.T) {
 		})
 	}
 }
+
+func TestChecker_HasRolloutFailed(t *testing.T) {
+	checker := NewChecker(nil)
+
+	deploymentWithConditions := func(conditions ...interface{}) *unstructured.Unstructured {
+		return &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "apps/v1",
+				"kind":       "Deployment",
+				"status":     map[string]interface{}{"conditions": conditions},
+			},
+		}
+	}
+	condition := func(condType, status, reason string) map[string]interface{} {
+		return map[string]interface{}{"type": condType, "status": status, "reason": reason}
+	}
+
+	tests := []struct {
+		name string
+		obj  *unstructured.Unstructured
+		want bool
+	}{
+		{
+			name: "deployment whose rollout exceeded its progress deadline has failed",
+			obj: deploymentWithConditions(
+				condition("Available", "True", "MinimumReplicasAvailable"),
+				condition("Progressing", "False", "ProgressDeadlineExceeded"),
+			),
+			want: true,
+		},
+		{
+			name: "deployment that is still progressing has not failed",
+			obj:  deploymentWithConditions(condition("Progressing", "True", "ReplicaSetUpdated")),
+			want: false,
+		},
+		{
+			name: "deployment that lost availability but is progressing has not failed",
+			obj: deploymentWithConditions(
+				condition("Available", "False", "MinimumReplicasUnavailable"),
+				condition("Progressing", "True", "NewReplicaSetAvailable"),
+			),
+			want: false,
+		},
+		{
+			name: "deployment without conditions has not failed",
+			obj: &unstructured.Unstructured{
+				Object: map[string]interface{}{"apiVersion": "apps/v1", "kind": "Deployment"},
+			},
+			want: false,
+		},
+		{
+			name: "non-deployment kinds never report a rollout failure",
+			obj: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"apiVersion": "apps/v1",
+					"kind":       "StatefulSet",
+					"status": map[string]interface{}{"conditions": []interface{}{
+						condition("Progressing", "False", "ProgressDeadlineExceeded"),
+					}},
+				},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := checker.HasRolloutFailed(tt.obj); got != tt.want {
+				t.Errorf("HasRolloutFailed() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

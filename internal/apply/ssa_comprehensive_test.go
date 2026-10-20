@@ -477,13 +477,13 @@ func TestApplyResource_WithOwnerReference(t *testing.T) {
 			applier := NewApplier(client, scheme)
 
 			ctx := context.Background()
-			changed, err := applier.ApplyResource(ctx, tt.obj, tt.owner, tt.conflictPolicy, tt.patchStrategy, tt.deletionPolicy, nil, false)
+			result, err := applier.ApplyResource(ctx, tt.obj, tt.owner, tt.conflictPolicy, tt.patchStrategy, tt.deletionPolicy, nil, false)
 
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
 				assert.NoError(t, err)
-				assert.Equal(t, tt.wantChanged, changed, "changed flag mismatch")
+				assert.Equal(t, tt.wantChanged, result.Changed, "changed flag mismatch")
 			}
 
 			if !tt.skipValidation && tt.validateResult != nil {
@@ -1009,7 +1009,7 @@ func TestApplyResource_WithoutOwner(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	changed, err := applier.ApplyResource(
+	result, err := applier.ApplyResource(
 		ctx,
 		obj,
 		nil, // No owner
@@ -1021,7 +1021,7 @@ func TestApplyResource_WithoutOwner(t *testing.T) {
 	)
 
 	assert.NoError(t, err)
-	assert.True(t, changed)
+	assert.True(t, result.Changed)
 
 	// Verify resource was updated without owner reference
 	cm := &corev1.ConfigMap{}
@@ -1082,4 +1082,39 @@ func TestIsResourceReady_Deployments(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+// TestApplyResource_ReportsWhetherTheWriteStartedARollout pins GenerationBumped, which the
+// LynqNode controller uses to tell a rollout it started from a no-op re-apply. The fake client
+// never moves metadata.generation on its own, so only creation reports a bump here; spec
+// changes that move it are covered by the controller's readiness rollout tests.
+func TestApplyResource_ReportsWhetherTheWriteStartedARollout(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	applier := NewApplier(c, scheme)
+	desired := func() *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata":   map[string]interface{}{"name": "rollout-cm", "namespace": "default"},
+			"data":       map[string]interface{}{"key": "value"},
+		}}
+	}
+	apply := func(force bool) ApplyResult {
+		t.Helper()
+		result, err := applier.ApplyResource(context.Background(), desired(), nil, lynqv1.ConflictPolicyStuck,
+			lynqv1.PatchStrategyMerge, lynqv1.DeletionPolicyDelete, nil, force)
+		require.NoError(t, err)
+		return result
+	}
+
+	// Creating the resource starts a rollout
+	assert.True(t, apply(false).GenerationBumped, "creation starts a rollout")
+
+	// A skipped apply writes nothing
+	assert.Equal(t, ApplyResult{}, apply(false), "an elided apply reports nothing")
+
+	// A forced re-apply of the same spec leaves the generation where it was
+	assert.False(t, apply(true).GenerationBumped, "a no-op re-apply does not start a rollout")
 }

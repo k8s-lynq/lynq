@@ -69,6 +69,9 @@ type LynqNodeReconciler struct {
 	Applier          *apply.Applier
 	ReadinessChecker *readiness.Checker
 	renderCache      sync.Map // key: "nodeName/resourceID" → *renderCacheEntry
+	// readyTracker separates "never became Ready after apply" (times out) from "was Ready,
+	// then regressed" (does not). See readinessTracker.
+	readyTracker readinessTracker
 }
 
 // renderCacheEntry holds a cached rendered resource to skip expensive re-rendering
@@ -152,7 +155,9 @@ const (
 	ReasonResourceFailuresAndConflicts = "ResourceFailuresAndConflicts"
 	ReasonResourceFailures             = "ResourceFailures"
 	ReasonResourceConflicts            = "ResourceConflicts"
-	ReasonResourcesNotReady            = "ResourcesNotReady"
+	// ReasonResourcesNotReady is no longer emitted: not-ready alone does not degrade a node.
+	// Kept so the degraded-status metric series it labeled in earlier versions is still reset.
+	ReasonResourcesNotReady = "ResourcesNotReady"
 
 	// Reconcile results
 	ResultSuccess        = "success"
@@ -204,6 +209,7 @@ func (r *LynqNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	node := &lynqv1.LynqNode{}
 	if err := r.Get(ctx, req.NamespacedName, node); err != nil {
 		if errors.IsNotFound(err) {
+			r.readyTracker.forgetByName(req.NamespacedName)
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "Failed to get LynqNode")
@@ -264,6 +270,14 @@ func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.Ly
 
 	// Rate-limits the mid-loop "is this LynqNode being deleted?" probe. See isDeleting.
 	deletionGate := &nodeDeletionGate{}
+
+	// Readiness history is keyed by resource ID; drop IDs the template no longer has.
+	nodeKey := client.ObjectKeyFromObject(node)
+	liveIDs := make(map[string]struct{}, len(sortedNodes))
+	for _, graphNode := range sortedNodes {
+		liveIDs[graphNode.Resource.ID] = struct{}{}
+	}
+	r.readyTracker.retain(node.UID, liveIDs)
 
 	// Track failed resource IDs to skip dependent resources (actual failures)
 	failedResourceIds := make(map[string]bool)
@@ -406,10 +420,10 @@ func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.Ly
 			ignoreFields = nil
 		}
 
-		changed, applyErr := applier.ApplyResource(ctx, obj, node, resource.ConflictPolicy, resource.PatchStrategy, deletionPolicy, ignoreFields, forceReapply)
+		applied, applyErr := applier.ApplyResource(ctx, obj, node, resource.ConflictPolicy, resource.PatchStrategy, deletionPolicy, ignoreFields, forceReapply)
 
 		// Track changes and emit events on first change
-		if changed {
+		if applied.Changed {
 			changedCount++
 
 			// On first change, update Progressing condition and emit event
@@ -465,60 +479,21 @@ func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.Ly
 		// Check readiness immediately after apply (non-blocking)
 		// Fast status reconcile will continue checking every 30 seconds
 		if resource.WaitForReady != nil && *resource.WaitForReady {
-			// Get current state from cluster to check readiness
-			current := &unstructured.Unstructured{}
-			current.SetGroupVersionKind(obj.GroupVersionKind())
-			err := r.Get(ctx, client.ObjectKey{
-				Name:      obj.GetName(),
-				Namespace: obj.GetNamespace(),
-			}, current)
-			if err != nil {
-				logger.Error(err, "Failed to get resource for readiness check", "id", resource.ID, "name", obj.GetName())
+			switch r.checkAppliedReadiness(ctx, node, nodeKey, resource, obj, applied, checker, applyStartTime) {
+			case resourceReady:
+				readyCount++
+			case resourceFailed:
+				// Mark as FAILED (triggers DependencySkipped)
 				failedResourceIds[resource.ID] = true
 				failedCount++
-				continue
-			}
-
-			// Check if ready NOW (non-blocking check)
-			if checker.IsReady(current) {
-				logger.V(1).Info("Resource is ready", "id", resource.ID, "name", obj.GetName())
-				readyCount++
-			} else {
-				// Not ready yet - check if timeout has expired
-				timeoutSeconds := resource.TimeoutSeconds
-				if timeoutSeconds <= 0 {
-					timeoutSeconds = 300 // Default 5 minutes
-				}
-
-				// Compute elapsed time since we first applied this resource.
-				// We read lynq.sh/apply-start-time from the resource annotation, which is
-				// stamped at apply time and persists across reconcile loops. This ensures:
-				//   - Pre-existing resources are not immediately timed out (BUG 1 fix).
-				//   - Resources that need multiple reconciles to time out accumulate elapsed
-				//     time correctly (regression fix: applyStartTime reset each reconcile).
-				// applyStartTime is used as fallback only for the very first reconcile of a
-				// resource, before the annotation has been persisted.
-				elapsed := elapsedSinceApply(current, applyStartTime)
-				timeoutDuration := time.Duration(timeoutSeconds) * time.Second
-
-				if elapsed >= timeoutDuration {
-					// Timeout expired - mark as FAILED (triggers DependencySkipped)
-					logger.Info("Resource not ready after timeout, marking as failed",
-						"id", resource.ID, "name", obj.GetName(),
-						"elapsed", elapsed.String(), "timeout", timeoutDuration.String())
-					r.Recorder.Eventf(node, corev1.EventTypeWarning, "ReadinessTimeout",
-						"Resource '%s' not ready after %s (timeout: %s)", resource.ID, elapsed.Round(time.Second), timeoutDuration)
-					failedResourceIds[resource.ID] = true
-					failedCount++
-				} else {
-					// Still within timeout - mark as "not ready" to block dependents silently
-					logger.V(1).Info("Resource not ready yet, will check again in next reconcile",
-						"id", resource.ID, "name", obj.GetName(),
-						"elapsed", elapsed.String(), "timeout", timeoutDuration.String())
-					// Mark as "not ready" to block dependents, but NOT as failed
-					// This ensures proper ordering without triggering DependencySkipped events
-					notReadyResourceIds[resource.ID] = true
-				}
+			case resourceNotReady:
+				// Mark as "not ready" to block dependents, but NOT as failed
+				// This ensures proper ordering without triggering DependencySkipped events
+				notReadyResourceIds[resource.ID] = true
+			case resourceRegressed:
+				// Not ready, but it already satisfied the ordering of its dependents under
+				// the current apply. Blocking them now would freeze their spec updates and
+				// drift correction for as long as the workload controller takes to recover.
 			}
 		} else {
 			// No readiness check required, count as ready
@@ -527,6 +502,125 @@ func (r *LynqNodeReconciler) applyResources(ctx context.Context, node *lynqv1.Ly
 	}
 
 	return readyCount, failedCount, changedCount, conflictedCount, skippedCount, skippedIds
+}
+
+// checkAppliedReadiness samples the readiness of a waitForReady resource right after it was
+// applied. A failure to read it back counts as failed.
+func (r *LynqNodeReconciler) checkAppliedReadiness(
+	ctx context.Context,
+	node *lynqv1.LynqNode,
+	nodeKey client.ObjectKey,
+	resource lynqv1.TResource,
+	obj *unstructured.Unstructured,
+	applied apply.ApplyResult,
+	checker *readiness.Checker,
+	applyStartTime time.Time,
+) readinessVerdict {
+	if applied.GenerationBumped {
+		// This apply changed the spec the workload controller acts on — a new resource, a
+		// changed template, or a force-reapply that reverted external drift. That is a rollout
+		// Lynq started, so earlier Ready history must not shield it from timeoutSeconds. A
+		// no-op apply leaves the history alone.
+		r.readyTracker.startRollout(node.UID, nodeKey, resource.ID, time.Now(), applied.Generation)
+	}
+
+	// Get current state from cluster to check readiness
+	current := &unstructured.Unstructured{}
+	current.SetGroupVersionKind(obj.GroupVersionKind())
+	if err := r.Get(ctx, client.ObjectKey{Name: obj.GetName(), Namespace: obj.GetNamespace()}, current); err != nil {
+		log.FromContext(ctx).Error(err, "Failed to get resource for readiness check", "id", resource.ID, "name", obj.GetName())
+		return resourceFailed
+	}
+
+	// Check if ready NOW (non-blocking check)
+	return r.assessReadiness(ctx, node, nodeKey, resource, current, checker, applyStartTime)
+}
+
+// readinessVerdict is how applyResources treats a waitForReady resource this reconcile.
+type readinessVerdict int
+
+const (
+	resourceReady     readinessVerdict = iota
+	resourceNotReady                   // never Ready since Lynq changed it; blocks dependents silently
+	resourceRegressed                  // was Ready under the current apply; not ready, does not block dependents
+	resourceFailed                     // triggers skipOnDependencyFailure for dependents
+)
+
+// assessReadiness samples current (never waits) and decides whether a not-ready resource is
+// still converging or has failed. It records the observation in readyTracker and emits the
+// failure event; it never writes to the resource or the LynqNode.
+func (r *LynqNodeReconciler) assessReadiness(
+	ctx context.Context,
+	node *lynqv1.LynqNode,
+	nodeKey client.ObjectKey,
+	resource lynqv1.TResource,
+	current *unstructured.Unstructured,
+	checker *readiness.Checker,
+	applyStartTime time.Time,
+) readinessVerdict {
+	logger := log.FromContext(ctx)
+	applyStamp := current.GetAnnotations()[apply.AnnotationApplyStartTime]
+
+	if checker.IsReady(current) {
+		if r.readyTracker.observeReady(node.UID, nodeKey, resource.ID, applyStamp, current.GetGeneration()) {
+			logger.V(1).Info("Resource is ready", "id", resource.ID, "name", current.GetName())
+			return resourceReady
+		}
+		// The read predates the rollout this reconcile just started (the cache has not caught
+		// up with our write), so its Ready says nothing about the new spec.
+		logger.V(1).Info("Resource read is older than the rollout just applied, treating as not ready",
+			"id", resource.ID, "name", current.GetName(), "generation", current.GetGeneration())
+	}
+
+	regressed, notReadySince := r.readyTracker.observeNotReady(node.UID, nodeKey, resource.ID, applyStamp, time.Now())
+	if regressed {
+		// The resource reached Ready after the current apply and has since dropped out of it:
+		// a drained node, an evicted pod, an external `kubectl rollout restart`. Lynq did not
+		// cause this and the workload controller is already recovering it, so timeoutSeconds
+		// does not apply — it measures whether Lynq's own change became Ready. Only the
+		// workload controller's own failure verdict counts.
+		if checker.HasRolloutFailed(current) {
+			logger.Info("Resource rollout failed after it had been ready, marking as failed",
+				"id", resource.ID, "name", current.GetName())
+			r.Recorder.Eventf(node, corev1.EventTypeWarning, "ProgressDeadlineExceeded",
+				"Resource '%s' stopped making rollout progress (Progressing=False, reason ProgressDeadlineExceeded)", resource.ID)
+			return resourceFailed
+		}
+		logger.V(1).Info("Previously ready resource is not ready, waiting for it to recover",
+			"id", resource.ID, "name", current.GetName(), "notReadyFor", time.Since(notReadySince).String())
+		return resourceRegressed
+	}
+
+	// Not ready yet - check if timeout has expired
+	timeoutSeconds := resource.TimeoutSeconds
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = 300 // Default 5 minutes
+	}
+
+	// The timeout clock starts at the later of two instants:
+	//   - lynq.sh/apply-start-time, stamped on the resource when Lynq applied a changed spec
+	//     and persisted across reconciles, so the clock accumulates instead of resetting every
+	//     30 seconds. applyStartTime is the fallback for the very first reconcile, before the
+	//     annotation exists.
+	//   - notReadySince, when this process first saw the resource not ready. Without Ready
+	//     history (a controller restart), an old apply-start-time would otherwise time out a
+	//     long-running resource the moment it blips.
+	elapsed := min(elapsedSinceApply(current, applyStartTime), time.Since(notReadySince))
+	timeoutDuration := time.Duration(timeoutSeconds) * time.Second
+
+	if elapsed >= timeoutDuration {
+		logger.Info("Resource not ready after timeout, marking as failed",
+			"id", resource.ID, "name", current.GetName(),
+			"elapsed", elapsed.String(), "timeout", timeoutDuration.String())
+		r.Recorder.Eventf(node, corev1.EventTypeWarning, "ReadinessTimeout",
+			"Resource '%s' not ready after %s (timeout: %s)", resource.ID, elapsed.Round(time.Second), timeoutDuration)
+		return resourceFailed
+	}
+
+	logger.V(1).Info("Resource not ready yet, will check again in next reconcile",
+		"id", resource.ID, "name", current.GetName(),
+		"elapsed", elapsed.String(), "timeout", timeoutDuration.String())
+	return resourceNotReady
 }
 
 // nodeDeletionCheckInterval bounds how often applyResources re-reads the LynqNode to notice
@@ -1114,8 +1208,12 @@ func (r *LynqNodeReconciler) calculateLynqNodeStatus(
 	isFullyReady := failedCount == 0 && conflictedCount == 0 && readyCount == totalResources
 	isDegraded := failedCount > 0 || hasConflict
 
+	// Degraded means something is wrong, not merely that something is not Ready yet. A
+	// resource that is still rolling out or recovering from a lost pod lowers readyCount and
+	// is reported through Ready=False/NotAllResourcesReady; only failures and conflicts — which
+	// need an operator to look — degrade the node.
 	update.IsReady = isFullyReady
-	update.IsDegraded = isDegraded || (readyCount != totalResources)
+	update.IsDegraded = isDegraded
 
 	// 1. Ready Condition
 	readyCond := metav1.Condition{
@@ -1180,9 +1278,7 @@ func (r *LynqNodeReconciler) calculateLynqNodeStatus(
 		LastTransitionTime: metav1.Now(),
 	}
 
-	// Determine degraded state (includes Ready != Desired check)
-	isDegradedForCondition := isDegraded || (readyCount != totalResources)
-	if isDegradedForCondition {
+	if isDegraded {
 		degradedCond.Status = metav1.ConditionTrue
 		if failedCount > 0 && hasConflict {
 			degradedCond.Reason = ReasonResourceFailuresAndConflicts
@@ -1190,13 +1286,12 @@ func (r *LynqNodeReconciler) calculateLynqNodeStatus(
 		} else if failedCount > 0 {
 			degradedCond.Reason = ReasonResourceFailures
 			degradedCond.Message = fmt.Sprintf("LynqNode has %d failed resources", failedCount)
-		} else if hasConflict {
+		} else {
 			degradedCond.Reason = ReasonResourceConflicts
 			degradedCond.Message = fmt.Sprintf("LynqNode has %d conflicted resources", conflictedCount)
-		} else if readyCount != totalResources {
-			degradedCond.Reason = ReasonResourcesNotReady
-			degradedCond.Message = fmt.Sprintf("Not all resources are ready: %d/%d ready", readyCount, totalResources)
 		}
+	} else if readyCount != totalResources {
+		degradedCond.Message = "No failed or conflicted resources; waiting for resources to become ready"
 	}
 
 	// Assemble all conditions
@@ -1815,6 +1910,8 @@ func (r *LynqNodeReconciler) reconcileCleanup(ctx context.Context, node *lynqv1.
 			r.Recorder.Eventf(node, corev1.EventTypeWarning, "CleanupPartialFailure",
 				"Some resources could not be cleaned up: %v. Kubernetes garbage collector will handle remaining resources with ownerReferences.", err)
 		}
+
+		r.readyTracker.forgetNode(node.UID)
 
 		// ALWAYS remove finalizer after cleanup attempt
 		controllerutil.RemoveFinalizer(node, LynqNodeFinalizer)

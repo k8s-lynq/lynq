@@ -412,18 +412,33 @@ func (m *Manager) updateMetrics(key client.ObjectKey, metricsPayload *MetricsPay
 		).Set(statusValue)
 	}
 
-	// Update degraded status metric
+	// Update degraded status metric.
+	//
+	// Every known reason other than the current one is set to 0, in both directions. Setting
+	// only the current reason to 1 would leave a previous reason's series stuck at 1 when a
+	// degraded node changes reason (e.g. ResourceFailures → ResourceConflicts), and alerts on
+	// that series would keep firing after the original cause is gone.
+	currentReason := ""
 	if metricsPayload.IsDegraded {
-		metrics.LynqNodeDegradedStatus.WithLabelValues(lynqnodeName, lynqnodeNamespace, metricsPayload.DegradedReason).Set(1)
-	} else {
-		// Reset all possible degraded reasons for this LynqNode to ensure metrics are cleared
-		// This prevents stale degraded metrics from remaining after LynqNode recovers
-		metrics.LynqNodeDegradedStatus.WithLabelValues(lynqnodeName, lynqnodeNamespace, "ResourceFailures").Set(0)
-		metrics.LynqNodeDegradedStatus.WithLabelValues(lynqnodeName, lynqnodeNamespace, "ResourceConflicts").Set(0)
-		metrics.LynqNodeDegradedStatus.WithLabelValues(lynqnodeName, lynqnodeNamespace, "ResourceFailuresAndConflicts").Set(0)
-		metrics.LynqNodeDegradedStatus.WithLabelValues(lynqnodeName, lynqnodeNamespace, "ResourcesNotReady").Set(0)
-		metrics.LynqNodeDegradedStatus.WithLabelValues(lynqnodeName, lynqnodeNamespace, "TemplateRenderError").Set(0)
-		metrics.LynqNodeDegradedStatus.WithLabelValues(lynqnodeName, lynqnodeNamespace, "DependencyCycle").Set(0)
-		metrics.LynqNodeDegradedStatus.WithLabelValues(lynqnodeName, lynqnodeNamespace, "VariablesBuildError").Set(0)
+		currentReason = metricsPayload.DegradedReason
+		metrics.LynqNodeDegradedStatus.WithLabelValues(lynqnodeName, lynqnodeNamespace, currentReason).Set(1)
 	}
+	for _, reason := range knownDegradedReasons {
+		if reason != currentReason {
+			metrics.LynqNodeDegradedStatus.WithLabelValues(lynqnodeName, lynqnodeNamespace, reason).Set(0)
+		}
+	}
+}
+
+// knownDegradedReasons lists every reason a LynqNode has been reported degraded with, so
+// updateMetrics can clear the series of reasons that no longer apply. ResourcesNotReady is no
+// longer emitted but stays listed so series left behind by earlier versions are cleared.
+var knownDegradedReasons = []string{
+	"ResourceFailures",
+	"ResourceConflicts",
+	"ResourceFailuresAndConflicts",
+	"ResourcesNotReady",
+	"TemplateRenderError",
+	"DependencyCycle",
+	"VariablesBuildError",
 }

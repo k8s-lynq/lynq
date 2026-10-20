@@ -31,7 +31,7 @@ spec:
             component: lynq
           annotations:
             summary: "LynqNode {{ $labels.lynqnode }} is degraded ({{ $labels.reason }})"
-            description: "LynqNode {{ $labels.lynqnode }} in namespace {{ $labels.namespace }} has been in degraded state for 5+ minutes. Reason: {{ $labels.reason }}. This may indicate template errors, conflicts, or dependency issues."
+            description: "LynqNode {{ $labels.lynqnode }} in namespace {{ $labels.namespace }} has been in degraded state for 5+ minutes. Reason: {{ $labels.reason }}. Degraded means failed or conflicted resources, template errors, or dependency issues; resources that are merely not ready yet (rolling out or recovering lost pods) do not degrade a node and are covered by LynqNodeNotReady."
             dashboard: "https://grafana.example.com/d/lynq/node-details?var-lynqnode={{ $labels.lynqnode }}&var-namespace={{ $labels.namespace }}"
             runbook_url: "https://lynq.sh/alert-runbooks#lynqnodedegraded"
 

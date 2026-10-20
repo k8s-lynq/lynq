@@ -111,10 +111,24 @@ func NewApplier(c client.Client, scheme *runtime.Scheme) *Applier {
 	}
 }
 
+// ApplyResult describes what an ApplyResource call did to the live resource.
+type ApplyResult struct {
+	// Changed is true when the server-side resourceVersion moved (or the resource was created).
+	Changed bool
+	// GenerationBumped is true when the write created the resource or moved its
+	// metadata.generation, i.e. the apply changed the spec the workload controller acts on and
+	// so started a new rollout. A no-op apply, or one that only touched metadata, leaves it
+	// false. Derived from the pre-apply read and the write response, without an extra GET.
+	GenerationBumped bool
+	// Generation is the resource's metadata.generation after the write. Zero when nothing was
+	// written.
+	Generation int64
+}
+
 // ApplyResource applies a resource using the specified patch strategy.
 //
-// Returns true if the resource was changed (server-side resourceVersion bumped),
-// false if no change was needed.
+// The result reports whether the resource was changed (server-side resourceVersion bumped)
+// and whether the write started a new rollout (metadata.generation moved).
 //
 // ignoreFields: JSONPath expressions for fields to ignore (only effective on existing
 // resources, not initial creation).
@@ -133,7 +147,7 @@ func (a *Applier) ApplyResource(
 	deletionPolicy lynqv1.DeletionPolicy,
 	ignoreFields []string,
 	forceReapply bool,
-) (bool, error) {
+) (ApplyResult, error) {
 	// Set owner reference or tracking labels based on namespace and deletion policy
 	if owner != nil {
 		isCrossNamespace := obj.GetNamespace() != owner.Namespace
@@ -157,7 +171,7 @@ func (a *Applier) ApplyResource(
 			// For same-namespace resources with Delete policy, use traditional ownerReference
 			// This enables automatic garbage collection when LynqNode is deleted
 			if err := controllerutil.SetControllerReference(owner, obj, a.scheme); err != nil {
-				return false, fmt.Errorf("failed to set owner reference: %w", err)
+				return ApplyResult{}, fmt.Errorf("failed to set owner reference: %w", err)
 			}
 		}
 	}
@@ -181,7 +195,7 @@ func (a *Applier) ApplyResource(
 		if errors.IsNotFound(err) {
 			existsBeforeApply = false
 		} else {
-			return false, fmt.Errorf("failed to get existing resource: %w", err)
+			return ApplyResult{}, fmt.Errorf("failed to get existing resource: %w", err)
 		}
 	} else {
 		beforeResourceVersion = existing.GetResourceVersion()
@@ -206,7 +220,7 @@ func (a *Applier) ApplyResource(
 			refreshed := &unstructured.Unstructured{}
 			refreshed.SetGroupVersionKind(obj.GroupVersionKind())
 			if err := a.client.Get(ctx, key, refreshed); err != nil {
-				return false, fmt.Errorf("failed to re-get resource after orphan-marker removal: %w", err)
+				return ApplyResult{}, fmt.Errorf("failed to re-get resource after orphan-marker removal: %w", err)
 			}
 			existing = refreshed
 			beforeResourceVersion = existing.GetResourceVersion()
@@ -220,13 +234,13 @@ func (a *Applier) ApplyResource(
 	if existsBeforeApply && len(ignoreFields) > 0 {
 		filter, err := fieldfilter.NewFilter(ignoreFields)
 		if err != nil {
-			return false, fmt.Errorf("failed to create field filter: %w", err)
+			return ApplyResult{}, fmt.Errorf("failed to create field filter: %w", err)
 		}
 
 		// Preserve ignored fields by copying values from existing resource
 		// This ensures SSA doesn't delete fields that are externally controlled
 		if err := filter.PreserveIgnoredFields(obj, existing); err != nil {
-			return false, fmt.Errorf("failed to preserve ignored fields: %w", err)
+			return ApplyResult{}, fmt.Errorf("failed to preserve ignored fields: %w", err)
 		}
 
 		logger := log.FromContext(ctx)
@@ -240,7 +254,7 @@ func (a *Applier) ApplyResource(
 	// The hash is computed from the PRE-patch desired object (before server mutations).
 	preApplyDesiredHash := a.computeDesiredHash(obj)
 	if a.shouldSkipApply(existsBeforeApply, orphanReadopted, forceReapply, preApplyDesiredHash, existing) {
-		return false, nil
+		return ApplyResult{}, nil
 	}
 
 	// Decide once whether this apply should reset apply-start-time. We're past the
@@ -277,16 +291,22 @@ func (a *Applier) ApplyResource(
 		existsBeforeApply:   existsBeforeApply,
 		preApplyDesiredHash: preApplyDesiredHash,
 	})
-	if err != nil || earlyReturn {
-		return changed, err
+	if err != nil {
+		return ApplyResult{}, err
 	}
 
-	// Check if resource was actually changed by comparing resourceVersion.
-	// Patch/Update/Create responses update obj in-place with the server response,
-	// so obj.GetResourceVersion() reflects the post-apply state without an extra GET.
-	changed = beforeResourceVersion != obj.GetResourceVersion()
-
-	return changed, nil
+	// Patch/Update/Create responses update obj in-place with the server response, so obj
+	// reflects the post-apply state without an extra GET, and existing is the pre-apply read
+	// shouldSkipApply already used.
+	if !earlyReturn {
+		// Check if resource was actually changed by comparing resourceVersion.
+		changed = beforeResourceVersion != obj.GetResourceVersion()
+	}
+	return ApplyResult{
+		Changed:          changed,
+		GenerationBumped: !existsBeforeApply || obj.GetGeneration() != existing.GetGeneration(),
+		Generation:       obj.GetGeneration(),
+	}, nil
 }
 
 // shouldSkipApply decides whether the desired spec is already on the resource (so the

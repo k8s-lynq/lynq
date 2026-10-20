@@ -19,6 +19,8 @@ package e2e
 import (
 	"fmt"
 	"os/exec"
+	"strconv"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -255,4 +257,197 @@ var _ = Describe("Resource Timeout and Failure Handling", Ordered, func() {
 		})
 
 	})
+
+	// A Deployment that Lynq applied long ago and that later loses pods is being repaired by its
+	// own controller. timeoutSeconds measures whether Lynq's change became Ready, so such a
+	// disruption must surface as Ready=False only: no ReadinessTimeout, no failed resources, no
+	// Degraded condition (which drives the critical alerts).
+	Context("when a previously ready Deployment is disrupted after its timeout has elapsed", func() {
+		// Replacement pods stay unready longer than the 30s periodic requeue, so the
+		// controller is guaranteed to observe the Deployment not ready while it recovers.
+		const replacementUnreadySeconds = 45
+
+		// Every It gets its own names and pod label, so a previous It's objects that are still
+		// terminating can neither collide with this one's nor match its pod selector.
+		var (
+			run                                     int
+			hubName, formName, uid, nodeName, label string
+			deploymentName, appLabel                string
+		)
+
+		BeforeEach(func() {
+			run++
+			hubName = fmt.Sprintf("disruption-hub-%d", run)
+			formName = fmt.Sprintf("disruption-form-%d", run)
+			uid = fmt.Sprintf("disruption-uid-%d", run)
+			nodeName = fmt.Sprintf("%s-%s", uid, formName)
+			deploymentName = uid + "-steady-deploy"
+			label = fmt.Sprintf("disruption-test-%d", run)
+			appLabel = "app=" + label
+
+			By("creating a LynqHub")
+			createHubWithTable(hubName, testTable)
+
+			By("and a LynqForm with a 2-replica Deployment and a 10s readiness timeout")
+			createForm(formName, hubName, fmt.Sprintf(`
+  deployments:
+    - id: steady-deployment
+      nameTemplate: "{{ .uid }}-steady-deploy"
+      waitForReady: true
+      timeoutSeconds: 10
+      spec:
+        apiVersion: apps/v1
+        kind: Deployment
+        spec:
+          replicas: 2
+          selector:
+            matchLabels:
+              app: %[1]s
+          template:
+            metadata:
+              labels:
+                app: %[1]s
+            spec:
+              terminationGracePeriodSeconds: 0
+              containers:
+              - name: app
+                image: busybox:1.36
+                command: ["sh", "-c", "sleep 3600"]
+                readinessProbe:
+                  exec:
+                    command: ["true"]
+                  initialDelaySeconds: %[2]d
+                  periodSeconds: 2
+`, label, replacementUnreadySeconds))
+
+			By("and active data in MySQL")
+			insertTestDataToTable(testTable, uid, true)
+			waitForLynqNode(nodeName)
+
+			By("and the LynqNode has become Ready")
+			Eventually(func(g Gomega) {
+				g.Expect(getLynqNodeField(nodeName, "{.status.conditions[?(@.type=='Ready')].status}")).To(Equal("True"))
+			}, policyTestTimeout, policyTestInterval).Should(Succeed())
+
+			By("and it has stayed Ready for longer than its timeout")
+			time.Sleep(15 * time.Second)
+			Expect(getLynqNodeField(nodeName, "{.status.conditions[?(@.type=='Ready')].status}")).To(Equal("True"))
+		})
+
+		AfterEach(func() {
+			By("cleaning up test data and resources")
+			deleteTestDataFromTable(testTable, uid)
+
+			cmd := exec.Command("kubectl", "delete", "lynqform", formName, "-n", policyTestNamespace, "--ignore-not-found=true")
+			_, _ = utils.Run(cmd)
+			cmd = exec.Command("kubectl", "delete", "deployment", deploymentName, "-n", policyTestNamespace,
+				"--ignore-not-found=true", "--wait=false")
+			_, _ = utils.Run(cmd)
+			cmd = exec.Command("kubectl", "delete", "lynqhub", hubName, "-n", policyTestNamespace, "--ignore-not-found=true")
+			_, _ = utils.Run(cmd)
+
+			By("and waiting until every object of this run is gone")
+			for _, obj := range [][2]string{
+				{"lynqnode", nodeName},
+				{"lynqform", formName},
+				{"lynqhub", hubName},
+				{"deployment", deploymentName},
+			} {
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", obj[0], obj[1], "-n", policyTestNamespace)
+					output, err := utils.Run(cmd)
+					g.Expect(err).To(HaveOccurred(), "%s/%s still exists", obj[0], obj[1])
+					g.Expect(output).To(ContainSubstring("NotFound"))
+				}, policyTestTimeout, policyTestInterval).Should(Succeed())
+			}
+		})
+
+		// expectDisruptionIsNotAFailure verifies the node rides out the disruption: it is seen
+		// not Ready, never reports a failed resource, a ReadinessTimeout or Degraded=True, and
+		// returns to Ready once the replacement pods are ready.
+		expectDisruptionIsNotAFailure := func(timeoutEventsBefore int) {
+			By("Then the LynqNode is reported not Ready while the Deployment recovers, but never failed or Degraded")
+			sawNotReady := false
+			Consistently(func(g Gomega) {
+				if getLynqNodeField(nodeName, "{.status.conditions[?(@.type=='Ready')].status}") == "False" {
+					sawNotReady = true
+				}
+				g.Expect(getLynqNodeField(nodeName, "{.status.failedResources}")).To(Or(BeEmpty(), Equal("0")),
+					"a disrupted, previously ready Deployment must not be counted as failed")
+				g.Expect(getLynqNodeField(nodeName, "{.status.conditions[?(@.type=='Degraded')].status}")).NotTo(Equal("True"),
+					"a not-ready-only LynqNode must not be Degraded")
+			}, (replacementUnreadySeconds+15)*time.Second, policyTestInterval).Should(Succeed())
+			Expect(sawNotReady).To(BeTrue(), "the controller must have observed the disruption for this test to be meaningful")
+
+			By("And no ReadinessTimeout event was emitted for the disruption")
+			Expect(readinessTimeoutEventCount(nodeName)).To(Equal(timeoutEventsBefore))
+
+			By("And the LynqNode returns to Ready once the replacement pods are ready")
+			Eventually(func(g Gomega) {
+				g.Expect(getLynqNodeField(nodeName, "{.status.conditions[?(@.type=='Ready')].status}")).To(Equal("True"))
+				g.Expect(getLynqNodeField(nodeName, "{.status.readyResources}")).To(Equal("1"))
+			}, policyTestTimeout, policyTestInterval).Should(Succeed())
+		}
+
+		It("should not fail the Deployment when one of its pods is lost", func() {
+			timeoutEventsBefore := readinessTimeoutEventCount(nodeName)
+
+			By("When one of the Deployment's pods is deleted")
+			cmd := exec.Command("kubectl", "get", "pods", "-n", policyTestNamespace, "-l", appLabel,
+				"-o", "jsonpath={.items[0].metadata.name}")
+			podName, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(podName).NotTo(BeEmpty())
+			cmd = exec.Command("kubectl", "delete", "pod", podName, "-n", policyTestNamespace, "--wait=false")
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			expectDisruptionIsNotAFailure(timeoutEventsBefore)
+		})
+
+		It("should not fail the Deployment when all of its pods are lost", func() {
+			timeoutEventsBefore := readinessTimeoutEventCount(nodeName)
+
+			By("When every pod of the Deployment is deleted")
+			cmd := exec.Command("kubectl", "delete", "pod", "-n", policyTestNamespace, "-l", appLabel, "--wait=false")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			expectDisruptionIsNotAFailure(timeoutEventsBefore)
+		})
+	})
 })
+
+// getLynqNodeField returns a jsonpath field of a LynqNode in the policy test namespace, or ""
+// when it cannot be read.
+func getLynqNodeField(nodeName, jsonPath string) string {
+	cmd := exec.Command("kubectl", "get", "lynqnode", nodeName, "-n", policyTestNamespace, "-o", "jsonpath="+jsonPath)
+	output, err := utils.Run(cmd)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(output)
+}
+
+// readinessTimeoutEventCount returns how many ReadinessTimeout events have been recorded for a
+// LynqNode, including repeats aggregated into a single Event's count.
+func readinessTimeoutEventCount(nodeName string) int {
+	cmd := exec.Command("kubectl", "get", "events", "-n", policyTestNamespace,
+		"--field-selector", "involvedObject.name="+nodeName+",reason=ReadinessTimeout",
+		"-o", "jsonpath={range .items[*]}count={.count}{\"\\n\"}{end}")
+	output, err := utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred())
+
+	total := 0
+	for _, line := range strings.Fields(output) {
+		raw := strings.TrimPrefix(line, "count=")
+		if raw == "" {
+			total++ // an Event without an aggregated count occurred once
+			continue
+		}
+		n, err := strconv.Atoi(raw)
+		Expect(err).NotTo(HaveOccurred())
+		total += n
+	}
+	return total
+}
