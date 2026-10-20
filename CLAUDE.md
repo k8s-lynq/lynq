@@ -222,8 +222,8 @@ type TResource struct {
   - Transitions to **failed** state
   - Emits `ReadinessTimeout` event
   - Triggers `skipOnDependencyFailure` logic for dependents
-- **Regressed dependencies**: Resources that became Ready after the current apply and later
-  dropped out of it (lost pod, node drain, external `kubectl rollout restart`).
+- **Regressed dependencies**: Resources that became Ready after Lynq last started a rollout of
+  them and later dropped out of it (lost pod, node drain, external `kubectl rollout restart`).
   - Treated as not-ready, never timed out — the workload controller is already recovering them
   - The only failure verdict is the workload controller's own: a Deployment whose
     `Progressing` condition is `False/ProgressDeadlineExceeded` is failed
@@ -232,6 +232,9 @@ type TResource struct {
   - An apply of ours that moves the resource's `metadata.generation` (including a
     force-reapply that reverts drift) starts a new rollout: the resource is not-ready again,
     blocks dependents, and is timed from that apply
+  - An apply of ours that does not move it (a metadata-only template change: labels,
+    annotations) starts no rollout and leaves a regression a regression, even though it
+    re-stamps `lynq.sh/apply-start-time`
 - This distinction ensures Deployments starting up or recovering pods don't cause misleading
   "DependencySkipped" events
 
@@ -734,6 +737,14 @@ make test-e2e-focus FOCUS="metrics update"
 make test-e2e
 ```
 
+**CI Groups**: `.github/workflows/test-e2e.yml` splits the suite into matrix groups by
+focusing on top-level `Describe` names, and each group runs under a 30-minute `go test`
+timeout. A new top-level `Describe` that matches no group's focus falls into `other`. When a
+group's runtime approaches the timeout, move the slow scenarios to their own top-level
+`Describe`, add a group that focuses on it, and add the same name to `other`'s skip list.
+For example, `Readiness Regression` runs on its own because its gated-restart scenarios hold a
+Deployment not ready for longer than one timeout plus one periodic requeue.
+
 **Critical Rules**:
 1. **Always use 60-minute timeout minimum**: E2E tests build Docker images, create Kind clusters, install cert-manager, and deploy the operator. This takes significant time.
    ```bash
@@ -830,13 +841,14 @@ make test-e2e
     is applied and persists across reconcile loops so the timeout clock does not reset every 30
     seconds. `applyStartTime` (local variable) is only a fallback for the very first reconcile
     before the annotation has been written.
-  - Because the annotation only moves on a spec change, it is months old on any long-running
+  - Because the annotation only moves when Lynq applies a changed desired object, it is months old on any long-running
     resource. Measuring a later blip (lost pod, drain, external rollout restart) against it fails
     the resource the instant it is seen not ready — a false failure that skipped dependents,
     degraded the node and paged. `readinessTracker` (in-memory, keyed by LynqNode UID + resource
     ID) therefore records what this process has observed:
-    - Observed Ready under the current apply-start-time, then not ready → a regression: never
-      timed out (only `ProgressDeadlineExceeded` fails it), and it does not block dependents.
+    - Observed Ready since Lynq last started a rollout of it, then not ready → a regression:
+      never timed out (only `ProgressDeadlineExceeded` fails it), and it does not block
+      dependents.
     - No such history (fresh apply, or a controller restart) → the clock starts at the later of
       apply-start-time and the first not-ready observation, so a restart grants one full
       `timeoutSeconds` of grace: detection may be delayed, never faked.
@@ -847,6 +859,14 @@ make test-e2e
     moved it resets the resource's history (`startRollout`): earlier Ready observations stop
     counting and the clock starts no earlier than that apply. A no-op apply leaves the history
     alone. A Ready read older than that generation is a stale cache read and does not count.
+  - The converse also holds, so for a resource that tracks `metadata.generation` the regression
+    verdict deliberately ignores apply-start-time: only `startRollout` (or having no history)
+    ends a Ready history. A metadata-only template change alters the desired hash, so its apply
+    re-stamps apply-start-time without moving the generation. Comparing stamps re-timed an
+    in-progress external `kubectl rollout restart` from that apply and failed it within
+    `timeoutSeconds` — a false ReadinessTimeout and Degraded alert. A resource whose generation
+    is 0 (some custom resources) gives no generation signal, so a changed stamp still ends its
+    Ready history there.
   - The tracker is in-memory on purpose. Persisting readiness history would need a write per
     readiness transition, breaking invariant 6 and the exactly-one-write-per-apply contract. It is
     released when the LynqNode is cleaned up or found NotFound, and when a LynqNode of the same

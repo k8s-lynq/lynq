@@ -572,13 +572,13 @@ func (r *LynqNodeReconciler) assessReadiness(
 			"id", resource.ID, "name", current.GetName(), "generation", current.GetGeneration())
 	}
 
-	regressed, notReadySince := r.readyTracker.observeNotReady(node.UID, nodeKey, resource.ID, applyStamp, time.Now())
+	regressed, notReadySince := r.readyTracker.observeNotReady(node.UID, nodeKey, resource.ID, applyStamp, current.GetGeneration(), time.Now())
 	if regressed {
-		// The resource reached Ready after the current apply and has since dropped out of it:
-		// a drained node, an evicted pod, an external `kubectl rollout restart`. Lynq did not
-		// cause this and the workload controller is already recovering it, so timeoutSeconds
-		// does not apply — it measures whether Lynq's own change became Ready. Only the
-		// workload controller's own failure verdict counts.
+		// The resource reached Ready since Lynq last started a rollout of it and has since
+		// dropped out of it: a drained node, an evicted pod, an external `kubectl rollout
+		// restart`. Lynq did not cause this and the workload controller is already recovering
+		// it, so timeoutSeconds does not apply — it measures whether Lynq's own change became
+		// Ready. Only the workload controller's own failure verdict counts.
 		if checker.HasRolloutFailed(current) {
 			logger.Info("Resource rollout failed after it had been ready, marking as failed",
 				"id", resource.ID, "name", current.GetName())

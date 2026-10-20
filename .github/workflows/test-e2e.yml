@@ -20,6 +20,7 @@ jobs:
           - policies
           - templates
           - resources
+          - readiness-regression
           - advanced
           - other
         include:
@@ -39,6 +40,10 @@ jobs:
           - test-group: resources
             focus: "Resource Readiness|Resource Timeout|Resource Health Check|Orphan Resource Cleanup"
             skip: ""
+          # Readiness regression: external restarts and edits of a long-Ready Deployment
+          - test-group: readiness-regression
+            focus: "Readiness Regression"
+            skip: ""
           # Advanced: Dependencies, cross-namespace, multi-template, metrics
           - test-group: advanced
             focus: "Dependency Graph|SkipOnDependencyFailure|Cross-Namespace|Multi-Template|Metrics Collection"
@@ -46,7 +51,7 @@ jobs:
           # Other: Catch-all for any tests not in other groups (prevents missing new tests)
           - test-group: other
             focus: ""
-            skip: "Manager|Datasource Behavior|LynqHub Garbage Collection|Finalizer Behavior|CreationPolicy|DeletionPolicy|ConflictPolicy|PatchStrategy|Template Functions|Template Error Handling|Field-Level Ignore Control|Resource Readiness|Resource Timeout|Resource Health Check|Orphan Resource Cleanup|Dependency Graph|SkipOnDependencyFailure|Cross-Namespace|Multi-Template|Metrics Collection"
+            skip: "Manager|Datasource Behavior|LynqHub Garbage Collection|Finalizer Behavior|CreationPolicy|DeletionPolicy|ConflictPolicy|PatchStrategy|Template Functions|Template Error Handling|Field-Level Ignore Control|Resource Readiness|Resource Timeout|Resource Health Check|Orphan Resource Cleanup|Readiness Regression|Dependency Graph|SkipOnDependencyFailure|Cross-Namespace|Multi-Template|Metrics Collection"
     steps:
       - name: Clone the code
         uses: actions/checkout@v4

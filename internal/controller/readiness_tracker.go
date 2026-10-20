@@ -57,8 +57,8 @@ type nodeReadiness struct {
 // resourceReadiness is the observation history of one child resource.
 type resourceReadiness struct {
 	// readyApplyStamp is the lynq.sh/apply-start-time value the resource carried when it was
-	// last observed Ready. A Ready observation only counts for the apply it was made under:
-	// once Lynq applies a new spec the stamp changes and the new rollout is timed afresh.
+	// last observed Ready. It only matters for resources that do not track metadata.generation
+	// (see observeNotReady); for the rest, startRollout is what ends a Ready history.
 	readyApplyStamp string
 	observedReady   bool
 	// notReadySince is when the resource was first observed not ready in its current
@@ -116,11 +116,19 @@ func (t *readinessTracker) observeReady(uid types.UID, key types.NamespacedName,
 
 // observeNotReady records that the resource is not ready and reports how to judge it.
 //
-// regressed is true when the resource was observed Ready under the same apply stamp, i.e. it
+// regressed is true when the resource was observed Ready since Lynq last changed it, i.e. it
 // is a steady-state disruption rather than a rollout that never finished. notReadySince is the
 // start of the current not-ready stretch, which bounds the readiness-timeout clock for
 // resources this process has no Ready history for.
-func (t *readinessTracker) observeNotReady(uid types.UID, key types.NamespacedName, resourceID, applyStamp string, now time.Time) (regressed bool, notReadySince time.Time) {
+//
+// For a resource that tracks metadata.generation (generation > 0), only an apply of ours that
+// moved the generation ends its Ready history, and startRollout already records that. The
+// apply stamp is deliberately not compared: it also moves on a metadata-only apply (a label or
+// annotation added to the template), which starts no rollout, so a disruption in progress at
+// that moment would otherwise be re-timed from the new stamp and falsely fail. A resource
+// without a generation offers no such signal, so a changed stamp is the only evidence that
+// Lynq applied something new and still ends its Ready history.
+func (t *readinessTracker) observeNotReady(uid types.UID, key types.NamespacedName, resourceID, applyStamp string, generation int64, now time.Time) (regressed bool, notReadySince time.Time) {
 	n := t.node(uid, key)
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -131,6 +139,9 @@ func (t *readinessTracker) observeNotReady(uid types.UID, key types.NamespacedNa
 	}
 	if st.notReadySince.IsZero() {
 		st.notReadySince = now
+	}
+	if generation > 0 {
+		return st.observedReady, st.notReadySince
 	}
 	return st.observedReady && st.readyApplyStamp == applyStamp, st.notReadySince
 }

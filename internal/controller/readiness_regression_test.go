@@ -386,25 +386,6 @@ func TestReadiness_RestartWithoutHistoryGrantsAFullTimeoutOfGrace(t *testing.T) 
 	assert.NotEmpty(t, eventsWithReason(s.drainEvents(), "ReadinessTimeout"))
 }
 
-func TestReadiness_NewApplyAfterReadyIsTimedAfresh(t *testing.T) {
-	// Given a Deployment that was Ready under an earlier apply, with a 1s timeout
-	s := newReadinessScenario(t, 2, 1)
-	s.givenDeploymentReadyForMonths(2)
-
-	// When Lynq applies a new spec (new apply-start-time) that never becomes Ready
-	s.mutateDeployment(func(d *appsv1.Deployment) {
-		d.Annotations[apply.AnnotationApplyStartTime] = time.Now().UTC().Format(time.RFC3339Nano)
-		d.Status.UpdatedReplicas = 0
-	})
-	_, failed := s.reconcile()
-	require.Equal(t, int32(0), failed)
-	time.Sleep(1100 * time.Millisecond)
-	_, failed = s.reconcile()
-
-	// Then the earlier Ready observation does not shield it: the new rollout times out
-	assert.Equal(t, int32(1), failed)
-}
-
 func TestCalculateLynqNodeStatus_ProgressingReflectsAnInFlightReconcile(t *testing.T) {
 	r := &LynqNodeReconciler{}
 
@@ -452,19 +433,35 @@ func TestReadinessTracker_LifecycleOfTrackedState(t *testing.T) {
 
 	t.Run("recovering to Ready ends the not-ready stretch", func(t *testing.T) {
 		var tr readinessTracker
-		_, first := tr.observeNotReady(uid, key, "deploy", "stamp", time.Now().Add(-time.Hour))
+		_, first := tr.observeNotReady(uid, key, "deploy", "stamp", 0, time.Now().Add(-time.Hour))
 		tr.observeReady(uid, key, "deploy", "stamp", 0)
 
-		regressed, since := tr.observeNotReady(uid, key, "deploy", "stamp", time.Now())
+		regressed, since := tr.observeNotReady(uid, key, "deploy", "stamp", 0, time.Now())
 		assert.True(t, regressed, "a resource seen Ready under the same apply has regressed")
 		assert.True(t, since.After(first), "the not-ready clock restarts after a recovery")
 	})
 
-	t.Run("a Ready observation only counts for the apply it was made under", func(t *testing.T) {
+	t.Run("without a generation, a Ready observation only counts for the apply it was made under", func(t *testing.T) {
 		var tr readinessTracker
-		tr.observeReady(uid, key, "deploy", "old-apply", 0)
-		regressed, _ := tr.observeNotReady(uid, key, "deploy", "new-apply", time.Now())
-		assert.False(t, regressed)
+		tr.observeReady(uid, key, "custom", "old-apply", 0)
+		regressed, _ := tr.observeNotReady(uid, key, "custom", "new-apply", 0, time.Now())
+		assert.False(t, regressed, "a changed stamp is the only sign Lynq applied something new to a generation-less resource")
+
+		tr.observeReady(uid, key, "custom", "new-apply", 0)
+		regressed, _ = tr.observeNotReady(uid, key, "custom", "new-apply", 0, time.Now())
+		assert.True(t, regressed, "under the same stamp it is a regression")
+	})
+
+	t.Run("with a generation, only a rollout of ours ends the Ready history", func(t *testing.T) {
+		var tr readinessTracker
+		tr.observeReady(uid, key, "deploy", "old-apply", 4)
+
+		regressed, _ := tr.observeNotReady(uid, key, "deploy", "metadata-only-apply", 4, time.Now())
+		assert.True(t, regressed, "a stamp moved by a metadata-only apply starts no rollout")
+
+		tr.startRollout(uid, key, "deploy", time.Now(), 5)
+		regressed, _ = tr.observeNotReady(uid, key, "deploy", "spec-apply", 5, time.Now())
+		assert.False(t, regressed, "an apply that moved the generation is timed as a new rollout")
 	})
 
 	t.Run("resources removed from the template are dropped", func(t *testing.T) {

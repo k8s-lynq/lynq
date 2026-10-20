@@ -42,6 +42,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	lynqv1 "github.com/k8s-lynq/lynq/api/v1"
+	"github.com/k8s-lynq/lynq/internal/apply"
 )
 
 const (
@@ -125,6 +126,133 @@ func TestReadiness_NoOpForceReapplyKeepsTheRegressionVerdict(t *testing.T) {
 	}
 }
 
+func TestReadiness_MetadataOnlyApplyDuringARegressionKeepsTheRegressionVerdict(t *testing.T) {
+	// A metadata-only change to the template (a label or annotation) changes the desired hash,
+	// so the apply re-stamps apply-start-time, but it does not move metadata.generation and so
+	// starts no rollout. Judging the regression by the stamp re-timed an unrelated disruption
+	// (e.g. an operator's `kubectl rollout restart`) from that apply and failed it.
+	for _, strategy := range rolloutStrategies {
+		t.Run(string(strategy), func(t *testing.T) {
+			// Given a Deployment Ready for months under a 1s timeout, now short a pod
+			s := newReadinessScenarioWith(t, strategy, 2, 1)
+			s.givenDeploymentReadyForMonths(2)
+			s.setAvailable(2, 1, 1)
+
+			// When the template only adds a label to the Deployment while it recovers
+			stampBefore := s.deploymentApplyStamp()
+			generationBefore := s.deploymentGeneration()
+			s.addDeploymentLabel("team", "payments")
+			_, failed := s.reconcile()
+			require.Equal(t, int32(0), failed)
+			require.Equal(t, "payments", s.deploymentLabel("team"), "the metadata change must reach the cluster")
+			require.NotEqual(t, stampBefore, s.deploymentApplyStamp(), "the apply must have re-stamped apply-start-time")
+			require.Equal(t, generationBefore, s.deploymentGeneration(), "a metadata-only apply must not move the generation")
+
+			// And the disruption outlasts timeoutSeconds
+			time.Sleep(1100 * time.Millisecond)
+			_, failed = s.reconcile()
+
+			// Then it is still a regression: not ready, never timed out
+			assert.Equal(t, int32(0), failed)
+			assert.Empty(t, eventsWithReason(s.drainEvents(), "ReadinessTimeout"))
+
+			// And it is Ready again once the workload controller recovers it
+			s.setAvailable(2, 2, 2)
+			ready, failed := s.reconcile()
+			assert.Equal(t, int32(1), ready)
+			assert.Equal(t, int32(0), failed)
+		})
+	}
+}
+
+func TestReadiness_SpecChangeDuringARegressionStartsATimedRollout(t *testing.T) {
+	for _, strategy := range rolloutStrategies {
+		t.Run(string(strategy)+"/the new rollout becomes Ready within the timeout", func(t *testing.T) {
+			// Given a Deployment Ready for months under a 60s timeout, now short a pod
+			s := newReadinessScenarioWith(t, strategy, 2, 60)
+			s.givenDeploymentReadyForMonths(2)
+			s.setAvailable(2, 1, 1)
+
+			// When the template changes the Deployment's spec while it recovers
+			generationBefore := s.deploymentGeneration()
+			s.changeDeploymentImage("nginx:1.27")
+			_, failed := s.reconcile()
+			require.Greater(t, s.deploymentGeneration(), generationBefore, "a spec change must move the generation")
+			require.Equal(t, int32(0), failed, "the rollout Lynq just started is within its timeout")
+
+			// And the new rollout completes
+			s.setAvailable(2, 2, 2)
+			ready, failed := s.reconcile()
+
+			// Then the Deployment is Ready
+			assert.Equal(t, int32(1), ready)
+			assert.Equal(t, int32(0), failed)
+		})
+
+		t.Run(string(strategy)+"/the new rollout never becomes Ready", func(t *testing.T) {
+			// Given a Deployment Ready for months under a 1s timeout, now short a pod
+			s := newReadinessScenarioWith(t, strategy, 2, 1)
+			s.givenDeploymentReadyForMonths(2)
+			s.setAvailable(2, 1, 1)
+
+			// When the template changes the Deployment's spec while it recovers
+			s.changeDeploymentImage("nginx:1.27")
+			_, failed := s.reconcile()
+			require.Equal(t, int32(0), failed, "the rollout Lynq just started is within its timeout")
+
+			// And the new rollout is not Ready after timeoutSeconds
+			time.Sleep(1100 * time.Millisecond)
+			_, failed = s.reconcile()
+
+			// Then the earlier Ready history does not shield Lynq's change: it times out
+			assert.Equal(t, int32(1), failed)
+			assert.NotEmpty(t, eventsWithReason(s.drainEvents(), "ReadinessTimeout"))
+		})
+	}
+}
+
+// addDeploymentLabel adds a label to the Deployment in the LynqNode's resolved template — a
+// metadata-only template change — bumping the node generation so the render cache picks it up.
+func (s *readinessScenario) addDeploymentLabel(key, value string) {
+	for _, n := range s.sorted {
+		if n.Resource.ID == "deploy-id" {
+			if n.Resource.LabelsTemplate == nil {
+				n.Resource.LabelsTemplate = map[string]string{}
+			}
+			n.Resource.LabelsTemplate[key] = value
+		}
+	}
+	s.node.Generation++
+}
+
+// changeDeploymentImage changes the Deployment's container image in the LynqNode's resolved
+// template — a spec change — bumping the node generation so the render cache picks it up.
+func (s *readinessScenario) changeDeploymentImage(image string) {
+	for _, n := range s.sorted {
+		if n.Resource.ID == "deploy-id" {
+			podSpec := n.Resource.Spec.Object["spec"].(map[string]interface{})["template"].(map[string]interface{})["spec"].(map[string]interface{})
+			podSpec["containers"] = []interface{}{map[string]interface{}{"name": "app", "image": image}}
+		}
+	}
+	s.node.Generation++
+}
+
+func (s *readinessScenario) liveDeployment() *appsv1.Deployment {
+	s.t.Helper()
+	d := &appsv1.Deployment{}
+	require.NoError(s.t, s.client.Get(context.Background(),
+		client.ObjectKey{Namespace: "default", Name: steadyStateDeployName}, d))
+	return d
+}
+
+func (s *readinessScenario) deploymentLabel(key string) string {
+	return s.liveDeployment().Labels[key]
+}
+
+func (s *readinessScenario) deploymentApplyStamp() string {
+	return s.liveDeployment().Annotations[apply.AnnotationApplyStartTime]
+}
+
 func TestReadiness_RegressedUpstreamDoesNotBlockItsDependents(t *testing.T) {
 	// Given a Deployment that has been Ready for months, and a Service that depends on it
 	s := newReadinessScenarioWith(t, lynqv1.PatchStrategyReplace, 2, 1, makeDependentServiceResource(80))
@@ -204,7 +332,7 @@ func TestReadinessTracker_ReadyReadOlderThanOurRolloutDoesNotCount(t *testing.T)
 
 	// Then it is not taken as Ready, and a not-ready read is not a regression
 	assert.False(t, counted)
-	regressed, _ := tr.observeNotReady(uid, key, "deploy", "stamp", time.Now())
+	regressed, _ := tr.observeNotReady(uid, key, "deploy", "stamp", 2, time.Now())
 	assert.False(t, regressed, "the new rollout has not been Ready yet")
 
 	// But a read of the new generation is
