@@ -57,16 +57,16 @@ type nodeReadiness struct {
 // resourceReadiness is the observation history of one child resource.
 type resourceReadiness struct {
 	// readyApplyStamp is the lynq.sh/apply-start-time value the resource carried when it was
-	// last observed Ready. It only matters for resources that do not track metadata.generation
-	// (see observeNotReady); for the rest, startRollout is what ends a Ready history.
+	// last observed Ready. It only matters for kinds that give no rollout signal (see
+	// observeNotReady); for the rest, startRollout is what ends a Ready history.
 	readyApplyStamp string
 	observedReady   bool
 	// notReadySince is when the resource was first observed not ready in its current
 	// not-ready stretch. Zero while the resource is Ready.
 	notReadySince time.Time
-	// rolloutGeneration is the metadata.generation an apply of ours last moved the resource
-	// to. A Ready observation of an older generation is a stale read of the previous rollout
-	// and does not count.
+	// rolloutGeneration is the metadata.generation the write that started our last rollout left
+	// the resource at. A Ready observation of an older generation is a stale read from before
+	// that write and does not count.
 	rolloutGeneration int64
 }
 
@@ -85,9 +85,9 @@ func (t *readinessTracker) node(uid types.UID, key types.NamespacedName) *nodeRe
 	return v.(*nodeReadiness)
 }
 
-// startRollout records that an apply of ours just moved the resource to a new generation, at
-// the given instant. Lynq has started a rollout, so any earlier Ready observation no longer
-// says anything about it: the resource is once again "never Ready since Lynq changed it", and
+// startRollout records that an apply of ours just started a rollout (apply.ApplyResult's
+// StartedRollout), at the given instant, leaving the resource at the given generation. Any
+// earlier Ready observation no longer says anything about it: the resource is once again "never Ready since Lynq changed it", and
 // its timeout clock starts no earlier than this apply.
 func (t *readinessTracker) startRollout(uid types.UID, key types.NamespacedName, resourceID string, at time.Time, generation int64) {
 	n := t.node(uid, key)
@@ -121,14 +121,15 @@ func (t *readinessTracker) observeReady(uid types.UID, key types.NamespacedName,
 // start of the current not-ready stretch, which bounds the readiness-timeout clock for
 // resources this process has no Ready history for.
 //
-// For a resource that tracks metadata.generation (generation > 0), only an apply of ours that
-// moved the generation ends its Ready history, and startRollout already records that. The
-// apply stamp is deliberately not compared: it also moves on a metadata-only apply (a label or
-// annotation added to the template), which starts no rollout, so a disruption in progress at
-// that moment would otherwise be re-timed from the new stamp and falsely fail. A resource
-// without a generation offers no such signal, so a changed stamp is the only evidence that
-// Lynq applied something new and still ends its Ready history.
-func (t *readinessTracker) observeNotReady(uid types.UID, key types.NamespacedName, resourceID, applyStamp string, generation int64, now time.Time) (regressed bool, notReadySince time.Time) {
+// For a resource whose kind gives a rollout signal (tracksRollouts: it has a .spec or a
+// metadata.generation), only an apply of ours that started a rollout ends its Ready
+// history, and startRollout already records that. The apply stamp is deliberately not
+// compared: it also moves on a metadata-only apply (a label or annotation added to the
+// template), which starts no rollout, so a disruption in progress at that moment would
+// otherwise be re-timed from the new stamp and falsely fail. A kind with no such signal leaves
+// a changed stamp as the only evidence that Lynq applied something new, so it still ends the
+// Ready history there.
+func (t *readinessTracker) observeNotReady(uid types.UID, key types.NamespacedName, resourceID, applyStamp string, tracksRollouts bool, now time.Time) (regressed bool, notReadySince time.Time) {
 	n := t.node(uid, key)
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -140,7 +141,7 @@ func (t *readinessTracker) observeNotReady(uid types.UID, key types.NamespacedNa
 	if st.notReadySince.IsZero() {
 		st.notReadySince = now
 	}
-	if generation > 0 {
+	if tracksRollouts {
 		return st.observedReady, st.notReadySince
 	}
 	return st.observedReady && st.readyApplyStamp == applyStamp, st.notReadySince

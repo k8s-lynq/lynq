@@ -229,12 +229,13 @@ type TResource struct {
     `Progressing` condition is `False/ProgressDeadlineExceeded` is failed
   - Does NOT block dependents: it already satisfied their ordering under the current apply, and
     blocking would freeze their spec updates and drift correction for the whole recovery
-  - An apply of ours that moves the resource's `metadata.generation` (including a
-    force-reapply that reverts drift) starts a new rollout: the resource is not-ready again,
-    blocks dependents, and is timed from that apply
-  - An apply of ours that does not move it (a metadata-only template change: labels,
+  - An apply of ours that changes the resource's live `.spec` (including a force-reapply that
+    reverts drift) starts a new rollout: the resource is not-ready again, blocks dependents,
+    and is timed from that apply. So does one whose pre-apply read was a stale cache that the
+    write's generation outran by two or more, since the cache may have hidden a `.spec` change
+  - An apply of ours that does not change it (a metadata-only template change: labels,
     annotations) starts no rollout and leaves a regression a regression, even though it
-    re-stamps `lynq.sh/apply-start-time`
+    re-stamps `lynq.sh/apply-start-time` and, on a Deployment, moves `metadata.generation`
 - This distinction ensures Deployments starting up or recovering pods don't cause misleading
   "DependencySkipped" events
 
@@ -854,19 +855,35 @@ Deployment not ready for longer than one timeout plus one periodic requeue.
       `timeoutSeconds` of grace: detection may be delayed, never faked.
   - apply-start-time alone cannot tell "Lynq started a rollout" from "nothing changed": a
     force-reapply that reverts external drift preserves it, because the desired hash did not
-    change. `ApplyResource` therefore reports `GenerationBumped` — the pre-apply read's
-    `metadata.generation` against the write response's, no extra API call — and an apply that
-    moved it resets the resource's history (`startRollout`): earlier Ready observations stop
-    counting and the clock starts no earlier than that apply. A no-op apply leaves the history
-    alone. A Ready read older than that generation is a stale cache read and does not count.
-  - The converse also holds, so for a resource that tracks `metadata.generation` the regression
-    verdict deliberately ignores apply-start-time: only `startRollout` (or having no history)
-    ends a Ready history. A metadata-only template change alters the desired hash, so its apply
-    re-stamps apply-start-time without moving the generation. Comparing stamps re-timed an
-    in-progress external `kubectl rollout restart` from that apply and failed it within
-    `timeoutSeconds` — a false ReadinessTimeout and Degraded alert. A resource whose generation
-    is 0 (some custom resources) gives no generation signal, so a changed stamp still ends its
-    Ready history there.
+    change. `ApplyResource` therefore reports `StartedRollout` — the pre-apply read's `.spec`
+    against the write response's, no extra API call — and an apply that started one resets the
+    resource's history (`startRollout`): earlier Ready observations stop counting and the clock
+    starts no earlier than that apply. A no-op apply leaves the history alone. The tracker
+    records the generation that write left the resource at, and a Ready read older than it is
+    a stale cache read and does not count.
+  - The pre-apply read comes from the informer cache, so the `.spec` comparison alone can miss
+    a rollout: a force-reapply reverting drift the cache has not seen yet compares the old
+    cached spec to an identical response. One write moves `metadata.generation` by at most one,
+    so `StartedRollout` is also true when the response's generation is two or more past the
+    cached read's (both non-zero) — the cache missed a write, which is assumed to be a rollout.
+    The rule may only err toward re-timing (e.g. an unseen external annotation edit plus a
+    metadata-only apply); missing a real rollout would exempt it from `timeoutSeconds` for
+    good. Do not "fix" it with an uncached read or a resourceVersion precondition: that is an
+    extra API read or a conflict-retry on every apply.
+  - `metadata.generation` is NOT the rollout signal. The Deployment registry strategy also
+    bumps it when `metadata.annotations` change (they are copied onto the ReplicaSet), and
+    every apply that changes the desired hash re-stamps `lynq.sh/applied-hash` and
+    `lynq.sh/apply-start-time`, so a metadata-only template change moves a Deployment's
+    generation without starting a rollout. Treating that as a rollout re-timed an in-progress
+    external `kubectl rollout restart` from the metadata apply. Kinds with no `.spec` on either
+    side fall back to comparing generation. A generation jump of two or more (the stale-cache
+    rule above) is the one case where generation alone counts.
+  - The converse also holds, so for a kind that gives that signal (`apply.TracksRollouts`: it
+    has a `.spec` or a non-zero generation) the regression verdict deliberately ignores
+    apply-start-time: only `startRollout` (or having no history) ends a Ready history.
+    Comparing stamps re-timed the same in-progress restart from a metadata-only apply and
+    failed it within `timeoutSeconds` — a false ReadinessTimeout and Degraded alert. A kind
+    with neither gives no rollout signal, so a changed stamp still ends its Ready history there.
   - The tracker is in-memory on purpose. Persisting readiness history would need a write per
     readiness transition, breaking invariant 6 and the exactly-one-write-per-apply contract. It is
     released when the LynqNode is cleaned up or found NotFound, and when a LynqNode of the same

@@ -20,11 +20,13 @@ limitations under the License.
 //
 // Ready history only shields a resource from timeoutSeconds while Lynq has not changed it.
 // The apply-start-time stamp alone cannot say that: a force-reapply that reverts external
-// drift keeps the stamp (the desired hash did not change) yet starts a real rollout. What
-// does say it is metadata.generation — an apply that moves it started a rollout, one that
-// does not was a no-op. These tests pin both sides, for every patch strategy the fake client
-// can exercise, and the dependency-ordering consequence: a resource that already satisfied
-// its dependents under the current apply does not block them when it later regresses.
+// drift keeps the stamp (the desired hash did not change) yet starts a real rollout. Nor can
+// metadata.generation: a Deployment's generation also moves when only its annotations change,
+// which every hash-changing apply does by re-stamping them. What does say it is the live
+// .spec — an apply that changed it started a rollout, one that did not was a no-op or
+// metadata-only. These tests pin both sides, for every patch strategy the fake client can
+// exercise, and the dependency-ordering consequence: a resource that already satisfied its
+// dependents under the current apply does not block them when it later regresses.
 
 package controller
 
@@ -51,7 +53,7 @@ const (
 )
 
 // SSA (PatchStrategyApply) is not in these tables: the controller-runtime fake client cannot
-// serve apply patches. ApplyResource derives GenerationBumped after applyByStrategy returns,
+// serve apply patches. ApplyResource derives StartedRollout after applyByStrategy returns,
 // the same way for every strategy, so the SSA branch shares the logic exercised here.
 var rolloutStrategies = []lynqv1.PatchStrategy{lynqv1.PatchStrategyReplace, lynqv1.PatchStrategyMerge}
 
@@ -128,9 +130,10 @@ func TestReadiness_NoOpForceReapplyKeepsTheRegressionVerdict(t *testing.T) {
 
 func TestReadiness_MetadataOnlyApplyDuringARegressionKeepsTheRegressionVerdict(t *testing.T) {
 	// A metadata-only change to the template (a label or annotation) changes the desired hash,
-	// so the apply re-stamps apply-start-time, but it does not move metadata.generation and so
-	// starts no rollout. Judging the regression by the stamp re-timed an unrelated disruption
-	// (e.g. an operator's `kubectl rollout restart`) from that apply and failed it.
+	// so the apply re-stamps apply-start-time and applied-hash. Those annotation changes move a
+	// Deployment's metadata.generation, but the .spec is untouched, so it starts no rollout.
+	// Judging the regression by the stamp, or by the generation, re-timed an unrelated
+	// disruption (e.g. an operator's `kubectl rollout restart`) from that apply and failed it.
 	for _, strategy := range rolloutStrategies {
 		t.Run(string(strategy), func(t *testing.T) {
 			// Given a Deployment Ready for months under a 1s timeout, now short a pod
@@ -141,12 +144,15 @@ func TestReadiness_MetadataOnlyApplyDuringARegressionKeepsTheRegressionVerdict(t
 			// When the template only adds a label to the Deployment while it recovers
 			stampBefore := s.deploymentApplyStamp()
 			generationBefore := s.deploymentGeneration()
+			specBefore := s.liveDeployment().Spec
 			s.addDeploymentLabel("team", "payments")
 			_, failed := s.reconcile()
 			require.Equal(t, int32(0), failed)
 			require.Equal(t, "payments", s.deploymentLabel("team"), "the metadata change must reach the cluster")
 			require.NotEqual(t, stampBefore, s.deploymentApplyStamp(), "the apply must have re-stamped apply-start-time")
-			require.Equal(t, generationBefore, s.deploymentGeneration(), "a metadata-only apply must not move the generation")
+			require.Greater(t, s.deploymentGeneration(), generationBefore,
+				"re-stamping annotations moves a Deployment's generation, as the API server does")
+			require.Equal(t, specBefore, s.liveDeployment().Spec, "a metadata-only apply must not change the spec")
 
 			// And the disruption outlasts timeoutSeconds
 			time.Sleep(1100 * time.Millisecond)
@@ -332,7 +338,7 @@ func TestReadinessTracker_ReadyReadOlderThanOurRolloutDoesNotCount(t *testing.T)
 
 	// Then it is not taken as Ready, and a not-ready read is not a regression
 	assert.False(t, counted)
-	regressed, _ := tr.observeNotReady(uid, key, "deploy", "stamp", 2, time.Now())
+	regressed, _ := tr.observeNotReady(uid, key, "deploy", "stamp", true, time.Now())
 	assert.False(t, regressed, "the new rollout has not been Ready yet")
 
 	// But a read of the new generation is

@@ -516,11 +516,14 @@ func (r *LynqNodeReconciler) checkAppliedReadiness(
 	checker *readiness.Checker,
 	applyStartTime time.Time,
 ) readinessVerdict {
-	if applied.GenerationBumped {
+	if applied.StartedRollout {
 		// This apply changed the spec the workload controller acts on — a new resource, a
-		// changed template, or a force-reapply that reverted external drift. That is a rollout
+		// changed template, or a force-reapply that reverted external drift — or moved the
+		// generation by more than one write can, which means the pre-apply read was a stale
+		// cache that may have hidden such a change. That is (assumed to be) a rollout
 		// Lynq started, so earlier Ready history must not shield it from timeoutSeconds. A
-		// no-op apply leaves the history alone.
+		// no-op or metadata-only apply leaves the history alone, even when it moved a
+		// Deployment's generation.
 		r.readyTracker.startRollout(node.UID, nodeKey, resource.ID, time.Now(), applied.Generation)
 	}
 
@@ -572,7 +575,7 @@ func (r *LynqNodeReconciler) assessReadiness(
 			"id", resource.ID, "name", current.GetName(), "generation", current.GetGeneration())
 	}
 
-	regressed, notReadySince := r.readyTracker.observeNotReady(node.UID, nodeKey, resource.ID, applyStamp, current.GetGeneration(), time.Now())
+	regressed, notReadySince := r.readyTracker.observeNotReady(node.UID, nodeKey, resource.ID, applyStamp, apply.TracksRollouts(current), time.Now())
 	if regressed {
 		// The resource reached Ready since Lynq last started a rollout of it and has since
 		// dropped out of it: a drained node, an evicted pod, an external `kubectl rollout

@@ -24,6 +24,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -115,20 +116,60 @@ func NewApplier(c client.Client, scheme *runtime.Scheme) *Applier {
 type ApplyResult struct {
 	// Changed is true when the server-side resourceVersion moved (or the resource was created).
 	Changed bool
-	// GenerationBumped is true when the write created the resource or moved its
-	// metadata.generation, i.e. the apply changed the spec the workload controller acts on and
-	// so started a new rollout. A no-op apply, or one that only touched metadata, leaves it
-	// false. Derived from the pre-apply read and the write response, without an extra GET.
-	GenerationBumped bool
+	// StartedRollout is true when the write may have started a rollout: it created the
+	// resource, changed its .spec, or moved its generation further than one write can (see
+	// startedRollout). A no-op apply, or one that only touched metadata, leaves it false.
+	// Derived from the pre-apply read and the write response, without an extra GET.
+	StartedRollout bool
 	// Generation is the resource's metadata.generation after the write. Zero when nothing was
 	// written.
 	Generation int64
 }
 
+// TracksRollouts reports whether ApplyResult.StartedRollout carries a real signal for obj's
+// kind: it has a .spec to compare, or at least a metadata.generation to fall back on. Kinds
+// with neither (ConfigMap, Secret, ServiceAccount) never report a rollout.
+func TracksRollouts(obj *unstructured.Unstructured) bool {
+	_, hasSpec := obj.Object["spec"]
+	return hasSpec || obj.GetGeneration() > 0
+}
+
+// startedRollout reports whether a write that moved the live object from before to after may
+// have started a rollout. It errs only toward reporting one, which re-times the resource; the
+// other way would let a rollout Lynq started pass as a regression that never times out.
+//
+// It compares .spec rather than metadata.generation because generation over-reports for
+// Deployments: the Deployment registry strategy also bumps it when metadata.annotations
+// change (annotations are copied onto the ReplicaSet), and every apply that changes the
+// desired hash re-stamps lynq.sh/applied-hash and lynq.sh/apply-start-time. A metadata-only
+// template change therefore moves a Deployment's generation without starting a rollout. Kinds
+// without a .spec on either side fall back to the generation comparison.
+//
+// The .spec comparison alone under-reports when before is a stale cache read: if an external
+// edit drifted the live spec and the informer has not seen it yet, a force-reapply that
+// reverts it compares the old cached spec to an identical response. One write moves the
+// generation by at most one, so a jump of two or more means before missed a write — the
+// rollout is then assumed.
+func startedRollout(existsBeforeApply bool, before, after *unstructured.Unstructured) bool {
+	if !existsBeforeApply {
+		return true
+	}
+	beforeGen, afterGen := before.GetGeneration(), after.GetGeneration()
+	if beforeGen > 0 && afterGen > 0 && afterGen-beforeGen >= 2 {
+		return true
+	}
+	beforeSpec, hadSpec := before.Object["spec"]
+	afterSpec, hasSpec := after.Object["spec"]
+	if !hadSpec && !hasSpec {
+		return afterGen != beforeGen
+	}
+	return !equality.Semantic.DeepEqual(beforeSpec, afterSpec)
+}
+
 // ApplyResource applies a resource using the specified patch strategy.
 //
 // The result reports whether the resource was changed (server-side resourceVersion bumped)
-// and whether the write started a new rollout (metadata.generation moved).
+// and whether the write started a new rollout (the live .spec moved).
 //
 // ignoreFields: JSONPath expressions for fields to ignore (only effective on existing
 // resources, not initial creation).
@@ -303,9 +344,9 @@ func (a *Applier) ApplyResource(
 		changed = beforeResourceVersion != obj.GetResourceVersion()
 	}
 	return ApplyResult{
-		Changed:          changed,
-		GenerationBumped: !existsBeforeApply || obj.GetGeneration() != existing.GetGeneration(),
-		Generation:       obj.GetGeneration(),
+		Changed:        changed,
+		StartedRollout: startedRollout(existsBeforeApply, existing, obj),
+		Generation:     obj.GetGeneration(),
 	}, nil
 }
 

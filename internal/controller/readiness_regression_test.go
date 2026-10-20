@@ -105,15 +105,16 @@ func newReadinessScenarioWith(t *testing.T, strategy lynqv1.PatchStrategy, repli
 }
 
 // generationBumpingFuncs makes the fake client move metadata.generation the way the API
-// server does for the Deployments these tests reason about: to 1 on create, and by one on every
-// write that changes .spec. The fake client
-// leaves generation untouched, which would hide whether an apply started a rollout.
+// server does, which the fake client leaves untouched and which would otherwise hide whether
+// an apply started a rollout:
+//   - A Deployment gets generation 1 on create and moves by one on every write that changes
+//     .spec OR metadata.annotations. The Deployment registry strategy bumps on annotation
+//     changes too, because annotations are copied onto the ReplicaSet, so every Lynq apply that
+//     re-stamps applied-hash/apply-start-time moves it even when the spec is untouched.
+//   - Any other resource that already carries a generation moves by one when .spec changes.
 func generationBumpingFuncs() interceptor.Funcs {
 	write := func(ctx context.Context, c client.WithWatch, obj client.Object, do func() error) error {
 		gvk := gvkOf(c, obj)
-		if gvk.Kind != resourceKindDeployment {
-			return do()
-		}
 		key := client.ObjectKeyFromObject(obj)
 		before := &unstructured.Unstructured{}
 		before.SetGroupVersionKind(gvk)
@@ -123,14 +124,19 @@ func generationBumpingFuncs() interceptor.Funcs {
 		if err := do(); err != nil {
 			return err
 		}
+		if before.GetGeneration() == 0 {
+			return nil
+		}
 		after := &unstructured.Unstructured{}
 		after.SetGroupVersionKind(before.GroupVersionKind())
 		if err := c.Get(ctx, key, after); err != nil {
 			return err
 		}
-		// Generation is server-managed: a write cannot set it, only a spec change moves it.
+		// Generation is server-managed: a write cannot set it, only the changes above move it.
 		want := before.GetGeneration()
-		if !equality.Semantic.DeepEqual(before.Object["spec"], after.Object["spec"]) {
+		specChanged := !equality.Semantic.DeepEqual(before.Object["spec"], after.Object["spec"])
+		annotationsChanged := !equality.Semantic.DeepEqual(before.GetAnnotations(), after.GetAnnotations())
+		if specChanged || (gvk.Kind == resourceKindDeployment && annotationsChanged) {
 			want++
 		}
 		if after.GetGeneration() == want {
@@ -224,8 +230,10 @@ func (s *readinessScenario) givenDeploymentReadyForMonths(replicas int32) {
 	_, failed := s.reconcile()
 	require.Equal(s.t, int32(0), failed, "the initial apply must not fail")
 
-	s.setAvailable(replicas, replicas, replicas)
+	// Back-date before reporting availability: the annotation edit moves a Deployment's
+	// generation, and the workload controller observes that generation before it is Ready.
 	s.backdateApplyStartTime(90 * 24 * time.Hour)
+	s.setAvailable(replicas, replicas, replicas)
 
 	ready, failed := s.reconcile()
 	require.Equal(s.t, int32(len(s.sorted)), ready, "the Deployment (and anything after it) must be observed Ready before the disruption")
@@ -433,35 +441,35 @@ func TestReadinessTracker_LifecycleOfTrackedState(t *testing.T) {
 
 	t.Run("recovering to Ready ends the not-ready stretch", func(t *testing.T) {
 		var tr readinessTracker
-		_, first := tr.observeNotReady(uid, key, "deploy", "stamp", 0, time.Now().Add(-time.Hour))
+		_, first := tr.observeNotReady(uid, key, "deploy", "stamp", false, time.Now().Add(-time.Hour))
 		tr.observeReady(uid, key, "deploy", "stamp", 0)
 
-		regressed, since := tr.observeNotReady(uid, key, "deploy", "stamp", 0, time.Now())
+		regressed, since := tr.observeNotReady(uid, key, "deploy", "stamp", false, time.Now())
 		assert.True(t, regressed, "a resource seen Ready under the same apply has regressed")
 		assert.True(t, since.After(first), "the not-ready clock restarts after a recovery")
 	})
 
-	t.Run("without a generation, a Ready observation only counts for the apply it was made under", func(t *testing.T) {
+	t.Run("without a rollout signal, a Ready observation only counts for the apply it was made under", func(t *testing.T) {
 		var tr readinessTracker
 		tr.observeReady(uid, key, "custom", "old-apply", 0)
-		regressed, _ := tr.observeNotReady(uid, key, "custom", "new-apply", 0, time.Now())
-		assert.False(t, regressed, "a changed stamp is the only sign Lynq applied something new to a generation-less resource")
+		regressed, _ := tr.observeNotReady(uid, key, "custom", "new-apply", false, time.Now())
+		assert.False(t, regressed, "a changed stamp is the only sign Lynq applied something new to a kind with no spec or generation")
 
 		tr.observeReady(uid, key, "custom", "new-apply", 0)
-		regressed, _ = tr.observeNotReady(uid, key, "custom", "new-apply", 0, time.Now())
+		regressed, _ = tr.observeNotReady(uid, key, "custom", "new-apply", false, time.Now())
 		assert.True(t, regressed, "under the same stamp it is a regression")
 	})
 
-	t.Run("with a generation, only a rollout of ours ends the Ready history", func(t *testing.T) {
+	t.Run("with a rollout signal, only a rollout of ours ends the Ready history", func(t *testing.T) {
 		var tr readinessTracker
 		tr.observeReady(uid, key, "deploy", "old-apply", 4)
 
-		regressed, _ := tr.observeNotReady(uid, key, "deploy", "metadata-only-apply", 4, time.Now())
+		regressed, _ := tr.observeNotReady(uid, key, "deploy", "metadata-only-apply", true, time.Now())
 		assert.True(t, regressed, "a stamp moved by a metadata-only apply starts no rollout")
 
 		tr.startRollout(uid, key, "deploy", time.Now(), 5)
-		regressed, _ = tr.observeNotReady(uid, key, "deploy", "spec-apply", 5, time.Now())
-		assert.False(t, regressed, "an apply that moved the generation is timed as a new rollout")
+		regressed, _ = tr.observeNotReady(uid, key, "deploy", "spec-apply", true, time.Now())
+		assert.False(t, regressed, "an apply that changed the live spec is timed as a new rollout")
 	})
 
 	t.Run("resources removed from the template are dropped", func(t *testing.T) {

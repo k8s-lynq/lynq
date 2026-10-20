@@ -314,9 +314,13 @@ var _ = Describe("Resource Timeout and Failure Handling", Ordered, func() {
 })
 
 // A `kubectl rollout restart` of a long-Ready Deployment is a disruption Lynq did not start, and
-// Lynq keeps applying template changes to the Deployment while it runs. Only a change that moves
-// the Deployment's metadata.generation starts a rollout of Lynq's own, which timeoutSeconds
-// measures; anything else must leave the restart a disruption.
+// Lynq keeps applying template changes to the Deployment while it runs. Only a change to the
+// Deployment's .spec starts a rollout of Lynq's own, which timeoutSeconds measures; anything else
+// must leave the restart a disruption. metadata.generation is not that signal: the Deployment
+// registry strategy also moves it when metadata.annotations change, because annotations are
+// copied onto the ReplicaSet, and every Lynq apply that changes the desired hash re-stamps its
+// own annotations. The scenarios below therefore compare .spec, never generation, to tell a
+// metadata-only change from a rollout.
 //
 // The Deployment is gated: a pod that carries the kubectl.kubernetes.io/restartedAt annotation a
 // restart adds stays unready until the test opens its gate. A restart therefore keeps the
@@ -446,12 +450,14 @@ var _ = Describe("Readiness Regression", Ordered, func() {
 		})
 
 		// Regression guard. A template change that only touches the Deployment's metadata changes
-		// Lynq's desired hash, so its apply re-stamps lynq.sh/apply-start-time, yet it does not
-		// move metadata.generation and starts no rollout. Judging the restart against that stamp
-		// re-timed it from the metadata apply and failed it: a ReadinessTimeout and a Degraded
-		// alert for a restart Lynq did not start. The gate keeps the restart not ready across the
-		// whole timeout and the next periodic reconcile after that apply, so such a controller
-		// fails this test every time.
+		// Lynq's desired hash, so its apply re-stamps lynq.sh/apply-start-time and
+		// lynq.sh/applied-hash. Those annotation changes move the Deployment's metadata.generation
+		// (the registry strategy bumps it on annotation changes too), but the .spec is untouched
+		// and no rollout starts. Judging the restart against that stamp, or treating the moved
+		// generation as a rollout of Lynq's own, re-timed it from the metadata apply and failed it:
+		// a ReadinessTimeout and a Degraded alert for a restart Lynq did not start. The gate keeps
+		// the restart not ready across the whole timeout and the next periodic reconcile after
+		// that apply, so such a controller fails this test every time.
 		It("should not fail a restarting Deployment when the LynqForm only changes its metadata", func() {
 			timeoutEventsBefore := readinessTimeoutEventCount(d.nodeName)
 
@@ -459,7 +465,8 @@ var _ = Describe("Readiness Regression", Ordered, func() {
 			d.rolloutRestart()
 			d.waitUntilSeenNotReady()
 			d.expectNotFailed(timeoutEventsBefore)
-			generationBefore := d.deploymentInt(Default, generationPath)
+			specBefore, err := d.deploymentField(specPath)
+			Expect(err).NotTo(HaveOccurred())
 			applyStampBefore, err := d.deploymentField(applyStartTimePath)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -472,33 +479,40 @@ var _ = Describe("Readiness Regression", Ordered, func() {
 				g.Expect(d.deploymentField(applyStartTimePath)).NotTo(Equal(applyStampBefore))
 			}, policyTestTimeout, policyTestInterval).Should(Succeed())
 
-			By("And that apply moved no generation, so the restart is still not ready")
-			Expect(d.deploymentInt(Default, generationPath)).To(Equal(generationBefore))
+			By("And that apply left the Deployment's spec untouched, so the restart is still not ready")
+			Expect(d.deploymentField(specPath)).To(Equal(specBefore))
 			Expect(d.deploymentInt(Default, "{.status.availableReplicas}")).To(BeNumerically("<", 2))
 
 			d.expectHeldRestartIsNotAFailure(timeoutEventsBefore, gateHoldWindow)
-			Expect(d.deploymentInt(Default, generationPath)).To(Equal(generationBefore))
+			Expect(d.deploymentField(specPath)).To(Equal(specBefore))
 			d.openGateUntilReady()
 			Expect(readinessTimeoutEventCount(d.nodeName)).To(Equal(timeoutEventsBefore))
 		})
 
 		It("should keep the Deployment Ready when its metadata is edited outside Lynq", func() {
 			timeoutEventsBefore := readinessTimeoutEventCount(d.nodeName)
-			generationBefore := d.deploymentInt(Default, generationPath)
+			specBefore, err := d.deploymentField(specPath)
+			Expect(err).NotTo(HaveOccurred())
+			revisionBefore, err := d.deploymentField(revisionPath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(revisionBefore).NotTo(BeEmpty())
 
 			By("When another party annotates the Deployment")
 			cmd := exec.Command("kubectl", "annotate", "deployment", d.deploymentName, "-n", policyTestNamespace,
 				"example.com/owner=other", "--overwrite")
-			_, err := utils.Run(cmd)
+			_, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
 
-			// resourceVersion is deliberately not compared: the Deployment controller's status
-			// writes and Lynq's periodic force-reapply may legitimately move it. generation is what
-			// a spurious rollout would move.
-			By("Then the annotation is kept and the Deployment's generation does not move")
+			// Neither resourceVersion nor generation is compared: the annotation itself moves the
+			// Deployment's generation (the registry strategy bumps it on annotation changes), and
+			// the Deployment controller's status writes and Lynq's periodic force-reapply may
+			// legitimately move resourceVersion. A spurious rollout would change the spec and
+			// create a new ReplicaSet, which bumps the revision.
+			By("Then the annotation is kept and no rollout starts")
 			d.expectStaysHealthy(timeoutEventsBefore, editWindow, func(g Gomega) {
 				g.Expect(d.deploymentField(`{.metadata.annotations.example\.com/owner}`)).To(Equal("other"))
-				g.Expect(d.deploymentInt(g, generationPath)).To(Equal(generationBefore))
+				g.Expect(d.deploymentField(specPath)).To(Equal(specBefore))
+				g.Expect(d.deploymentField(revisionPath)).To(Equal(revisionBefore))
 			})
 
 			By("When Lynq's applied-hash annotation is removed from the Deployment")
@@ -528,6 +542,8 @@ const (
 	degradedConditionPath = "{.status.conditions[?(@.type=='Degraded')].status}"
 	failedResourcesPath   = "{.status.failedResources}"
 	generationPath        = "{.metadata.generation}"
+	specPath              = "{.spec}"
+	revisionPath          = `{.metadata.annotations.deployment\.kubernetes\.io/revision}`
 	applyStartTimePath    = `{.metadata.annotations.lynq\.sh/apply-start-time}`
 	appliedHashPath       = `{.metadata.annotations.lynq\.sh/applied-hash}`
 	releasePath           = "{.spec.template.spec.containers[0].env[?(@.name=='RELEASE')].value}"

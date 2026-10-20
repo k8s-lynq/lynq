@@ -1084,10 +1084,10 @@ func TestIsResourceReady_Deployments(t *testing.T) {
 	}
 }
 
-// TestApplyResource_ReportsWhetherTheWriteStartedARollout pins GenerationBumped, which the
-// LynqNode controller uses to tell a rollout it started from a no-op re-apply. The fake client
-// never moves metadata.generation on its own, so only creation reports a bump here; spec
-// changes that move it are covered by the controller's readiness rollout tests.
+// TestApplyResource_ReportsWhetherTheWriteStartedARollout pins StartedRollout, which the
+// LynqNode controller uses to tell a rollout it started from a no-op re-apply. Spec changes
+// against a live Deployment are covered by the controller's readiness rollout tests and by
+// TestStartedRollout.
 func TestApplyResource_ReportsWhetherTheWriteStartedARollout(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1.AddToScheme(scheme))
@@ -1110,11 +1110,97 @@ func TestApplyResource_ReportsWhetherTheWriteStartedARollout(t *testing.T) {
 	}
 
 	// Creating the resource starts a rollout
-	assert.True(t, apply(false).GenerationBumped, "creation starts a rollout")
+	assert.True(t, apply(false).StartedRollout, "creation starts a rollout")
 
 	// A skipped apply writes nothing
 	assert.Equal(t, ApplyResult{}, apply(false), "an elided apply reports nothing")
 
 	// A forced re-apply of the same spec leaves the generation where it was
-	assert.False(t, apply(true).GenerationBumped, "a no-op re-apply does not start a rollout")
+	assert.False(t, apply(true).StartedRollout, "a no-op re-apply does not start a rollout")
+}
+
+func TestStartedRollout(t *testing.T) {
+	object := func(generation int64, spec map[string]interface{}, annotations map[string]string) *unstructured.Unstructured {
+		u := &unstructured.Unstructured{Object: map[string]interface{}{}}
+		if spec != nil {
+			u.Object["spec"] = spec
+		}
+		u.SetGeneration(generation)
+		u.SetAnnotations(annotations)
+		return u
+	}
+	spec := func(image string) map[string]interface{} {
+		return map[string]interface{}{"template": map[string]interface{}{"spec": map[string]interface{}{
+			"containers": []interface{}{map[string]interface{}{"name": "app", "image": image}},
+		}}}
+	}
+
+	tests := []struct {
+		name          string
+		existedBefore bool
+		before, after *unstructured.Unstructured
+		want          bool
+	}{
+		{
+			name:          "creating the resource starts a rollout",
+			existedBefore: false,
+			before:        object(0, nil, nil),
+			after:         object(1, spec("nginx:1.27"), nil),
+			want:          true,
+		},
+		{
+			name:          "a changed spec starts a rollout",
+			existedBefore: true,
+			before:        object(2, spec("nginx:1.26"), nil),
+			after:         object(3, spec("nginx:1.27"), nil),
+			want:          true,
+		},
+		{
+			name:          "re-stamped annotations that moved a Deployment's generation start no rollout",
+			existedBefore: true,
+			before:        object(2, spec("nginx:1.26"), map[string]string{"lynq.sh/applied-hash": "old"}),
+			after:         object(3, spec("nginx:1.26"), map[string]string{"lynq.sh/applied-hash": "new"}),
+			want:          false,
+		},
+		{
+			name:          "a generation two past a stale cached read is assumed to be a rollout even with an equal spec",
+			existedBefore: true,
+			before:        object(2, spec("nginx:1.26"), nil),
+			after:         object(4, spec("nginx:1.26"), nil),
+			want:          true,
+		},
+		{
+			name:          "a generation jump is not judged when the cached read carries no generation",
+			existedBefore: true,
+			before:        object(0, spec("nginx:1.26"), nil),
+			after:         object(4, spec("nginx:1.26"), nil),
+			want:          false,
+		},
+		{
+			name:          "a no-op re-apply starts no rollout",
+			existedBefore: true,
+			before:        object(2, spec("nginx:1.26"), nil),
+			after:         object(2, spec("nginx:1.26"), nil),
+			want:          false,
+		},
+		{
+			name:          "a kind without a spec falls back to a moved generation",
+			existedBefore: true,
+			before:        object(4, nil, nil),
+			after:         object(5, nil, nil),
+			want:          true,
+		},
+		{
+			name:          "a kind without a spec or a moved generation starts no rollout",
+			existedBefore: true,
+			before:        object(0, nil, nil),
+			after:         object(0, nil, nil),
+			want:          false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, startedRollout(tt.existedBefore, tt.before, tt.after))
+		})
+	}
 }
