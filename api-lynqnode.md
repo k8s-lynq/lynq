@@ -96,7 +96,7 @@ status:
 
 ### Degraded
 
-`True` when the node has health issues — even if reconciliation has completed.
+`True` when the node needs an operator — failed or conflicted resources, or template/variables/dependency errors — even if reconciliation has completed. Resources that are merely not ready yet (rolling out, or recovering lost pods) do not degrade a node; they show as `Ready=False` with reason `NotAllResourcesReady`.
 
 | Reason | Status | Meaning |
 |--------|--------|---------|
@@ -104,7 +104,7 @@ status:
 | `ResourceFailuresAndConflicts` | True | Both failed and conflicted resources |
 | `ResourceFailures` | True | Failed resources |
 | `ResourceConflicts` | True | Conflicted resources |
-| `ResourcesNotReady` | True | Resources not yet ready (added v1.1.4) |
+| `ResourcesNotReady` | — | No longer emitted: not-ready alone does not degrade a node (see `NotAllResourcesReady` under Ready) |
 
 ### Progressing
 

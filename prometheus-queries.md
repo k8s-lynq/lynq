@@ -54,11 +54,11 @@ sum(lynqnode_degraded_status) by (reason)
 # Top 10 degraded nodes
 topk(10, lynqnode_degraded_status)
 
-# Degraded nodes with resources not ready (v1.1.4+)
-lynqnode_degraded_status{reason="ResourcesNotReady"} == 1
-
 # Count by specific degraded reason
-sum(lynqnode_degraded_status{reason="ResourcesNotReady"})
+sum(lynqnode_degraded_status{reason="ResourceFailures"})
+
+# Not-ready nodes (not-ready alone is Ready=False/NotAllResourcesReady, never Degraded)
+lynqnode_condition_status{type="Ready"} == 0
 
 # Nodes with resource failures only
 lynqnode_degraded_status{reason="ResourceFailures"} == 1
@@ -422,8 +422,8 @@ lynqnode_resources_ready != lynqnode_resources_desired and lynqnode_resources_de
 # Slow reconciliation
 histogram_quantile(0.95, rate(lynqnode_reconcile_duration_seconds_bucket[5m])) > 30
 
-# Resources not ready (v1.1.4+)
-lynqnode_degraded_status{reason="ResourcesNotReady"} > 0
+# Nodes not ready for 15m+ (what the LynqNodeNotReady alert fires on)
+min_over_time(lynqnode_condition_status{type="Ready"}[15m]) == 0
 
 # Nodes with both failures and conflicts (v1.1.4+)
 lynqnode_degraded_status{reason="ResourceFailuresAndConflicts"} > 0
@@ -437,10 +437,9 @@ v1.1.4 introduces more granular degraded condition reasons and smart reconciliat
 
 ### New Degraded Reasons
 
-```promql
-# All nodes degraded due to resources not ready
-lynqnode_degraded_status{reason="ResourcesNotReady"} == 1
+`ResourcesNotReady` is no longer emitted: not-ready alone is `Ready=False` (`NotAllResourcesReady`), not Degraded. Query not-ready nodes with `lynqnode_condition_status{type="Ready"} == 0`.
 
+```promql
 # Nodes with resource failures only
 lynqnode_degraded_status{reason="ResourceFailures"} == 1
 
