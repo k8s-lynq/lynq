@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"time"
 
@@ -54,6 +55,16 @@ type LynqFormReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
+
+	// now is the clock rollout.progressDeadlineSeconds is measured against. nil means time.Now.
+	now func() time.Time
+}
+
+func (r *LynqFormReconciler) clock() time.Time {
+	if r.now != nil {
+		return r.now()
+	}
+	return time.Now()
 }
 
 // +kubebuilder:rbac:groups=operator.lynq.sh,resources=lynqforms,verbs=get;list;watch;create;update;patch;delete
@@ -71,6 +82,9 @@ func (r *LynqFormReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	tmpl := &lynqv1.LynqForm{}
 	if err := r.Get(ctx, req.NamespacedName, tmpl); err != nil {
 		if errors.IsNotFound(err) {
+			// The form is gone: drop its rollout series, or a deleted form stalled in Failed keeps
+			// LynqFormRolloutFailed firing for the life of the process.
+			deleteRolloutMetrics(req.Name, req.Namespace)
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "Failed to get LynqForm")
@@ -92,7 +106,12 @@ func (r *LynqFormReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if len(validationErrors) > 0 {
 		logger.Info("LynqForm validation failed", "errors", validationErrors)
 		// Update status with validation errors
-		r.updateStatus(ctx, tmpl, validationErrors)
+		if err := r.updateStatus(ctx, tmpl, validationErrors); err != nil {
+			if stderrors.Is(err, errFormChangedDuringStatus) {
+				return ctrl.Result{Requeue: true}, nil
+			}
+			return ctrl.Result{}, err
+		}
 		// Emit warning event for validation failure (only if state changed)
 		if wasValid {
 			r.Recorder.Eventf(tmpl, corev1.EventTypeWarning, "ValidationFailed",
@@ -108,7 +127,12 @@ func (r *LynqFormReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	// Check node statuses and update status
-	r.updateStatus(ctx, tmpl, validationErrors)
+	if err := r.updateStatus(ctx, tmpl, validationErrors); err != nil {
+		if stderrors.Is(err, errFormChangedDuringStatus) {
+			return ctrl.Result{Requeue: true}, nil
+		}
+		return ctrl.Result{}, err
+	}
 
 	return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
 }
@@ -222,69 +246,95 @@ type rolloutStats struct {
 	totalNodes        int32
 	readyNodes        int32
 	updatedNodes      int32 // Nodes updated to target generation
-	updatingNodes     int32 // Updated but not Ready yet
-	readyUpdatedNodes int32 // Updated AND Ready
+	updatingNodes     int32 // Updated but not Ready for the updated spec yet
+	readyUpdatedNodes int32 // Updated AND Ready for the updated spec
+	// stalledNodes are updated nodes that failed, or never became Ready within
+	// progressDeadlineSeconds of their update. Any entry puts the rollout in Phase=Failed.
+	stalledNodes []stalledNode
 }
 
 // checkLynqNodeStatuses checks the status of all nodes using this template
-func (r *LynqFormReconciler) checkLynqNodeStatuses(ctx context.Context, tmpl *lynqv1.LynqForm) (totalLynqNodes, readyLynqNodes int32) {
-	stats := r.calculateRolloutStats(ctx, tmpl)
-	return stats.totalNodes, stats.readyNodes
+func (r *LynqFormReconciler) checkLynqNodeStatuses(ctx context.Context, tmpl *lynqv1.LynqForm) (totalLynqNodes, readyLynqNodes int32, err error) {
+	stats, err := r.calculateRolloutStats(ctx, tmpl)
+	return stats.totalNodes, stats.readyNodes, err
 }
 
-// calculateRolloutStats calculates rollout statistics for a template
-func (r *LynqFormReconciler) calculateRolloutStats(ctx context.Context, tmpl *lynqv1.LynqForm) rolloutStats {
+// calculateRolloutStats calculates rollout statistics for a template.
+//
+// A failed node list is returned as an error, never as zero stats: zero nodes is a real state
+// (Phase=Idle), and publishing it for a read failure would turn a stalled rollout into a false
+// recovery and back on the next pass — two writes, two events and a flapping alert.
+func (r *LynqFormReconciler) calculateRolloutStats(ctx context.Context, tmpl *lynqv1.LynqForm) (rolloutStats, error) {
 	stats := rolloutStats{}
 	targetGenStr := fmt.Sprintf("%d", tmpl.Generation)
 
 	// List all nodes that reference this template
 	nodeList := &lynqv1.LynqNodeList{}
 	if err := r.List(ctx, nodeList, client.InNamespace(tmpl.Namespace)); err != nil {
-		return stats
+		return stats, fmt.Errorf("failed to list LynqNodes: %w", err)
 	}
 
+	now := r.clock()
+	deadline := progressDeadline(tmpl)
+
 	// Filter nodes that use this template
-	for _, node := range nodeList.Items {
+	for i := range nodeList.Items {
+		node := &nodeList.Items[i]
 		if node.Spec.TemplateRef != tmpl.Name {
 			continue
 		}
 
 		stats.totalNodes++
 
-		// Check if node is Ready
-		nodeReady := false
-		for _, condition := range node.Status.Conditions {
-			if condition.Type == ConditionTypeReady && condition.Status == metav1.ConditionTrue {
-				nodeReady = true
-				stats.readyNodes++
-				break
-			}
+		nodeReady := classifyNode(node) == nodeHealthReady
+		if nodeReady {
+			stats.readyNodes++
 		}
 
 		// Check if node has been updated to target generation
 		nodeGen := node.Annotations[lynqv1.AnnotationTemplateGeneration]
 		if nodeGen == targetGenStr {
 			stats.updatedNodes++
-			if nodeReady {
+			// Ready for the previous spec is not progress on this update: it only counts once
+			// the LynqNode controller has observed the updated spec.
+			if reachedReadyForCurrentSpec(node) {
 				stats.readyUpdatedNodes++
 			} else {
 				stats.updatingNodes++
 			}
+			if reason := stallReason(node, deadline, now); reason != "" {
+				stats.stalledNodes = append(stats.stalledNodes, stalledNode{name: node.Name, reason: reason})
+			}
 		}
 	}
 
-	return stats
+	return stats, nil
 }
 
-// updateStatus updates LynqForm status with retry on conflict
-func (r *LynqFormReconciler) updateStatus(ctx context.Context, tmpl *lynqv1.LynqForm, validationErrors []string) {
-	stats := r.calculateRolloutStats(ctx, tmpl)
-	r.updateStatusWithRollout(ctx, tmpl, validationErrors, stats)
+// errFormChangedDuringStatus reports that the LynqForm moved to a new generation after its
+// rollout stats were computed. The stats describe the previous generation's rollout, so they are
+// not published; the reconcile is requeued to compute them for the new one.
+var errFormChangedDuringStatus = stderrors.New("LynqForm generation changed while computing its status")
+
+// updateStatus updates LynqForm status with retry on conflict. A node list that cannot be read,
+// or a form whose generation moved while its stats were computed, is returned without touching
+// the status, metrics or events, so the reconcile retries.
+func (r *LynqFormReconciler) updateStatus(ctx context.Context, tmpl *lynqv1.LynqForm, validationErrors []string) error {
+	stats, err := r.calculateRolloutStats(ctx, tmpl)
+	if err != nil {
+		return err
+	}
+	return r.updateStatusWithRollout(ctx, tmpl, validationErrors, stats)
 }
 
-// updateStatusWithRollout updates LynqForm status including rollout status
-func (r *LynqFormReconciler) updateStatusWithRollout(ctx context.Context, tmpl *lynqv1.LynqForm, validationErrors []string, stats rolloutStats) {
+// updateStatusWithRollout updates LynqForm status including rollout status. It returns only
+// errFormChangedDuringStatus; other write failures are logged, as before.
+func (r *LynqFormReconciler) updateStatusWithRollout(ctx context.Context, tmpl *lynqv1.LynqForm, validationErrors []string, stats rolloutStats) error {
 	logger := log.FromContext(ctx)
+
+	// The phase the stored status had and the one this pass computed, for the transition event.
+	var phaseBefore, phaseAfter lynqv1.RolloutPhase
+	var rolloutMessage string
 
 	// Retry status update on conflict
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -293,6 +343,12 @@ func (r *LynqFormReconciler) updateStatusWithRollout(ctx context.Context, tmpl *
 		latest := &lynqv1.LynqForm{}
 		if err := r.Get(ctx, key, latest); err != nil {
 			return err
+		}
+
+		// stats target tmpl.Generation; publishing them under a newer one would report the previous
+		// rollout's stall (and RolloutFailed) against a rollout that has just started.
+		if latest.Generation != tmpl.Generation {
+			return errFormChangedDuringStatus
 		}
 
 		// Snapshot status before modifications to detect no-op writes
@@ -304,7 +360,15 @@ func (r *LynqFormReconciler) updateStatusWithRollout(ctx context.Context, tmpl *
 		latest.Status.ReadyNodes = stats.readyNodes
 
 		// Update rollout status if maxSkew is configured
+		phaseBefore, phaseAfter, rolloutMessage = "", "", ""
+		if latest.Status.Rollout != nil {
+			phaseBefore = latest.Status.Rollout.Phase
+		}
 		r.updateRolloutStatus(latest, stats)
+		if latest.Status.Rollout != nil {
+			phaseAfter = latest.Status.Rollout.Phase
+			rolloutMessage = latest.Status.Rollout.Message
+		}
 
 		// Prepare Valid condition — use meta.SetStatusCondition to preserve LastTransitionTime
 		validCondition := metav1.Condition{
@@ -348,9 +412,27 @@ func (r *LynqFormReconciler) updateStatusWithRollout(ctx context.Context, tmpl *
 		return r.Status().Update(ctx, latest)
 	})
 
+	if stderrors.Is(err, errFormChangedDuringStatus) {
+		logger.V(1).Info("LynqForm changed while computing its status; requeueing",
+			"computedGeneration", tmpl.Generation)
+		return err
+	}
 	if err != nil {
 		logger.Error(err, "Failed to update LynqForm status after retries")
+		return nil
 	}
+
+	// Announce stall transitions once. The stored phase only changes through the write above, so
+	// a transition is reported exactly when it was persisted, and a restart that finds the phase
+	// already Failed does not announce it again.
+	switch {
+	case phaseAfter == lynqv1.RolloutPhaseFailed && phaseBefore != lynqv1.RolloutPhaseFailed:
+		r.Recorder.Event(tmpl, corev1.EventTypeWarning, "RolloutFailed", rolloutMessage)
+	case phaseBefore == lynqv1.RolloutPhaseFailed && phaseAfter != lynqv1.RolloutPhaseFailed && phaseAfter != "":
+		r.Recorder.Eventf(tmpl, corev1.EventTypeNormal, "RolloutRecovered",
+			"Rollout is no longer stalled (phase %s): %s", phaseAfter, rolloutMessage)
+	}
+	return nil
 }
 
 // updateRolloutStatus updates the rollout status based on current statistics
@@ -360,9 +442,7 @@ func (r *LynqFormReconciler) updateRolloutStatus(tmpl *lynqv1.LynqForm, stats ro
 		// Clear rollout status if maxSkew is not configured
 		tmpl.Status.Rollout = nil
 		// Clear metrics when rollout is not configured
-		metrics.FormRolloutUpdatingNodes.DeleteLabelValues(tmpl.Name, tmpl.Namespace)
-		metrics.FormRolloutPhase.DeleteLabelValues(tmpl.Name, tmpl.Namespace)
-		metrics.FormRolloutProgress.DeleteLabelValues(tmpl.Name, tmpl.Namespace)
+		deleteRolloutMetrics(tmpl.Name, tmpl.Namespace)
 		return
 	}
 
@@ -372,6 +452,11 @@ func (r *LynqFormReconciler) updateRolloutStatus(tmpl *lynqv1.LynqForm, stats ro
 	}
 
 	rollout := tmpl.Status.Rollout
+	// A CompletionTime stamped when the rollout stalled describes the failure, not the success
+	// that may follow it.
+	if rollout.Phase == lynqv1.RolloutPhaseFailed && len(stats.stalledNodes) == 0 {
+		rollout.CompletionTime = nil
+	}
 	rollout.TargetGeneration = tmpl.Generation
 	rollout.TotalNodes = stats.totalNodes
 	rollout.UpdatedNodes = stats.updatedNodes
@@ -382,6 +467,20 @@ func (r *LynqFormReconciler) updateRolloutStatus(tmpl *lynqv1.LynqForm, stats ro
 	if stats.totalNodes == 0 {
 		rollout.Phase = lynqv1.RolloutPhaseIdle
 		rollout.Message = "No nodes using this template"
+	} else if len(stats.stalledNodes) > 0 {
+		// An updated node failed or never became Ready within progressDeadlineSeconds. It keeps
+		// its maxSkew slot, so the rollout cannot progress past it: report that instead of an
+		// InProgress that never ends. Clears by itself once the node recovers or is fixed.
+		rollout.Phase = lynqv1.RolloutPhaseFailed
+		rollout.Message = formatStalledMessage(stats.stalledNodes, progressDeadline(tmpl))
+		if rollout.CompletionTime == nil {
+			now := metav1.Now()
+			rollout.CompletionTime = &now
+		}
+		if rollout.StartTime == nil {
+			now := metav1.Now()
+			rollout.StartTime = &now
+		}
 	} else if stats.readyUpdatedNodes == stats.totalNodes {
 		// All nodes are updated and ready - rollout complete
 		rollout.Phase = lynqv1.RolloutPhaseComplete
@@ -423,6 +522,13 @@ func (r *LynqFormReconciler) updateRolloutStatus(tmpl *lynqv1.LynqForm, stats ro
 		progress = float64(stats.readyUpdatedNodes) / float64(stats.totalNodes) * 100
 	}
 	metrics.FormRolloutProgress.WithLabelValues(tmpl.Name, tmpl.Namespace).Set(progress)
+}
+
+// deleteRolloutMetrics drops every rollout series of a LynqForm.
+func deleteRolloutMetrics(name, namespace string) {
+	metrics.FormRolloutUpdatingNodes.DeleteLabelValues(name, namespace)
+	metrics.FormRolloutPhase.DeleteLabelValues(name, namespace)
+	metrics.FormRolloutProgress.DeleteLabelValues(name, namespace)
 }
 
 // SetupWithManager sets up the controller with the Manager.

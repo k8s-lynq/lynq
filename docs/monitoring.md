@@ -84,11 +84,11 @@ Import `config/monitoring/grafana-dashboard.json` via **Dashboards → Import** 
 | `lynqnode_condition_status` | Gauge | `lynqnode`, `namespace`, `type` | Condition status (0=False, 1=True, 2=Unknown) |
 | `lynqnode_degraded_status` | Gauge | `lynqnode`, `namespace`, `reason` | Degraded status (0=healthy, 1=degraded) |
 | `hub_desired` | Gauge | `hub`, `namespace` | Desired LynqNode count for a hub |
-| `hub_ready` | Gauge | `hub`, `namespace` | Ready LynqNode count |
-| `hub_failed` | Gauge | `hub`, `namespace` | Failed LynqNode count |
+| `hub_ready` | Gauge | `hub`, `namespace` | LynqNodes with `Ready=True` |
+| `hub_failed` | Gauge | `hub`, `namespace` | LynqNodes that need an operator: failed or conflicted resources, or `Degraded`. Nodes rolling out or recovering lost pods are in neither `hub_ready` nor `hub_failed` |
 | `apply_attempts_total` | Counter | `kind`, `result`, `conflict_policy` | Resource apply attempts |
 | `lynqform_rollout_updating_nodes` | Gauge | `form`, `namespace` | Nodes currently being updated (v1.1.16+) |
-| `lynqform_rollout_phase` | Gauge | `form`, `namespace` | Rollout phase: 0=Idle, 1=InProgress, 2=Failed, 3=Complete (v1.1.16+) |
+| `lynqform_rollout_phase` | Gauge | `form`, `namespace` | Rollout phase: 0=Idle, 1=InProgress, 2=Failed, 3=Complete (v1.1.16+). Failed = an updated node failed or exceeded `progressDeadlineSeconds` |
 | `lynqform_rollout_progress` | Gauge | `form`, `namespace` | Rollout progress percentage (v1.1.16+) |
 
 For PromQL queries using these metrics, see [Prometheus Query Examples](prometheus-queries.md).
@@ -151,7 +151,7 @@ kubectl apply -f config/prometheus/alerts.yaml
 | Severity | Alerts |
 |----------|--------|
 | Critical | `LynqNodeDegraded`, `LynqNodeResourcesFailed`, `LynqNodeNotReady`, `LynqNodeStatusUnknown`, `HubManyNodesFailure` |
-| Warning | `LynqNodeResourcesMismatch`, `LynqNodeResourcesConflicted`, `LynqNodeHighConflictRate`, `HubNodesFailure`, `HubDesiredCountMismatch`, `LynqNodeReconciliationErrors`, `LynqNodeReconciliationSlow`, `HighApplyFailureRate` |
+| Warning | `LynqNodeResourcesMismatch`, `LynqNodeResourcesConflicted`, `LynqNodeHighConflictRate`, `HubNodesFailure`, `HubDesiredCountMismatch`, `LynqFormRolloutFailed`, `LynqNodeReconciliationErrors`, `LynqNodeReconciliationSlow`, `HighApplyFailureRate` |
 | Info | `LynqNodeNewConflictsDetected` |
 
 For per-alert diagnosis and resolution steps, see [Alert Runbooks](alert-runbooks.md).

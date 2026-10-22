@@ -300,7 +300,38 @@ func TestCountLynqNodeStatus(t *testing.T) {
 				},
 			},
 			wantReady:  1,
-			wantFailed: 2, // False and Unknown both count as failed
+			wantFailed: 0, // Ready=False/Unknown without a failure signal is progressing, not failed
+		},
+		{
+			name: "recovering nodes are in neither count while failing nodes are failed",
+			registry: &lynqv1.LynqHub{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-registry",
+					Namespace: "default",
+				},
+			},
+			nodes: []lynqv1.LynqNode{
+				hubNode("recovering", lynqv1.LynqNodeStatus{Conditions: []metav1.Condition{
+					{Type: ConditionTypeReady, Status: metav1.ConditionFalse, Reason: ReasonNotAllResourcesReady},
+					{Type: ConditionTypeDegraded, Status: metav1.ConditionFalse},
+				}}),
+				hubNode("degraded", lynqv1.LynqNodeStatus{Conditions: []metav1.Condition{
+					{Type: ConditionTypeReady, Status: metav1.ConditionFalse},
+					{Type: ConditionTypeDegraded, Status: metav1.ConditionTrue},
+				}}),
+				hubNode("conflicted", lynqv1.LynqNodeStatus{Conditions: []metav1.Condition{
+					{Type: ConditionTypeReady, Status: metav1.ConditionFalse},
+					{Type: ConditionTypeConflicted, Status: metav1.ConditionTrue},
+				}}),
+				hubNode("resources-failed", lynqv1.LynqNodeStatus{FailedResources: 1, Conditions: []metav1.Condition{
+					{Type: ConditionTypeReady, Status: metav1.ConditionFalse},
+				}}),
+				hubNode("ready", lynqv1.LynqNodeStatus{Conditions: []metav1.Condition{
+					{Type: ConditionTypeReady, Status: metav1.ConditionTrue},
+				}}),
+			},
+			wantReady:  1,
+			wantFailed: 3,
 		},
 		{
 			name: "nodes without Ready condition",
@@ -330,7 +361,19 @@ func TestCountLynqNodeStatus(t *testing.T) {
 				},
 			},
 			wantReady:  0,
-			wantFailed: 0, // No Ready condition means not counted
+			wantFailed: 1, // Degraded=True is failed even before a Ready condition is published
+		},
+		{
+			name: "node not reconciled yet",
+			registry: &lynqv1.LynqHub{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-registry",
+					Namespace: "default",
+				},
+			},
+			nodes:      []lynqv1.LynqNode{hubNode("fresh", lynqv1.LynqNodeStatus{})},
+			wantReady:  0,
+			wantFailed: 0, // No conditions at all: progressing
 		},
 	}
 
@@ -360,6 +403,18 @@ func TestCountLynqNodeStatus(t *testing.T) {
 			assert.Equal(t, tt.wantReady, ready, "Expected %d ready nodes, got %d", tt.wantReady, ready)
 			assert.Equal(t, tt.wantFailed, failed, "Expected %d failed nodes, got %d", tt.wantFailed, failed)
 		})
+	}
+}
+
+// hubNode builds a LynqNode labelled for "test-registry" with the given status.
+func hubNode(name string, status lynqv1.LynqNodeStatus) lynqv1.LynqNode {
+	return lynqv1.LynqNode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "default",
+			Labels:    map[string]string{"lynq.sh/hub": "test-registry"},
+		},
+		Status: status,
 	}
 }
 
@@ -929,106 +984,6 @@ func TestCreateNodeIgnoresAlreadyExists(t *testing.T) {
 
 	// Verify that AlreadyExists error is returned (will be ignored by caller)
 	assert.Error(t, err, "createLynqNode should return error when node already exists")
-}
-
-// TestIsNodeReady tests the isNodeReady helper function
-func TestIsNodeReady(t *testing.T) {
-	tests := []struct {
-		name     string
-		node     *lynqv1.LynqNode
-		expected bool
-	}{
-		{
-			name: "node with Ready=True condition",
-			node: &lynqv1.LynqNode{
-				Status: lynqv1.LynqNodeStatus{
-					Conditions: []metav1.Condition{
-						{
-							Type:   "Ready",
-							Status: metav1.ConditionTrue,
-						},
-					},
-				},
-			},
-			expected: true,
-		},
-		{
-			name: "node with Ready=False condition",
-			node: &lynqv1.LynqNode{
-				Status: lynqv1.LynqNodeStatus{
-					Conditions: []metav1.Condition{
-						{
-							Type:   "Ready",
-							Status: metav1.ConditionFalse,
-						},
-					},
-				},
-			},
-			expected: false,
-		},
-		{
-			name: "node with Ready=Unknown condition",
-			node: &lynqv1.LynqNode{
-				Status: lynqv1.LynqNodeStatus{
-					Conditions: []metav1.Condition{
-						{
-							Type:   "Ready",
-							Status: metav1.ConditionUnknown,
-						},
-					},
-				},
-			},
-			expected: false,
-		},
-		{
-			name: "node without Ready condition",
-			node: &lynqv1.LynqNode{
-				Status: lynqv1.LynqNodeStatus{
-					Conditions: []metav1.Condition{
-						{
-							Type:   "Degraded",
-							Status: metav1.ConditionTrue,
-						},
-					},
-				},
-			},
-			expected: false,
-		},
-		{
-			name: "node with empty conditions",
-			node: &lynqv1.LynqNode{
-				Status: lynqv1.LynqNodeStatus{
-					Conditions: []metav1.Condition{},
-				},
-			},
-			expected: false,
-		},
-		{
-			name: "node with multiple conditions including Ready=True",
-			node: &lynqv1.LynqNode{
-				Status: lynqv1.LynqNodeStatus{
-					Conditions: []metav1.Condition{
-						{
-							Type:   "Degraded",
-							Status: metav1.ConditionFalse,
-						},
-						{
-							Type:   "Ready",
-							Status: metav1.ConditionTrue,
-						},
-					},
-				},
-			},
-			expected: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := isNodeReady(tt.node)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
 }
 
 // TestCountUpdatingNodes tests the countUpdatingNodes function for rollout tracking

@@ -281,7 +281,8 @@ func TestCheckLynqNodeStatuses(t *testing.T) {
 				Scheme: scheme,
 			}
 
-			totalLynqNodes, readyLynqNodes := r.checkLynqNodeStatuses(ctx, tt.template)
+			totalLynqNodes, readyLynqNodes, err := r.checkLynqNodeStatuses(ctx, tt.template)
+			require.NoError(t, err)
 
 			assert.Equal(t, tt.wantTotalNodes, totalLynqNodes, "Expected %d total nodes, got %d", tt.wantTotalNodes, totalLynqNodes)
 			assert.Equal(t, tt.wantReadyNodes, readyLynqNodes, "Expected %d ready nodes, got %d", tt.wantReadyNodes, readyLynqNodes)
@@ -695,7 +696,8 @@ func TestCalculateRolloutStats(t *testing.T) {
 				Scheme: scheme,
 			}
 
-			stats := r.calculateRolloutStats(ctx, tmpl)
+			stats, err := r.calculateRolloutStats(ctx, tmpl)
+			require.NoError(t, err)
 
 			assert.Equal(t, tt.wantTotalNodes, stats.totalNodes, "totalNodes mismatch")
 			assert.Equal(t, tt.wantReadyNodes, stats.readyNodes, "readyNodes mismatch")

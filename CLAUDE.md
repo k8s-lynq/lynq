@@ -96,7 +96,9 @@ LynqNode Controller -> Reconciles each LynqNode -> SSA applies resources
 - `status.referencingTemplates` = count of LynqForms referencing this hub
 - `status.desired` = `referencingTemplates * activeRows` (total LynqNode CRs that should exist)
 - `status.ready` = count of Ready LynqNodes across all templates
-- `status.failed` = count of failed LynqNodes across all templates
+- `status.failed` = count of failed LynqNodes across all templates: failed or conflicted
+  resources, or `Degraded=True`. A node that is rolling out or recovering lost pods is in
+  neither `ready` nor `failed` (see "One LynqNode classification" in Common Pitfalls)
 - **Garbage Collection** ✅: Automatic LynqNode CR cleanup when:
   - Database row is deleted
   - Row's `activate` field becomes false
@@ -123,6 +125,13 @@ LynqNode Controller -> Reconciles each LynqNode -> SSA applies resources
 - References a `hubId`
 - Contains arrays of resource types: `serviceAccounts`, `deployments`, `statefulSets`, `daemonSets`, `services`, `ingresses`, `configMaps`, `secrets`, `persistentVolumeClaims`, `jobs`, `cronJobs`, `podDisruptionBudgets`, `networkPolicies`, `horizontalPodAutoscalers`, `manifests` (raw)
 - Each resource follows `TResource` structure (see api/v1/common_types.go:58)
+- `spec.rollout.maxSkew` throttles how many LynqNodes are updating at once; a node that is not
+  Ready (failed or recovering included) keeps its slot. `spec.rollout.progressDeadlineSeconds`
+  reports a stall: `status.rollout.phase=Failed` when an updated node is failed, or has not
+  become Ready since its update for longer than the deadline. Only a LynqForm rollout (an update
+  that changes the node's template generation) is timed; a data-only update is caught by the
+  LynqNode turning failed. The node keeps its slot — the rollout stops and says so, it does not
+  skip the node
 - All `*Template` fields support Go `text/template` + sprig functions
 
 **Template Variables Available**:
@@ -310,7 +319,12 @@ spec:
      failed read denies admission rather than admitting blindly.
    - Only consulted when a node actually needs creating or updating, so a steady-state sync
      performs no uncached reads at all.
+   - A node that needs no update but completed its current one gets its
+     `lynq.sh/rollout-completed-generation` recorded (once per LynqForm rollout; see the
+     progressDeadlineSeconds pitfall).
 6. Update `status.{referencingTemplates, desired, ready, failed}`
+   - `ready`/`failed` come from `classifyNode`, the same classification the maxSkew count and
+     the LynqForm rollout status use.
    - `updateStatus` skips the write when the status is unchanged. It must stay that way: a
      no-op write here is a LynqHub watch event, which is another reconcile.
 
@@ -744,7 +758,8 @@ timeout. A new top-level `Describe` that matches no group's focus falls into `ot
 group's runtime approaches the timeout, move the slow scenarios to their own top-level
 `Describe`, add a group that focuses on it, and add the same name to `other`'s skip list.
 For example, `Readiness Regression` runs on its own because its gated-restart scenarios hold a
-Deployment not ready for longer than one timeout plus one periodic requeue.
+Deployment not ready for longer than one timeout plus one periodic requeue, and `Rollout Progress
+Deadline` because each scenario waits out a 60s `progressDeadlineSeconds` plus a LynqForm requeue.
 
 **Critical Rules**:
 1. **Always use 60-minute timeout minimum**: E2E tests build Docker images, create Kind clusters, install cert-manager, and deploy the operator. This takes significant time.
@@ -888,6 +903,67 @@ Deployment not ready for longer than one timeout plus one periodic requeue.
     readiness transition, breaking invariant 6 and the exactly-one-write-per-apply contract. It is
     released when the LynqNode is cleaned up or found NotFound, and when a LynqNode of the same
     name shows up with a new UID (a delete/recreate no reconcile observed).
+- **One LynqNode classification — `classifyNode` (`internal/controller/node_health.go`).**
+  - ready = `Ready=True`; failed = `status.failedResources > 0` OR `Conflicted=True` OR
+    `Degraded=True` (failure wins over a stale `Ready=True`); everything else — rolling out,
+    recovering a regression, not reconciled yet (no Ready condition) — is progressing.
+  - LynqHub `status.ready`/`status.failed` (and `hub_ready`/`hub_failed`), the maxSkew
+    "currently updating" count, and the LynqForm rollout status all consume it. Counting
+    `Ready!=True` as failed made every spot drain raise the hub's failure alerts while the
+    rollout counted the same node as merely updating.
+  - Progressing nodes have no CRD field or metric of their own: they are
+    `hub_desired - hub_ready - hub_failed`, together with nodes not created yet.
+- **progressDeadlineSeconds measures "the LynqForm rollout never completed" — nothing else.**
+  - A LynqForm rollout is an update that changes the node's `lynq.sh/template-generation` (or
+    creates the node). A data-only update — `hostOrUrl`/`activate`/`extra` changed under the same
+    generation — is not one: it moves `rollout-update-start` (the maxSkew safety margin reads it)
+    but leaves the completion marker as it was. Its failures are the LynqNode's to report: a
+    readiness timeout or apply error makes the node failed, and `stallReason` stalls on failed at
+    once, marker or not. This matches maxSkew, which also counts per template generation.
+  - `lynq.sh/rollout-update-start` only moves when the hub updates the node, so it is as old as
+    the update on a node that completed it and regressed much later (spot drain, external
+    `kubectl rollout restart`). Timing that regression against it reports Phase=Failed the
+    instant the node is seen not ready — the rollout twin of the readiness-timeout trap above.
+  - Completion is therefore durable: `lynq.sh/rollout-completed-generation` on the LynqNode. The
+    hub sets it to `""` in the same write that creates the node or moves it to a new template
+    generation (judged on the uncached read inside that write), and to the template generation
+    once a sync sees the node Ready for its current spec (`reachedReadyForCurrentSpec`:
+    `Ready=True` AND `status.observedGeneration == metadata.generation`; a Ready condition from
+    before the LynqNode controller observed the update is neither progress nor completion).
+    `stallReason` times only a node whose marker is pending, from `rollout-update-start`;
+    completed nodes are stalled only by `classifyNode == failed`. A restart or leader change reads
+    the same annotations, so it neither fakes nor delays a verdict.
+  - The completion write is one per node per update, never on a no-op sync
+    (`needsRolloutCompletionMark` is false once written), and only after re-reading the node
+    uncached and confirming it still carries the observed update and is not being deleted
+    (`recordRolloutCompletion`). It is metadata-only: the LynqNode generation does not move, so
+    the hub's `GenerationChangedPredicate` drops the event. It is not free, though. The LynqNode
+    controller has no predicate and always runs a spec reconcile, so the event costs one full
+    LynqNode reconcile: a live GET per child resource (the applier reads unstructured objects,
+    which bypass the cache), the `applied-hash` comparison and the readiness checks — with no
+    child write and no status write, since nothing changed. The LynqForm controller also takes
+    the event and re-runs its cached LynqNode LIST and O(N) classification. For a 378-node
+    rollout with R child resources per node, that is 378 hub GETs + 378 hub writes, 378 LynqNode
+    reconciles with about 378×R live GETs, and at most 378 LynqForm LIST passes (fewer, as the
+    workqueue coalesces them), spread over the rollout. The marker is not a template variable —
+    keep it out of `buildTemplateVariablesFromAnnotations` and `computeRenderCacheKey`, or the
+    reconcile it triggers would also re-render and re-apply.
+  - A node without the key predates it and counts as completed, so an upgrade cannot fail a
+    rollout over a node that regressed before it; the hub does not backfill it.
+  - A version without the marker (a rollback) neither resets nor records it. A generation change
+    it makes leaves a marker for an older generation, which is pending, so the rollout is timed
+    after the re-upgrade; a data-only update it makes is not a rollout, as above.
+  - Residual: a data-only update re-stamps `rollout-update-start`, so a pending rollout that
+    keeps receiving data updates is timed from the latest one. Its failures still stall it.
+  - Residual: completion is observed per hub sync. A node that turns Ready and regresses within
+    one `syncInterval` of its update looks never-completed and is timed from its update stamp.
+  - The Failed message lists sorted node names (capped) and no elapsed times, so an unchanged
+    stall renders identically and does not rewrite the LynqForm status. A failed LynqNode list
+    is a reconcile error, never zero stats: publishing "no nodes" would flip a Failed rollout to
+    Idle and back, with two writes and two events. Likewise, stats computed for one LynqForm
+    generation are not written if the form has moved on by the status write
+    (`errFormChangedDuringStatus`): the reconcile requeues instead of reporting the previous
+    rollout's stall against the new one.
 - **Skip-decision is annotation-driven only — there is no in-memory cache.**
   - `shouldSkipApply` reads `lynq.sh/applied-hash` from the live resource. If it matches the
     desired hash, the apply is elided. There is no fast-path / slow-path divergence and no

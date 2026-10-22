@@ -83,7 +83,7 @@ spec:
             component: lynq
           annotations:
             summary: "Hub {{ $labels.hub }} has widespread failures"
-            description: "Hub {{ $labels.hub }} in namespace {{ $labels.namespace }} has {{ $value }} failed nodes (>5 or >50% of desired). This indicates a systemic issue requiring immediate attention."
+            description: "Hub {{ $labels.hub }} in namespace {{ $labels.namespace }} has more than 5 failed nodes, or more than half of its desired nodes failed (compare hub_failed with hub_desired on the dashboard; the alert value is a count or a ratio depending on which side matched). A node counts as failed when it has failed or conflicted resources or is Degraded (template, variables or dependency errors); nodes that are merely rolling out or recovering lost pods are not counted. This indicates a systemic issue requiring immediate attention."
             dashboard: "https://grafana.example.com/d/lynq/hub-overview?var-hub={{ $labels.hub }}&var-namespace={{ $labels.namespace }}"
             runbook_url: "https://lynq.sh/alert-runbooks#hubmanynodesfailure"
 
@@ -144,7 +144,7 @@ spec:
             component: lynq
           annotations:
             summary: "Hub {{ $labels.hub }} has {{ $value }} failed node(s)"
-            description: "Hub {{ $labels.hub }} in namespace {{ $labels.namespace }} has {{ $value }} failed nodes for 10+ minutes. This may indicate provisioning issues affecting some nodes."
+            description: "Hub {{ $labels.hub }} in namespace {{ $labels.namespace }} has {{ $value }} failed nodes for 10+ minutes. A node counts as failed when it has failed or conflicted resources or is Degraded; nodes that are merely rolling out or recovering lost pods are not counted. This may indicate provisioning issues affecting some nodes."
             dashboard: "https://grafana.example.com/d/lynq/hub-overview?var-hub={{ $labels.hub }}&var-namespace={{ $labels.namespace }}"
             runbook_url: "https://lynq.sh/alert-runbooks#hubnodesfailure"
 
@@ -160,9 +160,29 @@ spec:
             component: lynq
           annotations:
             summary: "Hub {{ $labels.hub }} has node count mismatch"
-            description: "Hub {{ $labels.hub }} in namespace {{ $labels.namespace }} has a node count mismatch — ready count does not equal desired count, but no failures are detected. Hub sync may be delayed."
+            description: "Hub {{ $labels.hub }} in namespace {{ $labels.namespace }} has had fewer ready nodes than desired for 20+ minutes with none failed. The gap (hub_desired - hub_ready) is nodes that are rolling out, recovering lost pods, held back by a LynqForm maxSkew, or not created yet. A rollout stalled on such a node is reported separately by LynqFormRolloutFailed; otherwise hub sync may be delayed."
             dashboard: "https://grafana.example.com/d/lynq/hub-overview?var-hub={{ $labels.hub }}&var-namespace={{ $labels.namespace }}"
             runbook_url: "https://lynq.sh/alert-runbooks#hubdesiredcountmismatch"
+
+        # Warning: LynqForm rollout stalled
+        # Phase=Failed means an updated node failed, or never became Ready within the form's
+        # rollout.progressDeadlineSeconds. The node keeps its maxSkew slot, so the rollout does
+        # not advance until it is fixed. Warning, not critical: nodes not yet updated keep serving
+        # the previous template, and a failed node already pages through LynqNodeDegraded /
+        # LynqNodeResourcesFailed. The phase already includes the deadline wait (and is persisted
+        # in the LynqForm status, so a controller restart neither clears nor re-raises it); `for`
+        # only filters a node that fails briefly and recovers on its own.
+        - alert: LynqFormRolloutFailed
+          expr: lynqform_rollout_phase == 2
+          for: 5m
+          labels:
+            severity: warning
+            component: lynq
+          annotations:
+            summary: "LynqForm {{ $labels.form }} rollout is stalled"
+            description: "The rollout of LynqForm {{ $labels.form }} in namespace {{ $labels.namespace }} has been stalled for 5+ minutes: an updated node failed or did not become Ready within progressDeadlineSeconds, and it holds a maxSkew slot so no further node is updated. Check `kubectl get lynqform {{ $labels.form }} -n {{ $labels.namespace }} -o jsonpath='{.status.rollout.message}'` for the nodes. Fix the node or revert the LynqForm change; the rollout resumes on its own."
+            dashboard: "https://grafana.example.com/d/lynq/hub-overview?var-namespace={{ $labels.namespace }}"
+            runbook_url: "https://lynq.sh/alert-runbooks#lynqformrolloutfailed"
 
         # Warning: High reconciliation error rate
         - alert: LynqNodeReconciliationErrors

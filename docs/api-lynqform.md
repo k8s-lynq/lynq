@@ -133,7 +133,7 @@ Controls how many LynqNodes are updated simultaneously when the form template ch
 ```yaml
 rollout:
   maxSkew: 5                   # update at most 5 nodes at a time
-  progressDeadlineSeconds: 600 # 10-minute timeout per node
+  progressDeadlineSeconds: 600 # report a node update that is not Ready within 10 minutes
 ```
 
 **`maxSkew` behavior:**
@@ -142,6 +142,48 @@ rollout:
 - `N`: Sliding window — up to N nodes updating in parallel
 
 Each LynqForm's rollout is independent; multiple forms pointing at the same hub do not interfere.
+
+**`progressDeadlineSeconds` behavior** (default `600`, range `60`–`3600`):
+
+The deadline times **LynqForm rollouts**: updates that move a node to a new form generation (and
+newly created nodes). The rollout status reports `phase: Failed` when an updated node (one
+already on the form's current generation) either:
+
+- is **failed** — it has failed or conflicted resources, or is `Degraded` (template, variables or
+  dependency errors), or
+- has **not become Ready since it was updated to that generation** and its update started more
+  than `progressDeadlineSeconds` ago.
+
+An update that only changes the node's data from the hub (row values such as `hostOrUrl`,
+`activate` or extra mappings, under the same form generation) is not a LynqForm rollout and is
+not timed by this deadline. If it never becomes Ready, the LynqNode reports it as failed once its
+resources exceed their `timeoutSeconds`, and the rollout turns `Failed` at that point.
+
+`status.rollout.message` lists the nodes (up to 5, then a count) and the reason for each, a
+`RolloutFailed` warning event is emitted once when the phase turns Failed, and
+`lynqform_rollout_phase` reports `2`. The phase leaves `Failed` on its own — with a
+`RolloutRecovered` event — once those nodes become Ready or are fixed by a new LynqForm change.
+
+The deadline only measures **an update that never completed**. A node that became Ready after its
+update and later drops out of it (node drain, lost pod, `kubectl rollout restart`) is recovering,
+not stalled, and never fails the rollout by deadline, however long ago the update was.
+
+`Failed` exposes the stall; it does not skip the node. A failed or stuck node keeps its `maxSkew`
+slot, so with `maxSkew: 1` no further node is updated until it recovers. Fix the node or revert
+the LynqForm change to move the rollout on.
+
+Completion is recorded on the node itself: once the operator sees an updated node Ready for its
+new spec, it sets the annotation `lynq.sh/rollout-completed-generation` to the form generation
+(one write per node per rollout; the next update to a new form generation resets it to `""` in the
+same write that updates the node, and a data-only update leaves it as it is). The verdict therefore survives an operator restart or leader change unchanged — a
+completed node is not timed after a restart, and a node whose update never completed is timed from
+its original update, not from the restart. Nodes created by an operator version without this
+annotation count as completed; only their failures stall the rollout. After a rollback to such a
+version and a re-upgrade, a node it moved to a newer form generation still carries the older
+generation's marker, so that rollout counts as not completed and is timed.
+
+Completion is observed at each hub sync (`syncInterval`). A node that becomes Ready and regresses
+again within one sync of its update, before the operator sees it Ready, counts as not completed.
 
 ## Status
 
@@ -152,15 +194,15 @@ status:
   readyNodes: int32            # LynqNodes with Ready=True
 
   rollout:                     # Only populated when maxSkew > 0
-    phase: string              # Idle | InProgress | Failed | Complete
+    phase: string              # Idle | InProgress | Failed | Complete (Failed: see progressDeadlineSeconds)
     targetGeneration: int64
     totalNodes: int32
     updatedNodes: int32        # Updated to target generation
-    updatingNodes: int32       # Updated but not yet ready
-    readyUpdatedNodes: int32   # Updated AND ready
+    updatingNodes: int32       # Updated but not yet ready for the updated spec
+    readyUpdatedNodes: int32   # Updated AND ready for the updated spec (observedGeneration caught up)
     startTime: timestamp
-    completionTime: timestamp
-    message: string
+    completionTime: timestamp  # When the rollout completed, or when it turned Failed
+    message: string            # On Failed: the stalled nodes and why
 
   conditions:
   - type: Valid
