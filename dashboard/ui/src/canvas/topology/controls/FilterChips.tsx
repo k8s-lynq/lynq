@@ -1,4 +1,5 @@
 import { useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { TopologyNode, ResourceStatus } from '@/types/lynq'
 import type { TopologyFilters } from '../types'
 import { Button } from '@/components/ui/button'
@@ -19,15 +20,10 @@ interface FilterChipsProps {
   onReset: () => void
 }
 
-const STATUS_OPTIONS: { value: ResourceStatus | 'all'; label: string }[] = [
-  { value: 'all', label: 'All Status' },
-  { value: 'ready', label: 'Ready' },
-  { value: 'failed', label: 'Failed' },
-  { value: 'pending', label: 'Pending' },
-  { value: 'skipped', label: 'Skipped' },
-]
+const STATUS_OPTIONS: (ResourceStatus | 'all')[] = ['all', 'ready', 'pending', 'failed', 'skipped']
 
 export function FilterChips({ filters, formNodes, namespaces, onChange, onReset }: FilterChipsProps) {
+  const { t } = useTranslation()
   const hasActiveFilter = filters.status !== 'all' || !!filters.namespace || !!filters.formId
 
   const set = useCallback(<K extends keyof TopologyFilters>(key: K, value: TopologyFilters[K]) => {
@@ -46,8 +42,8 @@ export function FilterChips({ filters, formNodes, namespaces, onChange, onReset 
         </SelectTrigger>
         <SelectContent>
           {STATUS_OPTIONS.map((o) => (
-            <SelectItem key={o.value} value={o.value} className="text-xs">
-              {o.label}
+            <SelectItem key={o} value={o} className="text-xs">
+              {t(`status.${o}`)}
             </SelectItem>
           ))}
         </SelectContent>

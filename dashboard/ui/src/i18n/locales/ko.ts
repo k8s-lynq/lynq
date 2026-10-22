@@ -32,7 +32,7 @@ const ko = {
   // Status
   status: {
     ready: "준비됨",
-    pending: "대기 중",
+    pending: "진행 중",
     failed: "실패",
     skipped: "건너뜀",
     all: "모든 상태",
@@ -107,6 +107,12 @@ const ko = {
     relatedNodes: "관련 노드",
     noNodesYet: "이 허브에서 생성된 노드가 없습니다.",
     moreNodes: "+{{count}}개 더",
+    progressingHint:
+      "롤아웃 중이거나 회복 중이거나 아직 생성되지 않은 노드입니다. 준비됨에도 실패에도 포함되지 않습니다.",
+    failedHint:
+      "운영자 조치가 필요한 노드입니다: 리소스 실패, 충돌, 또는 Degraded.",
+    notCreatedHint: "그중 {{count}}개는 아직 생성되지 않았습니다.",
+    dbDisconnected: "데이터소스 연결 끊김",
   },
 
   // Forms Page
@@ -153,6 +159,18 @@ const ko = {
     networkPolicies: "네트워크 정책",
     horizontalPodAutoscalers: "HPA",
     manifests: "사용자 정의 매니페스트",
+    rolloutPhase: {
+      Idle: "대기",
+      InProgress: "진행 중",
+      Failed: "실패",
+      Complete: "완료",
+    },
+    rolloutStalled: "롤아웃 정체",
+    updatedNodes: "업데이트됨",
+    updatingNodes: "업데이트 중",
+    readyUpdatedNodes: "업데이트 후 준비됨",
+    targetGeneration: "대상 세대",
+    recentEvents: "최근 이벤트",
   },
 
   // Nodes Page
@@ -188,6 +206,11 @@ const ko = {
     checkConditionsTab:
       "오류 세부 정보를 보려면 조건 탭을 확인하세요. 실패한 리소스는 적용된 리소스 목록에 포함되지 않습니다.",
     noConditionsReported: "보고된 조건이 없습니다.",
+    notReady: "준비 안 됨",
+    templateGeneration: "템플릿 세대",
+    rolloutPending: "롤아웃 대기",
+    rolloutGenerationHint:
+      "롤아웃 대기: 이 템플릿 세대로 업데이트된 뒤 아직 Ready가 된 적이 없는 노드입니다.",
   },
 
   // Topology Page
@@ -195,7 +218,7 @@ const ko = {
     title: "토폴로지 뷰",
     problems: "문제",
     exitProblemMode: "문제 강조 모드 종료",
-    highlightFailed: "실패한 노드 강조",
+    highlightFailed: "운영자 조치가 필요한 노드 강조 (실패, 충돌, Degraded)",
     searchNodes: "노드 검색...",
     clearSearch: "검색 지우기",
     found: "발견",
@@ -333,7 +356,7 @@ const ko = {
   charts: {
     ready: "준비됨",
     failed: "실패",
-    pending: "대기 중",
+    pending: "진행 중",
   },
 
   // Time

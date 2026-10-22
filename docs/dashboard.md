@@ -13,8 +13,30 @@ Lynq Dashboard is a web UI that shows the Hub → Form → Node topology and res
 ## How It Works
 
 - The Dashboard reads LynqHub, LynqForm, and LynqNode CRs via the Kubernetes API.
-- It renders the Hub → Form → Node hierarchy and shows resource status (Ready, Degraded, Failed counts) per node.
+- It renders the Hub → Form → Node hierarchy and classifies every Hub, Form and Node as **Ready**, **Progressing** or **Failed** (see [Status Meanings](#status-meanings)). Each node also shows its resource counts (desired, ready, failed, skipped).
 - No data is persisted — it's a read-only view of cluster state.
+
+## Status Meanings
+
+The Dashboard uses the same LynqNode classification as the operator, so a node that the hub status, the `hub_failed` metric and the LynqForm rollout count as failed is the node the Dashboard shows as Failed. Hubs and forms are classified from their own LynqNodes with one rule: any failed node fails them.
+
+| Status | LynqNode | LynqForm | LynqHub |
+|--------|----------|----------|---------|
+| **Failed** | `status.failedResources > 0`, `Conflicted=True` or `Degraded=True`. Failure wins over a stale `Ready=True` | `Valid=False`, `status.rollout.phase=Failed`, or any of its LynqNodes Failed | Datasource disconnected (`Ready=False`), or any of its LynqNodes Failed |
+| **Ready** | `Ready=True` | `Applied=True` (every node Ready) | Datasource connected and every desired node exists and is Ready |
+| **Progressing** | Everything else: rolling out an update, recovering a lost pod or a drain, or not reconciled yet | Everything else, including `NotAllNodesReady` and a form with no nodes | Everything else, including desired nodes not created yet |
+
+- **Progressing is not a failure.** A node recovering a lost pod reports `Ready=False` (`NotAllResourcesReady`) with `Degraded=False` (`Healthy`). It is not included in the Topology view's **Problems** highlight.
+- **Conditions are colored by meaning.** `Degraded` and `Conflicted` are healthy when `False`, so the Conditions tab shows them green when `False` and red when `True`. `Ready=False` with reason `NotAllResourcesReady`, and `Applied=False` with `NotAllNodesReady` or `NoNodes`, mean progressing and are shown amber, not red.
+- **Hub counts.** **Desired** is the hub's `status.desired`. **Ready**, **Progressing** and **Failed** are counted from the hub's LynqNodes (label `lynq.sh/hub`, same namespace), not read from `status.ready`/`status.failed`. Desired nodes that do not exist yet (not created, or creation held back by `maxSkew`) count as Progressing, and the Progressing hint says how many of them there are. So Desired = Ready + Progressing + Failed, except while extra nodes are being deleted.
+- **Until the node list loads**, hub and form counts show `-` and their status shows **Loading**, rather than 0 or a guessed state. Only a disconnected hub, an invalid form or a failed rollout is shown as Failed before then.
+- **Form rollouts.** When a LynqForm has a rollout in progress, the Forms and Form detail pages show its phase (In progress, Failed, Complete) and how many nodes are updated and Ready. A **Failed** rollout (`progressDeadlineSeconds` exceeded, or an updated node failed) shows the operator's message, which names the stalled nodes. The Form detail page also lists recent LynqForm events such as `RolloutFailed` and `RolloutRecovered`.
+- **Failed nodes per form** are counted from the form's LynqNodes, because the LynqForm status has no failed-node count.
+
+::: warning Older Lynq versions
+Lynq v1.1.23-alpha.1 and earlier count every LynqNode with `Ready!=True` in the hub's `status.failed` (and `hub_failed`). The Dashboard does not read that field, so its hub counts match the Nodes page on those versions too, while `kubectl get lynqhub` and the Grafana dashboard show the larger number. Versions before v1.1.23-alpha.1 also mark a merely not-ready LynqNode `Degraded=True` (`ResourcesNotReady`), which every Dashboard screen then shows as Failed.
+:::
+- **Resource nodes in the topology** show whether a resource is managed (in `status.appliedResources`) or skipped, not the resource's own readiness.
 
 ## Choose Installation Method
 

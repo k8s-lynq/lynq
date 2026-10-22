@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useCallback, useMemo } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
@@ -21,14 +21,18 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useForms, useFormPolling } from '@/contexts/FormContext'
+import { useNodes, useNodePolling } from '@/contexts/NodeContext'
+import { RolloutProgress } from '@/components/RolloutProgress'
+import { HealthBadge } from '@/components/HealthBadge'
+import {
+  classifyForm,
+  countHealth,
+  formNodeCounts,
+  hasActiveRollout,
+  indexNodeHealth,
+  type HealthCounts,
+} from '@/lib/health'
 import type { LynqForm } from '@/types/lynq'
-
-function getFormStatus(form: LynqForm): 'ready' | 'pending' {
-  const isReady = form.status?.conditions?.some(
-    (c) => (c.type === 'Ready' || c.type === 'Applied') && c.status === 'True'
-  )
-  return isReady ? 'ready' : 'pending'
-}
 
 function getResourceTypes(form: LynqForm): string[] {
   const types: string[] = []
@@ -45,10 +49,11 @@ function getResourceTypes(form: LynqForm): string[] {
   return types
 }
 
-function FormCard({ form }: { form: LynqForm }) {
+// nodeCounts is null until the node list has loaded: the failed count shows '-', not 0
+function FormCard({ form, nodeCounts }: { form: LynqForm; nodeCounts: HealthCounts | null }) {
   const { t } = useTranslation()
-  const status = getFormStatus(form)
-  const isReady = status === 'ready'
+  const status = classifyForm(form, nodeCounts)
+  const rollout = form.status?.rollout
   const resourceTypes = getResourceTypes(form)
 
   return (
@@ -63,7 +68,7 @@ function FormCard({ form }: { form: LynqForm }) {
             {t('forms.hub')}: {form.spec.hubId}
           </p>
         </div>
-        <Badge variant={status}>{isReady ? t('status.ready') : t('status.pending')}</Badge>
+        <HealthBadge health={status} />
       </CardHeader>
       <CardContent>
         <div className="space-y-4">
@@ -82,9 +87,7 @@ function FormCard({ form }: { form: LynqForm }) {
               <p className="text-xs text-muted-foreground">{t('status.ready')}</p>
             </div>
             <div>
-              <p className="text-2xl font-bold text-rose-500">
-                {form.status?.failedNodes || 0}
-              </p>
+              <p className="text-2xl font-bold text-rose-500">{nodeCounts?.failed ?? '-'}</p>
               <p className="text-xs text-muted-foreground">{t('status.failed')}</p>
             </div>
           </div>
@@ -99,20 +102,7 @@ function FormCard({ form }: { form: LynqForm }) {
           </div>
 
           {/* Rollout Progress */}
-          {form.status?.rollout?.inProgress && (
-            <div className="space-y-1">
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">{t('forms.rollout')}</span>
-                <span>{form.status.rollout.percentage}%</span>
-              </div>
-              <div className="h-2 rounded-full bg-secondary">
-                <div
-                  className="h-2 rounded-full bg-primary transition-all"
-                  style={{ width: `${form.status.rollout.percentage}%` }}
-                />
-              </div>
-            </div>
-          )}
+          {hasActiveRollout(rollout) && <RolloutProgress rollout={rollout} compact />}
 
           {/* Actions */}
           <Button variant="outline" size="sm" className="w-full" asChild>
@@ -130,6 +120,14 @@ function FormCard({ form }: { form: LynqForm }) {
 export function Forms() {
   const { t } = useTranslation()
   const { forms, loading, fetchForms } = useForms()
+  // LynqFormStatus has no failed-node count; classify the forms' nodes instead
+  const { nodes, loaded: nodesLoaded } = useNodes()
+  useNodePolling()
+  const nodeIndex = useMemo(() => (nodesLoaded ? indexNodeHealth(nodes) : null), [nodes, nodesLoaded])
+  const nodeCountsOf = useCallback(
+    (form: LynqForm) => nodeIndex && formNodeCounts(nodeIndex, form.metadata),
+    [nodeIndex],
+  )
   const [searchParams, setSearchParams] = useSearchParams()
 
   // Get filter values from URL params
@@ -170,7 +168,7 @@ export function Forms() {
 
       // Status filter
       if (statusFilter !== 'all') {
-        const status = getFormStatus(form)
+        const status = classifyForm(form, nodeCountsOf(form))
         if (status !== statusFilter) return false
       }
 
@@ -186,7 +184,7 @@ export function Forms() {
 
       return true
     })
-  }, [forms, searchQuery, statusFilter, hubFilter, namespaceFilter])
+  }, [forms, searchQuery, statusFilter, hubFilter, namespaceFilter, nodeCountsOf])
 
   // Update URL params
   const updateFilter = (key: string, value: string) => {
@@ -208,12 +206,22 @@ export function Forms() {
 
   // Calculate stats for filtered forms
   const stats = useMemo(() => {
-    const readyCount = filteredForms.filter((f) => getFormStatus(f) === 'ready').length
-    const pendingCount = filteredForms.filter((f) => getFormStatus(f) === 'pending').length
     const totalNodes = filteredForms.reduce((acc, f) => acc + (f.status?.totalNodes || 0), 0)
     const readyNodes = filteredForms.reduce((acc, f) => acc + (f.status?.readyNodes || 0), 0)
-    return { readyCount, pendingCount, totalNodes, readyNodes }
-  }, [filteredForms])
+    // Until the node list loads a form's failed nodes are unknown, so the counts show '-'
+    if (!nodeIndex) {
+      return { readyCount: '-', pendingCount: '-', failedCount: '-', totalNodes, readyNodes }
+    }
+    // classifyForm is never null once the node index exists
+    const counts = countHealth(filteredForms, (f) => classifyForm(f, nodeCountsOf(f)) ?? 'pending')
+    return {
+      readyCount: counts.ready,
+      pendingCount: counts.pending,
+      failedCount: counts.failed,
+      totalNodes,
+      readyNodes,
+    }
+  }, [filteredForms, nodeIndex, nodeCountsOf])
 
   return (
     <div className="space-y-6">
@@ -268,6 +276,7 @@ export function Forms() {
                 <SelectContent>
                   <SelectItem value="all">{t('status.all')}</SelectItem>
                   <SelectItem value="ready">{t('status.ready')}</SelectItem>
+                  <SelectItem value="failed">{t('status.failed')}</SelectItem>
                   <SelectItem value="pending">{t('status.pending')}</SelectItem>
                 </SelectContent>
               </Select>
@@ -304,7 +313,7 @@ export function Forms() {
 
       {/* Summary Stats */}
       {forms.length > 0 && (
-        <div className="grid gap-4 md:grid-cols-4">
+        <div className="grid gap-4 md:grid-cols-5">
           <Card>
             <CardContent className="pt-6 text-center">
               <p className="text-3xl font-bold">{filteredForms.length}</p>
@@ -323,6 +332,12 @@ export function Forms() {
             <CardContent className="pt-6 text-center">
               <p className="text-3xl font-bold text-amber-500">{stats.pendingCount}</p>
               <p className="text-sm text-muted-foreground">{t('status.pending')}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6 text-center">
+              <p className="text-3xl font-bold text-rose-500">{stats.failedCount}</p>
+              <p className="text-sm text-muted-foreground">{t('status.failed')}</p>
             </CardContent>
           </Card>
           <Card>
@@ -365,6 +380,7 @@ export function Forms() {
             <FormCard
               key={`${form.metadata.namespace}/${form.metadata.name}`}
               form={form}
+              nodeCounts={nodeCountsOf(form)}
             />
           ))}
         </div>

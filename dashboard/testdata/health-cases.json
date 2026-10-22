@@ -1,0 +1,727 @@
+{
+  "_comment": "Health classification cases shared by bff/internal/api/health_test.go and ui/src/lib/health.test.ts. The node cases follow the operator's classifyNode (internal/controller/node_health.go). 'pending' is the progressing state. Form and hub cases list the statuses of their own LynqNodes in 'nodes': both are classified from those nodes (any failed node fails them), not from LynqHub status.ready/status.failed, whose meaning differs before Lynq v1.1.23. Hub 'wantCounts' is the breakdown the dashboard shows.",
+  "node": [
+    {
+      "name": "no conditions yet is progressing",
+      "status": {},
+      "want": "pending"
+    },
+    {
+      "name": "Ready=True is ready",
+      "status": {
+        "desiredResources": 3,
+        "readyResources": 3,
+        "conditions": [
+          { "type": "Ready", "status": "True", "reason": "Reconciled" },
+          { "type": "Degraded", "status": "False", "reason": "Healthy" }
+        ]
+      },
+      "want": "ready"
+    },
+    {
+      "name": "recovering a lost pod is progressing, not failed",
+      "status": {
+        "desiredResources": 3,
+        "readyResources": 2,
+        "conditions": [
+          { "type": "Ready", "status": "False", "reason": "NotAllResourcesReady" },
+          { "type": "Degraded", "status": "False", "reason": "Healthy" }
+        ]
+      },
+      "want": "pending"
+    },
+    {
+      "name": "Degraded=True is failed",
+      "status": {
+        "conditions": [
+          { "type": "Ready", "status": "False", "reason": "NotAllResourcesReady" },
+          { "type": "Degraded", "status": "True", "reason": "TemplateRenderError" }
+        ]
+      },
+      "want": "failed"
+    },
+    {
+      "name": "Conflicted=True is failed",
+      "status": {
+        "conditions": [
+          { "type": "Ready", "status": "False", "reason": "NotAllResourcesReady" },
+          { "type": "Conflicted", "status": "True", "reason": "ResourceConflict" }
+        ]
+      },
+      "want": "failed"
+    },
+    {
+      "name": "failed resources win over a stale Ready=True",
+      "status": {
+        "failedResources": 1,
+        "conditions": [{ "type": "Ready", "status": "True", "reason": "Reconciled" }]
+      },
+      "want": "failed"
+    },
+    {
+      "name": "Degraded=True wins over a stale Ready=True",
+      "status": {
+        "conditions": [
+          { "type": "Ready", "status": "True", "reason": "Reconciled" },
+          { "type": "Degraded", "status": "True", "reason": "ResourcesFailed" }
+        ]
+      },
+      "want": "failed"
+    },
+    {
+      "name": "Conflicted=False and Degraded=False do not fail a progressing node",
+      "status": {
+        "conditions": [
+          { "type": "Ready", "status": "Unknown" },
+          { "type": "Degraded", "status": "False", "reason": "Healthy" },
+          { "type": "Conflicted", "status": "False", "reason": "NoConflict" }
+        ]
+      },
+      "want": "pending"
+    }
+  ],
+  "form": [
+    {
+      "name": "no conditions yet is progressing",
+      "status": {},
+      "want": "pending"
+    },
+    {
+      "name": "Applied=True is ready",
+      "status": {
+        "conditions": [
+          {
+            "type": "Valid",
+            "status": "True",
+            "reason": "ValidationPassed"
+          },
+          {
+            "type": "Applied",
+            "status": "True",
+            "reason": "AllNodesReady"
+          }
+        ]
+      },
+      "nodes": [
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "Reconciled"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "Reconciled"
+            }
+          ]
+        }
+      ],
+      "want": "ready"
+    },
+    {
+      "name": "a node recovering a pod leaves the form progressing",
+      "status": {
+        "conditions": [
+          {
+            "type": "Valid",
+            "status": "True",
+            "reason": "ValidationPassed"
+          },
+          {
+            "type": "Applied",
+            "status": "False",
+            "reason": "NotAllNodesReady"
+          }
+        ]
+      },
+      "nodes": [
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "Reconciled"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "reason": "NotAllResourcesReady"
+            },
+            {
+              "type": "Degraded",
+              "status": "False",
+              "reason": "Healthy"
+            }
+          ]
+        }
+      ],
+      "want": "pending"
+    },
+    {
+      "name": "a form with no nodes is progressing, not failed",
+      "status": {
+        "conditions": [
+          {
+            "type": "Applied",
+            "status": "False",
+            "reason": "NoNodes"
+          }
+        ]
+      },
+      "nodes": [],
+      "want": "pending"
+    },
+    {
+      "name": "Valid=False is failed",
+      "status": {
+        "conditions": [
+          {
+            "type": "Valid",
+            "status": "False",
+            "reason": "ValidationFailed"
+          }
+        ]
+      },
+      "want": "failed"
+    },
+    {
+      "name": "a stalled rollout is failed",
+      "status": {
+        "rollout": {
+          "phase": "Failed",
+          "message": "stalled nodes: a-web"
+        },
+        "conditions": [
+          {
+            "type": "Valid",
+            "status": "True",
+            "reason": "ValidationPassed"
+          },
+          {
+            "type": "Applied",
+            "status": "False",
+            "reason": "NotAllNodesReady"
+          }
+        ]
+      },
+      "nodes": [
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "Reconciled"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "reason": "NotAllResourcesReady"
+            },
+            {
+              "type": "Degraded",
+              "status": "False",
+              "reason": "Healthy"
+            }
+          ]
+        }
+      ],
+      "want": "failed"
+    },
+    {
+      "name": "a rollout in progress is progressing",
+      "status": {
+        "rollout": {
+          "phase": "InProgress"
+        },
+        "conditions": [
+          {
+            "type": "Applied",
+            "status": "False",
+            "reason": "NotAllNodesReady"
+          }
+        ]
+      },
+      "nodes": [
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "Reconciled"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "reason": "NotAllResourcesReady"
+            },
+            {
+              "type": "Degraded",
+              "status": "False",
+              "reason": "Healthy"
+            }
+          ]
+        }
+      ],
+      "want": "pending"
+    },
+    {
+      "name": "a failed node fails a form without a rollout, like it fails the hub",
+      "status": {
+        "conditions": [
+          {
+            "type": "Valid",
+            "status": "True",
+            "reason": "ValidationPassed"
+          },
+          {
+            "type": "Applied",
+            "status": "False",
+            "reason": "NotAllNodesReady"
+          }
+        ]
+      },
+      "nodes": [
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "Reconciled"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "reason": "NotAllResourcesReady"
+            },
+            {
+              "type": "Degraded",
+              "status": "True",
+              "reason": "TemplateRenderError"
+            }
+          ]
+        }
+      ],
+      "want": "failed"
+    },
+    {
+      "name": "a failed node fails the form even with a stale Applied=True",
+      "status": {
+        "conditions": [
+          {
+            "type": "Valid",
+            "status": "True",
+            "reason": "ValidationPassed"
+          },
+          {
+            "type": "Applied",
+            "status": "True",
+            "reason": "AllNodesReady"
+          }
+        ]
+      },
+      "nodes": [
+        {
+          "failedResources": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "Reconciled"
+            }
+          ]
+        }
+      ],
+      "want": "failed"
+    }
+  ],
+  "hub": [
+    {
+      "name": "no conditions and no nodes yet is progressing",
+      "status": {},
+      "nodes": [],
+      "want": "pending",
+      "wantCounts": {
+        "ready": 0,
+        "progressing": 0,
+        "failed": 0,
+        "notCreated": 0
+      }
+    },
+    {
+      "name": "connected with every node ready is ready",
+      "status": {
+        "desired": 3,
+        "ready": 3,
+        "failed": 0,
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True",
+            "reason": "DatabaseConnected"
+          }
+        ]
+      },
+      "nodes": [
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "Reconciled"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "Reconciled"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "Reconciled"
+            }
+          ]
+        }
+      ],
+      "want": "ready",
+      "wantCounts": {
+        "ready": 3,
+        "progressing": 0,
+        "failed": 0,
+        "notCreated": 0
+      }
+    },
+    {
+      "name": "a node recovering a pod is progressing",
+      "status": {
+        "desired": 3,
+        "ready": 2,
+        "failed": 0,
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True",
+            "reason": "DatabaseConnected"
+          }
+        ]
+      },
+      "nodes": [
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "Reconciled"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "Reconciled"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "reason": "NotAllResourcesReady"
+            },
+            {
+              "type": "Degraded",
+              "status": "False",
+              "reason": "Healthy"
+            }
+          ]
+        }
+      ],
+      "want": "pending",
+      "wantCounts": {
+        "ready": 2,
+        "progressing": 1,
+        "failed": 0,
+        "notCreated": 0
+      }
+    },
+    {
+      "name": "an older operator counting a recovering node in status.failed does not fail the hub",
+      "status": {
+        "desired": 3,
+        "ready": 2,
+        "failed": 1,
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True",
+            "reason": "DatabaseConnected"
+          }
+        ]
+      },
+      "nodes": [
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "Reconciled"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "Reconciled"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "reason": "NotAllResourcesReady"
+            },
+            {
+              "type": "Degraded",
+              "status": "False",
+              "reason": "Healthy"
+            }
+          ]
+        }
+      ],
+      "want": "pending",
+      "wantCounts": {
+        "ready": 2,
+        "progressing": 1,
+        "failed": 0,
+        "notCreated": 0
+      }
+    },
+    {
+      "name": "a failed node fails the hub",
+      "status": {
+        "desired": 3,
+        "ready": 2,
+        "failed": 1,
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True",
+            "reason": "DatabaseConnected"
+          }
+        ]
+      },
+      "nodes": [
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "Reconciled"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "Reconciled"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "reason": "NotAllResourcesReady"
+            },
+            {
+              "type": "Degraded",
+              "status": "True",
+              "reason": "TemplateRenderError"
+            }
+          ]
+        }
+      ],
+      "want": "failed",
+      "wantCounts": {
+        "ready": 2,
+        "progressing": 0,
+        "failed": 1,
+        "notCreated": 0
+      }
+    },
+    {
+      "name": "desired nodes not created yet are progressing",
+      "status": {
+        "desired": 4,
+        "ready": 2,
+        "failed": 0,
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True",
+            "reason": "DatabaseConnected"
+          }
+        ]
+      },
+      "nodes": [
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "Reconciled"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "Reconciled"
+            }
+          ]
+        }
+      ],
+      "want": "pending",
+      "wantCounts": {
+        "ready": 2,
+        "progressing": 2,
+        "failed": 0,
+        "notCreated": 2
+      }
+    },
+    {
+      "name": "nodes beyond desired (being deleted) do not go negative",
+      "status": {
+        "desired": 1,
+        "ready": 1,
+        "failed": 0,
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True",
+            "reason": "DatabaseConnected"
+          }
+        ]
+      },
+      "nodes": [
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "Reconciled"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "Reconciled"
+            }
+          ]
+        }
+      ],
+      "want": "ready",
+      "wantCounts": {
+        "ready": 2,
+        "progressing": 0,
+        "failed": 0,
+        "notCreated": 0
+      }
+    },
+    {
+      "name": "a lost datasource is failed",
+      "status": {
+        "desired": 3,
+        "ready": 3,
+        "failed": 0,
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "False",
+            "reason": "DatabaseConnectionFailed"
+          }
+        ]
+      },
+      "nodes": [
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "Reconciled"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "Reconciled"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "Reconciled"
+            }
+          ]
+        }
+      ],
+      "want": "failed",
+      "wantCounts": {
+        "ready": 3,
+        "progressing": 0,
+        "failed": 0,
+        "notCreated": 0
+      }
+    }
+  ]
+}
