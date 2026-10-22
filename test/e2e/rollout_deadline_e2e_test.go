@@ -170,6 +170,9 @@ var _ = Describe("Rollout Progress Deadline", Ordered, func() {
 	It("should not fail a completed rollout when an updated node regresses past the deadline", func() {
 		failedEventsBefore := formEventCount(formName, "RolloutFailed")
 		regressed := uids[0]
+		Expect(formField(formName, rolloutPhasePath)).To(Equal("Complete"))
+		completionTimeBefore := formField(formName, rolloutCompletionTimePath)
+		Expect(completionTimeBefore).NotTo(BeEmpty())
 
 		By("When a node's Deployment is restarted outside Lynq and its new pod is held unready")
 		cmd := exec.Command("kubectl", "rollout", "restart", "deployment/"+deploymentName(regressed), "-n", policyTestNamespace)
@@ -179,15 +182,25 @@ var _ = Describe("Rollout Progress Deadline", Ordered, func() {
 			g.Expect(lynqNodeField(nodeName(regressed), readyConditionPath)).To(Equal("False"))
 		}, time.Minute, time.Second).Should(Succeed())
 
-		By("Then, for longer than the deadline plus a requeue, the rollout is never Failed")
+		// The LynqForm only sees the regression on its next reconcile; wait for it so the window
+		// below starts from a status that already reflects it.
+		Eventually(func(g Gomega) {
+			g.Expect(formField(formName, rolloutMessagePath)).To(ContainSubstring("(1 recovering)"))
+		}, time.Minute, time.Second).Should(Succeed())
+
+		By("Then, for longer than the deadline plus a requeue, the rollout stays Complete")
 		// Its rollout-update-start is minutes old, past the 60s deadline. A controller that timed
 		// the regression from it would report Failed within one requeue. The completion recorded
-		// on the node is what exempts it, and the regression must not clear it.
+		// on the node is what exempts it, and the regression must not clear it. Nor is the node
+		// rolling out: the rollout stays Complete, names it as recovering, and keeps its
+		// completionTime.
 		Consistently(func(g Gomega) {
 			g.Expect(lynqNodeField(nodeName(regressed), readyConditionPath)).To(Equal("False"),
 				"the regression must last for this window to mean anything")
 			expectUpdateCompleted(g, nodeName(regressed))
-			g.Expect(formField(formName, rolloutPhasePath)).NotTo(Equal("Failed"))
+			g.Expect(formField(formName, rolloutPhasePath)).To(Equal("Complete"))
+			g.Expect(formField(formName, rolloutMessagePath)).To(ContainSubstring("(1 recovering)"))
+			g.Expect(formField(formName, rolloutCompletionTimePath)).To(Equal(completionTimeBefore))
 			expectHubHasNoFailedNodes(g, hubName, len(uids))
 		}, stallReportWindow, policyTestInterval).Should(Succeed())
 		Expect(formEventCount(formName, "RolloutFailed")).To(Equal(failedEventsBefore))
@@ -197,15 +210,18 @@ var _ = Describe("Rollout Progress Deadline", Ordered, func() {
 			openDeadlineGate(regressed)
 			g.Expect(lynqNodeField(nodeName(regressed), readyConditionPath)).To(Equal("True"))
 			g.Expect(formField(formName, rolloutPhasePath)).To(Equal("Complete"))
+			g.Expect(formField(formName, rolloutMessagePath)).NotTo(ContainSubstring("recovering"))
 		}, 3*time.Minute, policyTestInterval).Should(Succeed())
+		Expect(formField(formName, rolloutCompletionTimePath)).To(Equal(completionTimeBefore))
 	})
 })
 
 const (
-	rolloutPhasePath       = "{.status.rollout.phase}"
-	rolloutMessagePath     = "{.status.rollout.message}"
-	templateGenerationPath = `{.metadata.annotations.lynq\.sh/template-generation}`
-	rolloutCompletedPath   = `{.metadata.annotations.lynq\.sh/rollout-completed-generation}`
+	rolloutPhasePath          = "{.status.rollout.phase}"
+	rolloutMessagePath        = "{.status.rollout.message}"
+	rolloutCompletionTimePath = "{.status.rollout.completionTime}"
+	templateGenerationPath    = `{.metadata.annotations.lynq\.sh/template-generation}`
+	rolloutCompletedPath      = `{.metadata.annotations.lynq\.sh/rollout-completed-generation}`
 )
 
 // expectUpdateCompleted asserts that the hub recorded the node's current update as completed.

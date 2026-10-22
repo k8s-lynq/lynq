@@ -136,7 +136,7 @@ var (
 	FormRolloutUpdatingNodes = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "lynqform_rollout_updating_nodes",
-			Help: "Number of nodes currently being updated for a LynqForm (updated but not Ready yet)",
+			Help: "Number of nodes currently being updated for a LynqForm (updated, update not completed yet; recovering nodes excluded)",
 		},
 		[]string{"form", "namespace"},
 	)
@@ -155,7 +155,7 @@ var (
 	FormRolloutProgress = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "lynqform_rollout_progress",
-			Help: "Rollout progress percentage for a LynqForm (readyUpdatedNodes/totalNodes * 100)",
+			Help: "Rollout progress percentage for a LynqForm (nodes that completed the update/totalNodes * 100)",
 		},
 		[]string{"form", "namespace"},
 	)

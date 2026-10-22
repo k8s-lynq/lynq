@@ -87,9 +87,9 @@ Import `config/monitoring/grafana-dashboard.json` via **Dashboards → Import** 
 | `hub_ready` | Gauge | `hub`, `namespace` | LynqNodes with `Ready=True` |
 | `hub_failed` | Gauge | `hub`, `namespace` | LynqNodes that need an operator: failed or conflicted resources, or `Degraded`. Nodes rolling out or recovering lost pods are in neither `hub_ready` nor `hub_failed` |
 | `apply_attempts_total` | Counter | `kind`, `result`, `conflict_policy` | Resource apply attempts |
-| `lynqform_rollout_updating_nodes` | Gauge | `form`, `namespace` | Nodes currently being updated (v1.1.16+) |
+| `lynqform_rollout_updating_nodes` | Gauge | `form`, `namespace` | Nodes whose update has not completed yet (v1.1.16+). A node that completed the update and is recovering a lost pod is not counted |
 | `lynqform_rollout_phase` | Gauge | `form`, `namespace` | Rollout phase: 0=Idle, 1=InProgress, 2=Failed, 3=Complete (v1.1.16+). Failed = an updated node failed or exceeded `progressDeadlineSeconds` |
-| `lynqform_rollout_progress` | Gauge | `form`, `namespace` | Rollout progress percentage (v1.1.16+) |
+| `lynqform_rollout_progress` | Gauge | `form`, `namespace` | Rollout progress percentage: nodes that completed the update over all nodes (v1.1.16+). A recovering node keeps counting |
 
 For PromQL queries using these metrics, see [Prometheus Query Examples](prometheus-queries.md).
 

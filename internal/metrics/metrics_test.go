@@ -335,7 +335,7 @@ func TestFormRolloutUpdatingNodes(t *testing.T) {
 	assert.Equal(t, 2, count)
 
 	expected := `
-# HELP lynqform_rollout_updating_nodes Number of nodes currently being updated for a LynqForm (updated but not Ready yet)
+# HELP lynqform_rollout_updating_nodes Number of nodes currently being updated for a LynqForm (updated, update not completed yet; recovering nodes excluded)
 # TYPE lynqform_rollout_updating_nodes gauge
 lynqform_rollout_updating_nodes{form="web-app",namespace="default"} 3
 lynqform_rollout_updating_nodes{form="worker",namespace="production"} 5
@@ -377,7 +377,7 @@ func TestFormRolloutProgress(t *testing.T) {
 	assert.Equal(t, 2, count)
 
 	expected := `
-# HELP lynqform_rollout_progress Rollout progress percentage for a LynqForm (readyUpdatedNodes/totalNodes * 100)
+# HELP lynqform_rollout_progress Rollout progress percentage for a LynqForm (nodes that completed the update/totalNodes * 100)
 # TYPE lynqform_rollout_progress gauge
 lynqform_rollout_progress{form="web-app",namespace="default"} 50
 lynqform_rollout_progress{form="worker",namespace="production"} 100
