@@ -166,4 +166,13 @@ const (
 	// AnnotationTemplateGeneration stores the LynqForm generation at the time of node update
 	// Used to track which nodes have been updated to the current template version
 	AnnotationTemplateGeneration = "lynq.sh/template-generation"
+
+	// AnnotationRolloutCompletedGeneration records that the node's current update completed:
+	// the LynqHub controller sets it to the node's template generation once it observes the node
+	// Ready for its current spec, and clears it to "" in the same write that creates the node or
+	// moves it to a new template generation; a data-only update leaves it alone.
+	// rollout.progressDeadlineSeconds only times a LynqForm rollout that has not completed, so a
+	// node that completed and later regresses is never reported as a stalled rollout, including
+	// after a controller restart. A node without the key predates it and counts as completed.
+	AnnotationRolloutCompletedGeneration = "lynq.sh/rollout-completed-generation"
 )

@@ -80,11 +80,15 @@ type RolloutStatus struct {
 	// +optional
 	UpdatedNodes int32 `json:"updatedNodes,omitempty"`
 
-	// UpdatingNodes is the number of nodes currently updating (not Ready yet)
+	// UpdatingNodes is the number of updated nodes whose update has not completed yet
+	// (not Ready for the updated spec since the update). A node that completed the update and
+	// is not Ready now is recovering, and is not counted here
 	// +optional
 	UpdatingNodes int32 `json:"updatingNodes,omitempty"`
 
-	// ReadyUpdatedNodes is the number of nodes that are updated AND Ready
+	// ReadyUpdatedNodes is the number of nodes that are updated AND Ready for the updated spec
+	// now. Updated nodes counted in neither UpdatingNodes nor ReadyUpdatedNodes are recovering:
+	// they completed the update and regressed since
 	// +optional
 	ReadyUpdatedNodes int32 `json:"readyUpdatedNodes,omitempty"`
 
@@ -248,7 +252,7 @@ type LynqFormStatus struct {
 // +kubebuilder:printcolumn:name="Total",type="integer",JSONPath=".status.totalNodes",description="Total nodes using form"
 // +kubebuilder:printcolumn:name="Ready",type="integer",JSONPath=".status.readyNodes",description="Ready nodes"
 // +kubebuilder:printcolumn:name="Rollout",type="string",JSONPath=".status.rollout.phase",description="Rollout phase"
-// +kubebuilder:printcolumn:name="Updating",type="integer",JSONPath=".status.rollout.updatingNodes",description="Nodes currently updating"
+// +kubebuilder:printcolumn:name="Updating",type="integer",JSONPath=".status.rollout.updatingNodes",description="Nodes whose update has not completed"
 // +kubebuilder:printcolumn:name="Applied",type="string",JSONPath=".status.conditions[?(@.type=='Applied')].status",description="Applied status"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 

@@ -17,7 +17,7 @@ Alert names match `config/prometheus/alerts.yaml`.
 | Severity | Alerts |
 |----------|--------|
 | Critical | `LynqNodeDegraded`, `LynqNodeResourcesFailed`, `LynqNodeNotReady`, `LynqNodeStatusUnknown`, `HubManyNodesFailure` |
-| Warning | `LynqNodeResourcesMismatch`, `LynqNodeResourcesConflicted`, `LynqNodeHighConflictRate`, `HubNodesFailure`, `HubDesiredCountMismatch`, `LynqNodeReconciliationErrors`, `LynqNodeReconciliationSlow`, `HighApplyFailureRate` |
+| Warning | `LynqNodeResourcesMismatch`, `LynqNodeResourcesConflicted`, `LynqNodeHighConflictRate`, `HubNodesFailure`, `HubDesiredCountMismatch`, `LynqFormRolloutFailed`, `LynqNodeReconciliationErrors`, `LynqNodeReconciliationSlow`, `HighApplyFailureRate` |
 | Info | `LynqNodeNewConflictsDetected` |
 
 ---
@@ -281,6 +281,11 @@ kubectl get pods -n lynq-system
 
 Hub has widespread node failures (>5 lynqnodes or >50% failure rate), indicating systemic issue affecting multiple lynqnodes.
 
+`hub_failed` (and `status.failed`) counts only nodes that need an operator: nodes with failed or
+conflicted resources, or with `Degraded=True` (template, variables or dependency errors). Nodes
+that are rolling out or recovering lost pods (`Ready=False`, `Degraded=False`) are counted in
+neither `hub_ready` nor `hub_failed`, so a spot drain does not raise this alert.
+
 #### Symptoms
 
 - High number of failed lynqnodes in hub
@@ -462,14 +467,16 @@ kubectl patch lynqform <template-name> --type=merge -p '{"spec":{"deployments":[
 
 #### Description
 
-Hub has some failed nodes (1-5), indicating isolated provisioning issues.
+Hub has some failed nodes (1-5), indicating isolated provisioning issues. A node counts as
+failed when it has failed or conflicted resources or is `Degraded`; see
+[HubManyNodesFailure](#hubmanynodesfailure).
 
 #### Diagnosis
 
 ```bash
-# List failed nodes
-kubectl get lynqnodes -l operator.lynq.sh/hub=<hub-name> \
-  | grep -v "True"
+# List nodes with their failure signals
+kubectl get lynqnodes -l lynq.sh/hub=<hub-name> \
+  -o custom-columns='NAME:.metadata.name,DEGRADED:.status.conditions[?(@.type=="Degraded")].status,FAILED:.status.failedResources'
 
 # Check specific node
 kubectl describe lynqnode <failed-lynqnode-name>
@@ -498,7 +505,10 @@ kubectl get lynqnode <failed-lynqnode-name> -o yaml
 
 #### Description
 
-Hub's ready node count doesn't match desired count, but no failures detected. Sync may be delayed.
+Hub's ready node count doesn't match desired count, but no failures detected. The gap is nodes
+that are rolling out, recovering lost pods, held back by a LynqForm `maxSkew`, or not created yet.
+If a LynqForm rollout is stalled on one of them, `LynqFormRolloutFailed` fires as well and names
+the node; otherwise sync may be delayed.
 
 #### Diagnosis
 
@@ -524,6 +534,53 @@ kubectl annotate lynqhub <hub-name> operator.lynq.sh/sync="$(date +%s)" --overwr
 
 # Review hub controller logs
 kubectl logs -n lynq-system -l control-plane=controller-manager | grep "registry.*<hub-name>"
+```
+
+---
+
+### LynqFormRolloutFailed
+
+**Alert Name:** `LynqFormRolloutFailed`
+**Severity:** Warning
+**Threshold:** `lynqform_rollout_phase == 2` (Failed) for 5+ minutes
+
+#### Description
+
+A LynqForm rollout (`rollout.maxSkew > 0`) is stalled. An updated node either failed (failed or
+conflicted resources, `Degraded`) or has not become Ready since it was updated to the form's new
+generation, for longer than `rollout.progressDeadlineSeconds`. The deadline only times LynqForm
+changes; a node stuck on a data-only update from the hub (row values changed) raises this alert
+once the LynqNode reports it failed, after its resources' `timeoutSeconds`. The node keeps its `maxSkew` slot, so no further node is
+updated. Nodes not yet updated keep running the previous template.
+
+A node that completed its update and later regressed (drain, lost pod, `kubectl rollout restart`)
+does not cause this alert, including across operator restarts: the operator records a completed
+update on the node itself (`lynq.sh/rollout-completed-generation`).
+
+#### Diagnosis
+
+```bash
+# Which nodes stall the rollout, and why
+kubectl get lynqform <form-name> -o jsonpath='{.status.rollout.message}'
+
+# Inspect a stalled node and the form's events
+kubectl describe lynqnode <node-name>
+kubectl get events --field-selector involvedObject.name=<form-name>
+```
+
+#### Resolution
+
+- Fix what keeps the node from becoming Ready (image, config, capacity), or
+- Revert the LynqForm change; the hub updates the stalled node to the new generation and the
+  deadline restarts for it.
+
+The rollout resumes on its own once the node is Ready, and a `RolloutRecovered` event is emitted.
+
+#### Verification
+
+```bash
+kubectl get lynqform <form-name> -o jsonpath='{.status.rollout.phase}'
+# Should return: InProgress or Complete
 ```
 
 ---
