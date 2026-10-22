@@ -292,7 +292,24 @@ function OverviewTab({ node }: { node: TopologyNode }) {
               <div className="flex items-center gap-2 text-sm">
                 <span className="text-muted-foreground">{t("forms.rollout")}</span>
                 <RolloutPhaseBadge phase={node.metadata.rolloutPhase} />
+                {!!node.metadata.rolloutRecovering && (
+                  <Badge variant="secondary" title={t("forms.recoveringHint")}>
+                    {t("forms.recoveringCount", { count: node.metadata.rolloutRecovering })}
+                  </Badge>
+                )}
               </div>
+              {node.metadata.rolloutReportedPhase && (
+                <p
+                  className="text-xs text-muted-foreground"
+                  title={[t("forms.reportedPhaseHint"), node.metadata.rolloutMessage]
+                    .filter(Boolean)
+                    .join("\n")}
+                >
+                  {t("forms.reportedPhase", {
+                    phase: t(`forms.rolloutPhase.${node.metadata.rolloutReportedPhase}`),
+                  })}
+                </p>
+              )}
               {node.metadata.rolloutPhase === "Failed" && node.metadata.rolloutMessage && (
                 <p className="text-xs text-rose-500 break-words">
                   {node.metadata.rolloutMessage}

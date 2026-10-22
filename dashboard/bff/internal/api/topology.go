@@ -109,6 +109,7 @@ func buildTopology(hubs, forms, nodes, orphanedResources *unstructured.Unstructu
 	// node in Lynq v1.1.23-alpha.1 and earlier, so both are counted from the LynqNodes themselves
 	nodesByForm := countNodes(nodes, formKey)
 	nodesByHub := countNodes(nodes, hubKey)
+	nodeListByForm := groupNodes(nodes, formKey)
 
 	// Process hubs
 	for _, hub := range hubs.Items {
@@ -147,12 +148,18 @@ func buildTopology(hubs, forms, nodes, orphanedResources *unstructured.Unstructu
 		status := classifyForm(form, formNodes)
 		nodeID := "form-" + namespace + "-" + name
 
+		// rolloutPhase is the phase the dashboard shows (see rolloutView); rolloutReportedPhase is
+		// the operator's, when it differs
 		var formMetadata map[string]interface{}
-		if phase, _, _ := unstructured.NestedString(form.Object, "status", "rollout", "phase"); phase != "" {
+		if rollout, ok := newRolloutView(form, nodeListByForm[namespace+"/"+name]); ok {
 			message, _, _ := unstructured.NestedString(form.Object, "status", "rollout", "message")
 			formMetadata = map[string]interface{}{
-				"rolloutPhase":   phase,
-				"rolloutMessage": message,
+				"rolloutPhase":      rollout.Phase,
+				"rolloutMessage":    message,
+				"rolloutRecovering": rollout.Recovering,
+			}
+			if rollout.Phase != rollout.ReportedPhase {
+				formMetadata["rolloutReportedPhase"] = rollout.ReportedPhase
 			}
 		}
 

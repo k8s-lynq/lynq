@@ -1,6 +1,8 @@
 package api
 
 import (
+	"strconv"
+
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -100,6 +102,119 @@ func classifyForm(obj unstructured.Unstructured, nodes nodeCounts) string {
 		return statusReady
 	}
 	return statusPending
+}
+
+// groupNodes lists every LynqNode under key(node). Nodes with an empty key are skipped.
+func groupNodes(nodes *unstructured.UnstructuredList, key func(unstructured.Unstructured) string) map[string][]unstructured.Unstructured {
+	groups := make(map[string][]unstructured.Unstructured)
+	if nodes == nil {
+		return groups
+	}
+	for _, node := range nodes.Items {
+		if k := key(node); k != "" {
+			groups[k] = append(groups[k], node)
+		}
+	}
+	return groups
+}
+
+// rolloutView is a LynqForm rollout as the dashboard shows it, counted from the form's
+// LynqNodes. It mirrors the UI's rolloutView (ui/src/lib/health.ts); health_test.go and
+// health.test.ts both run the "rollout" cases in dashboard/testdata/health-cases.json.
+//
+// An updated node (template generation == the form's generation) is ReadyUpdated when it is
+// Ready for its current spec, Recovering when it is not but completed this rollout (completion
+// marker equal to its template generation, or no marker) and is not failed, and Updating
+// otherwise. A failed node stays Updating: it keeps its maxSkew slot and the operator reports
+// the rollout Failed over it either way.
+//
+// A node without the marker counts as completed only when another updated node of the form
+// carries it. When none does, the operator predates the marker (Lynq v1.1.23-alpha.1 and
+// earlier) and a node without it cannot be told apart from one still rolling out, so every
+// updated node that is not Ready is Updating and nothing is Recovering.
+//
+// Completed counts the updated nodes that completed this rollout, the operator's rollout progress
+// (lynqform_rollout_progress = Completed / Total): ReadyUpdated plus every other updated node that
+// is not rolloutPending, failed ones included, since the operator counts those too. Without the
+// marker no node that is not ReadyUpdated is completed, so Completed is ReadyUpdated: an older
+// operator's own progress.
+//
+// Phase is the operator's status.rollout.phase (ReportedPhase), except that an operator that
+// writes the marker but counts a recovering node as updating reports InProgress for a lost pod.
+// When every node is updated and the only nodes not Ready are recovering, Phase is Complete.
+// Failed is never overridden.
+type rolloutView struct {
+	Phase, ReportedPhase                               string
+	Total, Updated, ReadyUpdated, Updating, Recovering int64
+	Completed                                          int64
+}
+
+const (
+	annotationTemplateGeneration         = "lynq.sh/template-generation"
+	annotationRolloutCompletedGeneration = "lynq.sh/rollout-completed-generation"
+)
+
+// rolloutPending mirrors the operator's updateCompleted, negated: a node is still in its
+// rollout while its completion marker is present and does not name its template generation.
+// A node without the marker is pending only when markerSupported is false (see rolloutView).
+func rolloutPending(node unstructured.Unstructured, markerSupported bool) bool {
+	annotations := node.GetAnnotations()
+	completed, ok := annotations[annotationRolloutCompletedGeneration]
+	if !ok {
+		return !markerSupported
+	}
+	return completed == "" || completed != annotations[annotationTemplateGeneration]
+}
+
+// newRolloutView returns false when the form has no rollout phase.
+func newRolloutView(form unstructured.Unstructured, nodes []unstructured.Unstructured) (rolloutView, bool) {
+	reported, _, _ := unstructured.NestedString(form.Object, "status", "rollout", "phase")
+	if reported == "" {
+		return rolloutView{}, false
+	}
+	view := rolloutView{Phase: reported, ReportedPhase: reported, Total: int64(len(nodes))}
+
+	generation := form.GetGeneration()
+	if generation == 0 {
+		generation, _ = nestedInt64(form.Object, "status", "rollout", "targetGeneration")
+	}
+	target := strconv.FormatInt(generation, 10)
+	var updated []unstructured.Unstructured
+	markerSupported := false
+	for _, node := range nodes {
+		annotations := node.GetAnnotations()
+		if annotations[annotationTemplateGeneration] != target {
+			continue
+		}
+		updated = append(updated, node)
+		if _, ok := annotations[annotationRolloutCompletedGeneration]; ok {
+			markerSupported = true
+		}
+	}
+	for _, node := range updated {
+		view.Updated++
+		health := classifyNode(node)
+		observed, _ := nestedInt64(node.Object, "status", "observedGeneration")
+		pending := rolloutPending(node, markerSupported)
+		if health == statusReady && observed == node.GetGeneration() {
+			view.ReadyUpdated++
+			view.Completed++
+			continue
+		}
+		if !pending {
+			view.Completed++
+		}
+		if health != statusFailed && !pending {
+			view.Recovering++
+		} else {
+			view.Updating++
+		}
+	}
+	if reported == "InProgress" && view.Total > 0 && view.Updated == view.Total &&
+		view.Updating == 0 && view.Recovering > 0 {
+		view.Phase = "Complete"
+	}
+	return view, true
 }
 
 // hubHealth is a hub's node breakdown, counted from its LynqNodes rather than read from

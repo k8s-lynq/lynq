@@ -32,9 +32,11 @@ import { HealthBadge } from '@/components/HealthBadge'
 import {
   classifyForm,
   formNodeCounts,
-  hasActiveRollout,
+  formNodes,
   indexNodeHealth,
+  rolloutView,
   type HealthCounts,
+  type RolloutNode,
 } from '@/lib/health'
 import type { LynqForm, TResource } from '@/types/lynq'
 
@@ -179,6 +181,7 @@ export function FormDetail() {
   const [details, setDetails] = useState<FormDetailsResponse | null>(null)
   // LynqFormStatus has no failed-node count; classify the form's nodes instead
   const [nodeCounts, setNodeCounts] = useState<HealthCounts | null>(null)
+  const [ownNodes, setOwnNodes] = useState<RolloutNode[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -191,10 +194,10 @@ export function FormDetail() {
         formApi.getDetails(name, namespace),
         nodeApi.list(namespace).catch(() => null),
       ])
+      const index = nodes ? indexNodeHealth(nodes.items || []) : null
       setDetails(data)
-      setNodeCounts(
-        nodes ? formNodeCounts(indexNodeHealth(nodes.items || []), data.form.metadata) : null
-      )
+      setNodeCounts(index && formNodeCounts(index, data.form.metadata))
+      setOwnNodes(index && formNodes(index, data.form.metadata))
     } catch (err) {
       setError(err instanceof Error ? err.message : t('forms.errorLoadingForm'))
     } finally {
@@ -252,6 +255,7 @@ export function FormDetail() {
   const { form, variables } = details
   const health = classifyForm(form, nodeCounts)
   const rollout = form.status?.rollout
+  const rollingOut = rolloutView(form, ownNodes)
   const formSpec = form.spec as LynqForm['spec']
 
   // Count total resources
@@ -358,13 +362,13 @@ export function FormDetail() {
       </div>
 
       {/* Rollout Progress */}
-      {hasActiveRollout(rollout) && (
-        <Card className={rollout.phase === 'Failed' ? 'border-rose-200 dark:border-rose-900' : ''}>
+      {rollout && rollingOut && (
+        <Card className={rollingOut.phase === 'Failed' ? 'border-rose-200 dark:border-rose-900' : ''}>
           <CardHeader>
             <CardTitle>{t('forms.rollout')}</CardTitle>
           </CardHeader>
           <CardContent>
-            <RolloutProgress rollout={rollout} />
+            <RolloutProgress rollout={rollout} view={rollingOut} />
           </CardContent>
         </Card>
       )}

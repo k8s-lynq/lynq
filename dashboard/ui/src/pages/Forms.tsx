@@ -28,9 +28,11 @@ import {
   classifyForm,
   countHealth,
   formNodeCounts,
-  hasActiveRollout,
+  formNodes,
   indexNodeHealth,
+  rolloutView,
   type HealthCounts,
+  type RolloutNode,
 } from '@/lib/health'
 import type { LynqForm } from '@/types/lynq'
 
@@ -49,11 +51,20 @@ function getResourceTypes(form: LynqForm): string[] {
   return types
 }
 
-// nodeCounts is null until the node list has loaded: the failed count shows '-', not 0
-function FormCard({ form, nodeCounts }: { form: LynqForm; nodeCounts: HealthCounts | null }) {
+// nodeCounts and nodes are null until the node list has loaded: the failed count shows '-', not 0
+function FormCard({
+  form,
+  nodeCounts,
+  nodes,
+}: {
+  form: LynqForm
+  nodeCounts: HealthCounts | null
+  nodes: RolloutNode[] | null
+}) {
   const { t } = useTranslation()
   const status = classifyForm(form, nodeCounts)
   const rollout = form.status?.rollout
+  const rollingOut = rolloutView(form, nodes)
   const resourceTypes = getResourceTypes(form)
 
   return (
@@ -102,7 +113,7 @@ function FormCard({ form, nodeCounts }: { form: LynqForm; nodeCounts: HealthCoun
           </div>
 
           {/* Rollout Progress */}
-          {hasActiveRollout(rollout) && <RolloutProgress rollout={rollout} compact />}
+          {rollout && rollingOut && <RolloutProgress rollout={rollout} view={rollingOut} compact />}
 
           {/* Actions */}
           <Button variant="outline" size="sm" className="w-full" asChild>
@@ -381,6 +392,7 @@ export function Forms() {
               key={`${form.metadata.namespace}/${form.metadata.name}`}
               form={form}
               nodeCounts={nodeCountsOf(form)}
+              nodes={nodeIndex && formNodes(nodeIndex, form.metadata)}
             />
           ))}
         </div>

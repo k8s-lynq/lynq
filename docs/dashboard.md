@@ -30,11 +30,26 @@ The Dashboard uses the same LynqNode classification as the operator, so a node t
 - **Conditions are colored by meaning.** `Degraded` and `Conflicted` are healthy when `False`, so the Conditions tab shows them green when `False` and red when `True`. `Ready=False` with reason `NotAllResourcesReady`, and `Applied=False` with `NotAllNodesReady` or `NoNodes`, mean progressing and are shown amber, not red.
 - **Hub counts.** **Desired** is the hub's `status.desired`. **Ready**, **Progressing** and **Failed** are counted from the hub's LynqNodes (label `lynq.sh/hub`, same namespace), not read from `status.ready`/`status.failed`. Desired nodes that do not exist yet (not created, or creation held back by `maxSkew`) count as Progressing, and the Progressing hint says how many of them there are. So Desired = Ready + Progressing + Failed, except while extra nodes are being deleted.
 - **Until the node list loads**, hub and form counts show `-` and their status shows **Loading**, rather than 0 or a guessed state. Only a disconnected hub, an invalid form or a failed rollout is shown as Failed before then.
-- **Form rollouts.** When a LynqForm has a rollout in progress, the Forms and Form detail pages show its phase (In progress, Failed, Complete) and how many nodes are updated and Ready. A **Failed** rollout (`progressDeadlineSeconds` exceeded, or an updated node failed) shows the operator's message, which names the stalled nodes. The Form detail page also lists recent LynqForm events such as `RolloutFailed` and `RolloutRecovered`.
+- **Form rollouts.** When a LynqForm has a rollout in progress, the Forms and Form detail pages show its phase (In progress, Failed, Complete) and its progress: the nodes that completed the update over all nodes, the same share as the operator's `lynqform_rollout_progress` metric (see below). A **Failed** rollout (`progressDeadlineSeconds` exceeded, or an updated node failed) shows the operator's message, which names the stalled nodes. The Form detail page also lists recent LynqForm events such as `RolloutFailed` and `RolloutRecovered`.
+- **Recovering is not rolling out.** Updated nodes (`lynq.sh/template-generation` equal to the form's generation) are split by the completion marker the operator keeps, `lynq.sh/rollout-completed-generation`:
+
+  | Updated node | Shown as |
+  |--------------|----------|
+  | Ready for its current spec | updated and ready |
+  | Failed | **Updating** (the operator reports the rollout Failed over it, completed or not) |
+  | Not Ready, marker equal to its template generation, or no marker while another updated node of the form has one | **Recovering**: it completed the rollout and later lost a pod or was drained |
+  | Not Ready, marker empty or naming an older generation | **Updating** |
+  | Not Ready, and no updated node of the form has the marker | **Updating** (the operator does not write the marker; see below) |
+
+  Recovering nodes are shown as **N recovering** next to the phase and do not keep the rollout In progress. An operator that writes the marker but still counts them as updating reports `InProgress` when a node of a finished rollout loses a pod. When every node is updated and the only nodes not Ready are recovering, the Dashboard shows the rollout as **Complete** and adds **Operator reports: In progress** below it, with the operator's message on hover. A `Failed` phase is always shown as reported.
+
+  **Progress** counts every updated node that completed the update: Ready for its current spec, plus every node whose marker says it completed (recovering nodes, and failed ones too, as the operator counts them). Nodes still updating and nodes not updated yet do not count. A finished rollout with a node recovering a lost pod therefore shows 100%, like the Grafana **LynqForm Rollout Progress** panel. The bar is rounded down, so it reaches 100% only once every node has completed. Until the node list loads, progress is `updatedNodes - updatingNodes` from the form status.
 - **Failed nodes per form** are counted from the form's LynqNodes, because the LynqForm status has no failed-node count.
 
 ::: warning Older Lynq versions
 Lynq v1.1.23-alpha.1 and earlier count every LynqNode with `Ready!=True` in the hub's `status.failed` (and `hub_failed`). The Dashboard does not read that field, so its hub counts match the Nodes page on those versions too, while `kubectl get lynqhub` and the Grafana dashboard show the larger number. Versions before v1.1.23-alpha.1 also mark a merely not-ready LynqNode `Degraded=True` (`ResourcesNotReady`), which every Dashboard screen then shows as Failed.
+
+Versions before the rollout completion marker (`lynq.sh/rollout-completed-generation`), v1.1.23-alpha.1 included, write no marker, so a lost pod cannot be told apart from the last nodes of a real rollout that are still starting. When no updated node of a form has the marker, the Dashboard shows the rollout phase and message exactly as the operator reports them and counts every updated node that is not Ready as updating: a node of a finished rollout that loses a pod shows the rollout **In progress** until the node is Ready again. Progress is then the updated and Ready nodes, which is what those versions report in `lynqform_rollout_progress`. Once any updated node has the marker, a node without it predates the marker and counts as completed, as it does for the operator.
 :::
 - **Resource nodes in the topology** show whether a resource is managed (in `status.appliedResources`) or skipped, not the resource's own readiness.
 

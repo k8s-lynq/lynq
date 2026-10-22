@@ -168,7 +168,17 @@ const en = {
     rolloutStalled: "Rollout stalled",
     updatedNodes: "Updated",
     updatingNodes: "Updating",
-    readyUpdatedNodes: "updated and ready",
+    completedNodes: "completed the update",
+    completedHint:
+      "Nodes that completed this rollout, Ready or not: the operator's rollout progress. Recovering nodes count; nodes still updating do not.",
+    readyUpdatedNodes: "Ready",
+    recoveringNodes: "Recovering",
+    recoveringCount: "{{count}} recovering",
+    recoveringHint:
+      "Nodes that completed this rollout and are not Ready again, for example after losing a pod. They are recovering, not rolling out, and do not hold the rollout back.",
+    reportedPhase: "Operator reports: {{phase}}",
+    reportedPhaseHint:
+      "This operator version counts recovering nodes as still updating. Every node has completed this rollout, so the Dashboard shows it as Complete.",
     targetGeneration: "Target generation",
     recentEvents: "Recent Events",
   },

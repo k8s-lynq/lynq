@@ -168,7 +168,17 @@ const ko = {
     rolloutStalled: "롤아웃 정체",
     updatedNodes: "업데이트됨",
     updatingNodes: "업데이트 중",
-    readyUpdatedNodes: "업데이트 후 준비됨",
+    completedNodes: "업데이트 완료",
+    completedHint:
+      "준비 여부와 관계없이 이번 롤아웃을 완료한 노드로, operator의 롤아웃 진행률과 같습니다. 회복 중 노드는 포함하고 아직 업데이트 중인 노드는 제외합니다.",
+    readyUpdatedNodes: "준비됨",
+    recoveringNodes: "회복 중",
+    recoveringCount: "회복 중 {{count}}",
+    recoveringHint:
+      "이번 롤아웃을 완료한 뒤 다시 준비되지 않은 노드입니다(예: Pod 유실). 롤아웃 중이 아니라 회복 중이며, 롤아웃 진행을 막지 않습니다.",
+    reportedPhase: "operator 보고: {{phase}}",
+    reportedPhaseHint:
+      "이 operator 버전은 회복 중 노드를 업데이트 중으로 셉니다. 모든 노드가 이번 롤아웃을 완료했으므로 대시보드는 완료로 표시합니다.",
     targetGeneration: "대상 세대",
     recentEvents: "최근 이벤트",
   },

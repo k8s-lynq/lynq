@@ -1,5 +1,5 @@
 {
-  "_comment": "Health classification cases shared by bff/internal/api/health_test.go and ui/src/lib/health.test.ts. The node cases follow the operator's classifyNode (internal/controller/node_health.go). 'pending' is the progressing state. Form and hub cases list the statuses of their own LynqNodes in 'nodes': both are classified from those nodes (any failed node fails them), not from LynqHub status.ready/status.failed, whose meaning differs before Lynq v1.1.23. Hub 'wantCounts' is the breakdown the dashboard shows.",
+  "_comment": "Health classification cases shared by bff/internal/api/health_test.go and ui/src/lib/health.test.ts. The node cases follow the operator's classifyNode (internal/controller/node_health.go). 'pending' is the progressing state. Form and hub cases list the statuses of their own LynqNodes in 'nodes': both are classified from those nodes (any failed node fails them), not from LynqHub status.ready/status.failed, whose meaning differs before Lynq v1.1.23. Hub 'wantCounts' is the breakdown the dashboard shows. Rollout cases give a LynqForm (metadata.generation and status.rollout) and its LynqNodes (annotations, metadata.generation, status); 'want' is the rollout the dashboard shows: a node that completed the rollout (completion marker equals its template generation, or no marker) and is not Ready or failed is recovering, and an InProgress the operator reports only because of such nodes is shown as Complete.",
   "node": [
     {
       "name": "no conditions yet is progressing",
@@ -721,6 +721,894 @@
         "progressing": 0,
         "failed": 0,
         "notCreated": 0
+      }
+    }
+  ],
+  "rollout": [
+    {
+      "name": "an older operator (no node carries the completion marker) keeps its InProgress and counts the node not Ready as updating",
+      "generation": 3,
+      "status": {
+        "rollout": {
+          "phase": "InProgress",
+          "targetGeneration": 3
+        }
+      },
+      "nodes": [
+        {
+          "annotations": {
+            "lynq.sh/template-generation": "3"
+          },
+          "generation": 2,
+          "status": {
+            "observedGeneration": 2,
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "True",
+                "reason": "Reconciled"
+              },
+              {
+                "type": "Degraded",
+                "status": "False",
+                "reason": "Healthy"
+              }
+            ]
+          }
+        },
+        {
+          "annotations": {
+            "lynq.sh/template-generation": "3"
+          },
+          "generation": 2,
+          "status": {
+            "observedGeneration": 2,
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "False",
+                "reason": "NotAllResourcesReady"
+              },
+              {
+                "type": "Degraded",
+                "status": "False",
+                "reason": "Healthy"
+              }
+            ]
+          }
+        }
+      ],
+      "want": {
+        "phase": "InProgress",
+        "total": 2,
+        "updated": 2,
+        "readyUpdated": 1,
+        "updating": 1,
+        "recovering": 0,
+        "completed": 1
+      }
+    },
+    {
+      "name": "the tail of a real rollout on an older operator stays InProgress with its nodes updating",
+      "generation": 3,
+      "status": {
+        "rollout": {
+          "phase": "InProgress",
+          "targetGeneration": 3
+        }
+      },
+      "nodes": [
+        {
+          "annotations": {
+            "lynq.sh/template-generation": "3"
+          },
+          "generation": 2,
+          "status": {
+            "observedGeneration": 2,
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "False",
+                "reason": "NotAllResourcesReady"
+              },
+              {
+                "type": "Degraded",
+                "status": "False",
+                "reason": "Healthy"
+              }
+            ]
+          }
+        },
+        {
+          "annotations": {
+            "lynq.sh/template-generation": "3"
+          },
+          "generation": 2,
+          "status": {
+            "observedGeneration": 2,
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "False",
+                "reason": "NotAllResourcesReady"
+              },
+              {
+                "type": "Degraded",
+                "status": "False",
+                "reason": "Healthy"
+              }
+            ]
+          }
+        }
+      ],
+      "want": {
+        "phase": "InProgress",
+        "total": 2,
+        "updated": 2,
+        "readyUpdated": 0,
+        "updating": 2,
+        "recovering": 0,
+        "completed": 0
+      }
+    },
+    {
+      "name": "once any updated node carries the completion marker, a node without it predates the marker and is recovering",
+      "generation": 3,
+      "status": {
+        "rollout": {
+          "phase": "InProgress",
+          "targetGeneration": 3
+        }
+      },
+      "nodes": [
+        {
+          "annotations": {
+            "lynq.sh/template-generation": "3",
+            "lynq.sh/rollout-completed-generation": "3"
+          },
+          "generation": 2,
+          "status": {
+            "observedGeneration": 2,
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "True",
+                "reason": "Reconciled"
+              },
+              {
+                "type": "Degraded",
+                "status": "False",
+                "reason": "Healthy"
+              }
+            ]
+          }
+        },
+        {
+          "annotations": {
+            "lynq.sh/template-generation": "3"
+          },
+          "generation": 2,
+          "status": {
+            "observedGeneration": 2,
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "False",
+                "reason": "NotAllResourcesReady"
+              },
+              {
+                "type": "Degraded",
+                "status": "False",
+                "reason": "Healthy"
+              }
+            ]
+          }
+        }
+      ],
+      "want": {
+        "phase": "Complete",
+        "total": 2,
+        "updated": 2,
+        "readyUpdated": 1,
+        "updating": 0,
+        "recovering": 1,
+        "completed": 2
+      }
+    },
+    {
+      "name": "a completed node that lost a pod is recovering and keeps the rollout Complete",
+      "generation": 3,
+      "status": {
+        "rollout": {
+          "phase": "InProgress",
+          "targetGeneration": 3
+        }
+      },
+      "nodes": [
+        {
+          "annotations": {
+            "lynq.sh/template-generation": "3",
+            "lynq.sh/rollout-completed-generation": "3"
+          },
+          "generation": 2,
+          "status": {
+            "observedGeneration": 2,
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "True",
+                "reason": "Reconciled"
+              },
+              {
+                "type": "Degraded",
+                "status": "False",
+                "reason": "Healthy"
+              }
+            ]
+          }
+        },
+        {
+          "annotations": {
+            "lynq.sh/template-generation": "3",
+            "lynq.sh/rollout-completed-generation": "3"
+          },
+          "generation": 2,
+          "status": {
+            "observedGeneration": 2,
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "False",
+                "reason": "NotAllResourcesReady"
+              },
+              {
+                "type": "Degraded",
+                "status": "False",
+                "reason": "Healthy"
+              }
+            ]
+          }
+        }
+      ],
+      "want": {
+        "phase": "Complete",
+        "total": 2,
+        "updated": 2,
+        "readyUpdated": 1,
+        "updating": 0,
+        "recovering": 1,
+        "completed": 2
+      }
+    },
+    {
+      "name": "an operator reporting Complete with a recovering node stays Complete",
+      "generation": 3,
+      "status": {
+        "rollout": {
+          "phase": "Complete",
+          "targetGeneration": 3
+        }
+      },
+      "nodes": [
+        {
+          "annotations": {
+            "lynq.sh/template-generation": "3",
+            "lynq.sh/rollout-completed-generation": "3"
+          },
+          "generation": 2,
+          "status": {
+            "observedGeneration": 2,
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "True",
+                "reason": "Reconciled"
+              },
+              {
+                "type": "Degraded",
+                "status": "False",
+                "reason": "Healthy"
+              }
+            ]
+          }
+        },
+        {
+          "annotations": {
+            "lynq.sh/template-generation": "3",
+            "lynq.sh/rollout-completed-generation": "3"
+          },
+          "generation": 2,
+          "status": {
+            "observedGeneration": 2,
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "False",
+                "reason": "NotAllResourcesReady"
+              },
+              {
+                "type": "Degraded",
+                "status": "False",
+                "reason": "Healthy"
+              }
+            ]
+          }
+        }
+      ],
+      "want": {
+        "phase": "Complete",
+        "total": 2,
+        "updated": 2,
+        "readyUpdated": 1,
+        "updating": 0,
+        "recovering": 1,
+        "completed": 2
+      }
+    },
+    {
+      "name": "a node not Ready since its update is still updating",
+      "generation": 3,
+      "status": {
+        "rollout": {
+          "phase": "InProgress",
+          "targetGeneration": 3
+        }
+      },
+      "nodes": [
+        {
+          "annotations": {
+            "lynq.sh/template-generation": "3",
+            "lynq.sh/rollout-completed-generation": "3"
+          },
+          "generation": 2,
+          "status": {
+            "observedGeneration": 2,
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "True",
+                "reason": "Reconciled"
+              },
+              {
+                "type": "Degraded",
+                "status": "False",
+                "reason": "Healthy"
+              }
+            ]
+          }
+        },
+        {
+          "annotations": {
+            "lynq.sh/template-generation": "3",
+            "lynq.sh/rollout-completed-generation": ""
+          },
+          "generation": 2,
+          "status": {
+            "observedGeneration": 2,
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "False",
+                "reason": "NotAllResourcesReady"
+              },
+              {
+                "type": "Degraded",
+                "status": "False",
+                "reason": "Healthy"
+              }
+            ]
+          }
+        }
+      ],
+      "want": {
+        "phase": "InProgress",
+        "total": 2,
+        "updated": 2,
+        "readyUpdated": 1,
+        "updating": 1,
+        "recovering": 0,
+        "completed": 1
+      }
+    },
+    {
+      "name": "a marker left for an older generation is still updating",
+      "generation": 3,
+      "status": {
+        "rollout": {
+          "phase": "InProgress",
+          "targetGeneration": 3
+        }
+      },
+      "nodes": [
+        {
+          "annotations": {
+            "lynq.sh/template-generation": "3",
+            "lynq.sh/rollout-completed-generation": "3"
+          },
+          "generation": 2,
+          "status": {
+            "observedGeneration": 2,
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "True",
+                "reason": "Reconciled"
+              },
+              {
+                "type": "Degraded",
+                "status": "False",
+                "reason": "Healthy"
+              }
+            ]
+          }
+        },
+        {
+          "annotations": {
+            "lynq.sh/template-generation": "3",
+            "lynq.sh/rollout-completed-generation": "2"
+          },
+          "generation": 2,
+          "status": {
+            "observedGeneration": 2,
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "False",
+                "reason": "NotAllResourcesReady"
+              },
+              {
+                "type": "Degraded",
+                "status": "False",
+                "reason": "Healthy"
+              }
+            ]
+          }
+        }
+      ],
+      "want": {
+        "phase": "InProgress",
+        "total": 2,
+        "updated": 2,
+        "readyUpdated": 1,
+        "updating": 1,
+        "recovering": 0,
+        "completed": 1
+      }
+    },
+    {
+      "name": "Ready for the previous spec is still updating",
+      "generation": 3,
+      "status": {
+        "rollout": {
+          "phase": "InProgress",
+          "targetGeneration": 3
+        }
+      },
+      "nodes": [
+        {
+          "annotations": {
+            "lynq.sh/template-generation": "3",
+            "lynq.sh/rollout-completed-generation": "3"
+          },
+          "generation": 2,
+          "status": {
+            "observedGeneration": 2,
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "True",
+                "reason": "Reconciled"
+              },
+              {
+                "type": "Degraded",
+                "status": "False",
+                "reason": "Healthy"
+              }
+            ]
+          }
+        },
+        {
+          "annotations": {
+            "lynq.sh/template-generation": "3",
+            "lynq.sh/rollout-completed-generation": ""
+          },
+          "generation": 3,
+          "status": {
+            "observedGeneration": 2,
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "True",
+                "reason": "Reconciled"
+              },
+              {
+                "type": "Degraded",
+                "status": "False",
+                "reason": "Healthy"
+              }
+            ]
+          }
+        }
+      ],
+      "want": {
+        "phase": "InProgress",
+        "total": 2,
+        "updated": 2,
+        "readyUpdated": 1,
+        "updating": 1,
+        "recovering": 0,
+        "completed": 1
+      }
+    },
+    {
+      "name": "one node updating and one recovering is InProgress",
+      "generation": 3,
+      "status": {
+        "rollout": {
+          "phase": "InProgress",
+          "targetGeneration": 3
+        }
+      },
+      "nodes": [
+        {
+          "annotations": {
+            "lynq.sh/template-generation": "3",
+            "lynq.sh/rollout-completed-generation": ""
+          },
+          "generation": 2,
+          "status": {
+            "observedGeneration": 2,
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "False",
+                "reason": "NotAllResourcesReady"
+              },
+              {
+                "type": "Degraded",
+                "status": "False",
+                "reason": "Healthy"
+              }
+            ]
+          }
+        },
+        {
+          "annotations": {
+            "lynq.sh/template-generation": "3",
+            "lynq.sh/rollout-completed-generation": "3"
+          },
+          "generation": 2,
+          "status": {
+            "observedGeneration": 2,
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "False",
+                "reason": "NotAllResourcesReady"
+              },
+              {
+                "type": "Degraded",
+                "status": "False",
+                "reason": "Healthy"
+              }
+            ]
+          }
+        }
+      ],
+      "want": {
+        "phase": "InProgress",
+        "total": 2,
+        "updated": 2,
+        "readyUpdated": 0,
+        "updating": 1,
+        "recovering": 1,
+        "completed": 1
+      }
+    },
+    {
+      "name": "nodes not updated yet keep the rollout InProgress",
+      "generation": 3,
+      "status": {
+        "rollout": {
+          "phase": "InProgress",
+          "targetGeneration": 3
+        }
+      },
+      "nodes": [
+        {
+          "annotations": {
+            "lynq.sh/template-generation": "2",
+            "lynq.sh/rollout-completed-generation": "2"
+          },
+          "generation": 2,
+          "status": {
+            "observedGeneration": 2,
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "True",
+                "reason": "Reconciled"
+              },
+              {
+                "type": "Degraded",
+                "status": "False",
+                "reason": "Healthy"
+              }
+            ]
+          }
+        },
+        {
+          "annotations": {
+            "lynq.sh/template-generation": "3",
+            "lynq.sh/rollout-completed-generation": "3"
+          },
+          "generation": 2,
+          "status": {
+            "observedGeneration": 2,
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "False",
+                "reason": "NotAllResourcesReady"
+              },
+              {
+                "type": "Degraded",
+                "status": "False",
+                "reason": "Healthy"
+              }
+            ]
+          }
+        }
+      ],
+      "want": {
+        "phase": "InProgress",
+        "total": 2,
+        "updated": 1,
+        "readyUpdated": 0,
+        "updating": 0,
+        "recovering": 1,
+        "completed": 1
+      }
+    },
+    {
+      "name": "a failed node is never recovering, even after completing",
+      "generation": 3,
+      "status": {
+        "rollout": {
+          "phase": "InProgress",
+          "targetGeneration": 3
+        }
+      },
+      "nodes": [
+        {
+          "annotations": {
+            "lynq.sh/template-generation": "3",
+            "lynq.sh/rollout-completed-generation": "3"
+          },
+          "generation": 2,
+          "status": {
+            "observedGeneration": 2,
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "True",
+                "reason": "Reconciled"
+              },
+              {
+                "type": "Degraded",
+                "status": "False",
+                "reason": "Healthy"
+              }
+            ]
+          }
+        },
+        {
+          "annotations": {
+            "lynq.sh/template-generation": "3",
+            "lynq.sh/rollout-completed-generation": "3"
+          },
+          "generation": 2,
+          "status": {
+            "observedGeneration": 2,
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "False",
+                "reason": "NotAllResourcesReady"
+              },
+              {
+                "type": "Degraded",
+                "status": "True",
+                "reason": "ResourcesFailed"
+              }
+            ],
+            "failedResources": 1
+          }
+        }
+      ],
+      "want": {
+        "phase": "InProgress",
+        "total": 2,
+        "updated": 2,
+        "readyUpdated": 1,
+        "updating": 1,
+        "recovering": 0,
+        "completed": 2
+      }
+    },
+    {
+      "name": "a stalled rollout stays Failed",
+      "generation": 3,
+      "status": {
+        "rollout": {
+          "phase": "Failed",
+          "targetGeneration": 3
+        }
+      },
+      "nodes": [
+        {
+          "annotations": {
+            "lynq.sh/template-generation": "3",
+            "lynq.sh/rollout-completed-generation": "3"
+          },
+          "generation": 2,
+          "status": {
+            "observedGeneration": 2,
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "False",
+                "reason": "NotAllResourcesReady"
+              },
+              {
+                "type": "Degraded",
+                "status": "False",
+                "reason": "Healthy"
+              }
+            ]
+          }
+        },
+        {
+          "annotations": {
+            "lynq.sh/template-generation": "3",
+            "lynq.sh/rollout-completed-generation": "3"
+          },
+          "generation": 2,
+          "status": {
+            "observedGeneration": 2,
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "False",
+                "reason": "NotAllResourcesReady"
+              },
+              {
+                "type": "Degraded",
+                "status": "True",
+                "reason": "ResourcesFailed"
+              }
+            ],
+            "failedResources": 1
+          }
+        }
+      ],
+      "want": {
+        "phase": "Failed",
+        "total": 2,
+        "updated": 2,
+        "readyUpdated": 0,
+        "updating": 1,
+        "recovering": 1,
+        "completed": 2
+      }
+    },
+    {
+      "name": "progress counts recovering nodes but not nodes still updating or not updated yet, like lynqform_rollout_progress",
+      "generation": 3,
+      "status": {
+        "rollout": {
+          "phase": "InProgress",
+          "targetGeneration": 3
+        }
+      },
+      "nodes": [
+        {
+          "annotations": {
+            "lynq.sh/template-generation": "3",
+            "lynq.sh/rollout-completed-generation": "3"
+          },
+          "generation": 2,
+          "status": {
+            "observedGeneration": 2,
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "True",
+                "reason": "Reconciled"
+              },
+              {
+                "type": "Degraded",
+                "status": "False",
+                "reason": "Healthy"
+              }
+            ]
+          }
+        },
+        {
+          "annotations": {
+            "lynq.sh/template-generation": "3",
+            "lynq.sh/rollout-completed-generation": "3"
+          },
+          "generation": 2,
+          "status": {
+            "observedGeneration": 2,
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "False",
+                "reason": "NotAllResourcesReady"
+              },
+              {
+                "type": "Degraded",
+                "status": "False",
+                "reason": "Healthy"
+              }
+            ]
+          }
+        },
+        {
+          "annotations": {
+            "lynq.sh/template-generation": "3",
+            "lynq.sh/rollout-completed-generation": ""
+          },
+          "generation": 2,
+          "status": {
+            "observedGeneration": 2,
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "False",
+                "reason": "NotAllResourcesReady"
+              },
+              {
+                "type": "Degraded",
+                "status": "False",
+                "reason": "Healthy"
+              }
+            ]
+          }
+        },
+        {
+          "annotations": {
+            "lynq.sh/template-generation": "2",
+            "lynq.sh/rollout-completed-generation": "2"
+          },
+          "generation": 2,
+          "status": {
+            "observedGeneration": 2,
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "True",
+                "reason": "Reconciled"
+              },
+              {
+                "type": "Degraded",
+                "status": "False",
+                "reason": "Healthy"
+              }
+            ]
+          }
+        }
+      ],
+      "want": {
+        "phase": "InProgress",
+        "total": 4,
+        "updated": 3,
+        "readyUpdated": 1,
+        "updating": 1,
+        "recovering": 1,
+        "completed": 2
       }
     }
   ]

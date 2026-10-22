@@ -184,3 +184,42 @@ func TestBuildTopology_HubCountedFromItsNodes(t *testing.T) {
 		t.Errorf("hub metrics = %+v, want desired 3, ready 1, failed 0", hub.Metrics)
 	}
 }
+
+func TestBuildTopology_RolloutRecovering(t *testing.T) {
+	// An operator that writes the completion marker but counts a recovering node as updating
+	// reports InProgress when a node that completed the rollout loses a pod
+	forms := &unstructured.UnstructuredList{Items: []unstructured.Unstructured{{Object: map[string]interface{}{
+		"metadata": map[string]interface{}{"name": "web", "namespace": "default", "generation": int64(3)},
+		"spec":     map[string]interface{}{"hubId": "mysql"},
+		"status": map[string]interface{}{
+			"rollout": map[string]interface{}{
+				"phase":   "InProgress",
+				"message": "Updating: 2/2 nodes updated (1 updating, 1 ready)",
+			},
+		},
+	}}}}
+	updated := func(name string, ready bool) unstructured.Unstructured {
+		status := map[string]interface{}{"conditions": []interface{}{cond("Ready", "True", "Reconciled")}}
+		if !ready {
+			status = map[string]interface{}{"conditions": []interface{}{
+				cond("Ready", "False", "NotAllResourcesReady"),
+				cond("Degraded", "False", "Healthy"),
+			}}
+		}
+		node := lynqNode(name, "web", status)
+		node.SetAnnotations(map[string]string{
+			"lynq.sh/template-generation":          "3",
+			"lynq.sh/rollout-completed-generation": "3",
+		})
+		return node
+	}
+	nodes := &unstructured.UnstructuredList{Items: []unstructured.Unstructured{
+		updated("a-web", true), updated("b-web", false),
+	}}
+
+	form := findTopologyNode(t, buildTopology(&unstructured.UnstructuredList{}, forms, nodes, nil), "form-default-web")
+	if form.Metadata["rolloutPhase"] != "Complete" || form.Metadata["rolloutReportedPhase"] != "InProgress" ||
+		form.Metadata["rolloutRecovering"] != int64(1) {
+		t.Errorf("form metadata = %v, want phase Complete, reported InProgress, 1 recovering", form.Metadata)
+	}
+}

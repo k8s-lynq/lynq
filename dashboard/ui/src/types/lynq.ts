@@ -9,6 +9,7 @@ export interface ObjectMeta {
   name: string
   namespace: string
   uid?: string
+  generation?: number
   creationTimestamp?: string
   labels?: Record<string, string>
   annotations?: Record<string, string>
@@ -163,6 +164,7 @@ export interface LynqNodeStatus {
   skippedResources: number
   skippedResourceIds?: string[]
   appliedResources?: string[]
+  observedGeneration?: number
   conditions: Condition[]
 }
 
@@ -196,9 +198,13 @@ export interface ResourceMetadata {
   originalNodeNamespace?: string
   // LynqNode: Conflicted=True
   conflicted?: boolean
-  // LynqForm: status.rollout.phase and message
+  // LynqForm: the rollout phase the dashboard shows (lib/health.ts rolloutView) and the
+  // operator's status.rollout.message. rolloutReportedPhase is status.rollout.phase, set only
+  // when it differs from rolloutPhase; rolloutRecovering counts nodes recovering after completing it.
   rolloutPhase?: RolloutPhase
   rolloutMessage?: string
+  rolloutReportedPhase?: RolloutPhase
+  rolloutRecovering?: number
 }
 
 // Topology types for visualization

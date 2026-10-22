@@ -12,8 +12,12 @@ import {
   indexNodeHealth,
   isHubDisconnected,
   isRolloutPending,
+  rolloutPercent,
+  rolloutView,
   type Health,
   type HubNodeHealth,
+  type RolloutNode,
+  type RolloutView,
 } from './health'
 
 interface SharedCase {
@@ -26,6 +30,16 @@ interface SharedCase {
 }
 
 const cases = sharedCases as unknown as Record<'node' | 'form' | 'hub', SharedCase[]>
+
+interface RolloutCase {
+  name: string
+  generation: number
+  status: Record<string, unknown>
+  nodes: { annotations: Record<string, string>; generation: number; status: object }[]
+  want: Omit<RolloutView, 'reportedPhase'>
+}
+
+const rolloutCases = (sharedCases as unknown as { rollout: RolloutCase[] }).rollout
 
 const node = (name: string, form: string, namespace: string, status: object, hub = 'mysql') =>
   ({
@@ -54,6 +68,66 @@ describe('shared health cases', () => {
     expect(classifyHub(hub, health)).toBe(c.want)
     const { ready, progressing, failed, notCreated } = health
     expect({ ready, progressing, failed, notCreated }).toEqual(c.wantCounts)
+  })
+})
+
+describe('shared rollout cases', () => {
+  it.each(rolloutCases)('$name', (c) => {
+    const form = {
+      metadata: { name: 'web', namespace: 'default', generation: c.generation },
+      status: c.status,
+    } as unknown as LynqForm
+    const nodes = c.nodes.map(
+      (n, i) =>
+        ({
+          metadata: { name: `n${i}-web`, namespace: 'default', annotations: n.annotations, generation: n.generation },
+          status: n.status,
+        }) as unknown as RolloutNode,
+    )
+    const reportedPhase = (c.status.rollout as { phase: string }).phase
+    expect(rolloutView(form, nodes)).toEqual({ ...c.want, reportedPhase })
+  })
+})
+
+describe('rolloutView', () => {
+  const rollout = {
+    phase: 'InProgress',
+    totalNodes: 126,
+    updatedNodes: 126,
+    updatingNodes: 1,
+    readyUpdatedNodes: 125,
+  }
+  const form = (r: object) =>
+    ({ metadata: { name: 'web', namespace: 'default', generation: 3 }, status: { rollout: r } }) as unknown as LynqForm
+
+  it('shows no rollout when there is none or it is Idle', () => {
+    expect(rolloutView(form({}), [])).toBeNull()
+    expect(rolloutView(form({ phase: 'Idle' }), [])).toBeNull()
+  })
+  it('takes the counts and phase from the form status until the node list loads', () => {
+    expect(rolloutView(form(rollout), null)).toEqual({
+      phase: 'InProgress',
+      reportedPhase: 'InProgress',
+      total: 126,
+      updated: 126,
+      readyUpdated: 125,
+      updating: 1,
+      recovering: 0,
+      completed: 125,
+    })
+  })
+})
+
+describe('rolloutPercent', () => {
+  it.each([
+    [0, 0, 0],
+    [1, 2, 50],
+    // 125/126 is 99.2%: the bar reaches 100% only once every node completed
+    [125, 126, 99],
+    [199, 200, 99],
+    [126, 126, 100],
+  ])('%i of %i completed is %i%%', (completed, total, want) => {
+    expect(rolloutPercent({ completed, total })).toBe(want)
   })
 })
 
@@ -149,6 +223,10 @@ describe('isRolloutPending', () => {
   })
   it('is not pending without annotations', () => {
     expect(isRolloutPending(undefined)).toBe(false)
+  })
+  it('is pending without the marker when the operator does not write it', () => {
+    expect(isRolloutPending(ann('4'), false)).toBe(true)
+    expect(isRolloutPending(ann('4', '4'), false)).toBe(false)
   })
 })
 
