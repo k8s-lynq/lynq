@@ -132,6 +132,10 @@ LynqNode Controller -> Reconciles each LynqNode -> SSA applies resources
   that changes the node's template generation) is timed; a data-only update is caught by the
   LynqNode turning failed. The node keeps its slot — the rollout stops and says so, it does not
   skip the node
+- `status.rollout` counts and phase follow the completion marker, not current readiness: an
+  updated node that completed its LynqForm rollout and regressed since is *recovering* — it keeps
+  the rollout `Complete` (same `completionTime`) and is named only in the message. maxSkew still
+  counts it as updating (see the progressDeadlineSeconds pitfall)
 - All `*Template` fields support Go `text/template` + sprig functions
 
 **Template Variables Available**:
@@ -933,6 +937,15 @@ Deadline` because each scenario waits out a 60s `progressDeadlineSeconds` plus a
     `stallReason` times only a node whose marker is pending, from `rollout-update-start`;
     completed nodes are stalled only by `classifyNode == failed`. A restart or leader change reads
     the same annotations, so it neither fakes nor delays a verdict.
+  - The LynqForm rollout status reads the same marker (`calculateRolloutStats`): an updated node
+    is ready-updated (`reachedReadyForCurrentSpec`), else *recovering* if `updateCompleted`, else
+    updating. Phase is `Complete` once ready-updated + recovering = total, so a lost pod no longer
+    flips a finished rollout to `InProgress` and restamps its `completionTime`. Recovering has no
+    CRD field: it is `updatedNodes - updatingNodes - readyUpdatedNodes`, and the message names it
+    only when non-zero (`All N nodes updated (K recovering)`), so the status is rewritten only
+    when that count changes. `lynqform_rollout_updating_nodes` excludes it and
+    `lynqform_rollout_progress` counts it as done. The hub's maxSkew count deliberately does not
+    follow this: a recovering node keeps its slot.
   - The completion write is one per node per update, never on a no-op sync
     (`needsRolloutCompletionMark` is false once written), and only after re-reading the node
     uncached and confirming it still carries the observed update and is not being deleted
@@ -950,6 +963,8 @@ Deadline` because each scenario waits out a 60s `progressDeadlineSeconds` plus a
     reconcile it triggers would also re-render and re-apply.
   - A node without the key predates it and counts as completed, so an upgrade cannot fail a
     rollout over a node that regressed before it; the hub does not backfill it.
+  - For the same reason, a not-Ready node without the key counts as recovering, not updating, in
+    the rollout status — including one caught mid-rollout by the upgrade that introduced the key.
   - A version without the marker (a rollback) neither resets nor records it. A generation change
     it makes leaves a marker for an older generation, which is pending, so the rollout is timed
     after the re-upgrade; a data-only update it makes is not a rollout, as above.

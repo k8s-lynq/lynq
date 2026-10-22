@@ -166,10 +166,17 @@ resources exceed their `timeoutSeconds`, and the rollout turns `Failed` at that 
 
 The deadline only measures **an update that never completed**. A node that became Ready after its
 update and later drops out of it (node drain, lost pod, `kubectl rollout restart`) is recovering,
-not stalled, and never fails the rollout by deadline, however long ago the update was.
+not stalled, and never fails the rollout by deadline, however long ago the update was. It is not
+rolling out either: the rollout's counts and phase follow the completion record below, so a
+`Complete` rollout stays `Complete` (with the same `completionTime`) while such a node recovers,
+and the message names it — `All 126 nodes updated (1 recovering)`. `updatingNodes` and
+`lynqform_rollout_updating_nodes` count only nodes whose update has not completed. A recovering
+node that turns failed still turns the rollout `Failed` at once.
 
 `Failed` exposes the stall; it does not skip the node. A failed or stuck node keeps its `maxSkew`
-slot, so with `maxSkew: 1` no further node is updated until it recovers. Fix the node or revert
+slot, so with `maxSkew: 1` no further node is updated until it recovers. A recovering node keeps
+its slot too, so a rollout can read `InProgress` with `updatingNodes: 0`: it is waiting for the
+recovering nodes named in the message. Fix the node or revert
 the LynqForm change to move the rollout on.
 
 Completion is recorded on the node itself: once the operator sees an updated node Ready for its
@@ -198,11 +205,13 @@ status:
     targetGeneration: int64
     totalNodes: int32
     updatedNodes: int32        # Updated to target generation
-    updatingNodes: int32       # Updated but not yet ready for the updated spec
-    readyUpdatedNodes: int32   # Updated AND ready for the updated spec (observedGeneration caught up)
+    updatingNodes: int32       # Updated, update not completed yet (not counting recovering nodes)
+    readyUpdatedNodes: int32   # Updated AND ready for the updated spec now (observedGeneration caught up)
+                               # updatedNodes - updatingNodes - readyUpdatedNodes = recovering nodes:
+                               # completed the update, not Ready now. Complete counts them as done.
     startTime: timestamp
     completionTime: timestamp  # When the rollout completed, or when it turned Failed
-    message: string            # On Failed: the stalled nodes and why
+    message: string            # On Failed: the stalled nodes and why; otherwise counts, incl. recovering
 
   conditions:
   - type: Valid

@@ -454,6 +454,7 @@ func TestCalculateRolloutStats(t *testing.T) {
 		wantUpdatedNodes      int32
 		wantUpdatingNodes     int32
 		wantReadyUpdatedNodes int32
+		wantRecoveringNodes   int32
 	}{
 		{
 			name:                  "no nodes",
@@ -545,7 +546,8 @@ func TestCalculateRolloutStats(t *testing.T) {
 						Name:      "node2-web-app",
 						Namespace: "default",
 						Annotations: map[string]string{
-							"lynq.sh/template-generation": "3", // Updated to target, not Ready
+							"lynq.sh/template-generation":               "3", // Updated to target, not Ready
+							lynqv1.AnnotationRolloutCompletedGeneration: "",  // update pending
 						},
 					},
 					Spec: lynqv1.LynqNodeSpec{
@@ -582,6 +584,61 @@ func TestCalculateRolloutStats(t *testing.T) {
 			wantUpdatedNodes:      2, // node1 and node2 are at gen 3
 			wantUpdatingNodes:     1, // node2 is at gen 3 but not Ready
 			wantReadyUpdatedNodes: 1, // node1 is at gen 3 and Ready
+		},
+		{
+			name:               "a node that completed the update and regressed is recovering, not updating",
+			templateName:       "web-app",
+			templateNamespace:  "default",
+			templateGeneration: 3,
+			nodes: []lynqv1.LynqNode{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "drained-web-app",
+						Namespace: "default",
+						Annotations: map[string]string{
+							lynqv1.AnnotationTemplateGeneration:         "3",
+							lynqv1.AnnotationRolloutCompletedGeneration: "3",
+						},
+					},
+					Spec: lynqv1.LynqNodeSpec{UID: "drained", TemplateRef: "web-app"},
+					Status: lynqv1.LynqNodeStatus{Conditions: []metav1.Condition{
+						{Type: "Ready", Status: metav1.ConditionFalse},
+					}},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "legacy-web-app",
+						Namespace: "default",
+						// Predates the completion marker: its update counts as completed
+						Annotations: map[string]string{lynqv1.AnnotationTemplateGeneration: "3"},
+					},
+					Spec: lynqv1.LynqNodeSpec{UID: "legacy", TemplateRef: "web-app"},
+					Status: lynqv1.LynqNodeStatus{Conditions: []metav1.Condition{
+						{Type: "Ready", Status: metav1.ConditionFalse},
+					}},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "previous-web-app",
+						Namespace: "default",
+						// Completed generation 2, now updated to 3: that completion does not count
+						Annotations: map[string]string{
+							lynqv1.AnnotationTemplateGeneration:         "3",
+							lynqv1.AnnotationRolloutCompletedGeneration: "2",
+						},
+					},
+					Spec: lynqv1.LynqNodeSpec{UID: "previous", TemplateRef: "web-app"},
+					Status: lynqv1.LynqNodeStatus{Conditions: []metav1.Condition{
+						{Type: "Ready", Status: metav1.ConditionFalse},
+					}},
+				},
+			},
+			wantTotalNodes:        3,
+			wantReadyNodes:        0,
+			wantUpdatedNodes:      3,
+			wantUpdatingNodes:     1, // previous-web-app
+			wantReadyUpdatedNodes: 0,
+			wantRecoveringNodes:   2, // drained-web-app and legacy-web-app
 		},
 		{
 			name:               "exclude nodes from different template",
@@ -704,6 +761,7 @@ func TestCalculateRolloutStats(t *testing.T) {
 			assert.Equal(t, tt.wantUpdatedNodes, stats.updatedNodes, "updatedNodes mismatch")
 			assert.Equal(t, tt.wantUpdatingNodes, stats.updatingNodes, "updatingNodes mismatch")
 			assert.Equal(t, tt.wantReadyUpdatedNodes, stats.readyUpdatedNodes, "readyUpdatedNodes mismatch")
+			assert.Equal(t, tt.wantRecoveringNodes, stats.recoveringNodes, "recoveringNodes mismatch")
 		})
 	}
 }
@@ -778,6 +836,34 @@ func TestRolloutPhasesDetermination(t *testing.T) {
 				updatedNodes:      3,
 				updatingNodes:     1,
 				readyUpdatedNodes: 2,
+			},
+			wantPhase:      lynqv1.RolloutPhaseInProgress,
+			wantRolloutNil: false,
+		},
+		{
+			name:    "every node completed, some recovering - Complete phase",
+			maxSkew: 3,
+			stats: rolloutStats{
+				totalNodes:        5,
+				readyNodes:        4,
+				updatedNodes:      5,
+				updatingNodes:     0,
+				readyUpdatedNodes: 4,
+				recoveringNodes:   1,
+			},
+			wantPhase:      lynqv1.RolloutPhaseComplete,
+			wantRolloutNil: false,
+		},
+		{
+			name:    "recovering nodes do not complete a rollout with an update pending - InProgress",
+			maxSkew: 3,
+			stats: rolloutStats{
+				totalNodes:        5,
+				readyNodes:        3,
+				updatedNodes:      5,
+				updatingNodes:     1,
+				readyUpdatedNodes: 3,
+				recoveringNodes:   1,
 			},
 			wantPhase:      lynqv1.RolloutPhaseInProgress,
 			wantRolloutNil: false,

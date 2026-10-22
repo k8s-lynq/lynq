@@ -246,8 +246,11 @@ type rolloutStats struct {
 	totalNodes        int32
 	readyNodes        int32
 	updatedNodes      int32 // Nodes updated to target generation
-	updatingNodes     int32 // Updated but not Ready for the updated spec yet
+	updatingNodes     int32 // Updated, update not completed yet (see updateCompleted)
 	readyUpdatedNodes int32 // Updated AND Ready for the updated spec
+	// recoveringNodes completed their update and are not Ready now (lost pod, drain, external
+	// restart). The rollout is done with them: they count toward completion, not as updating.
+	recoveringNodes int32
 	// stalledNodes are updated nodes that failed, or never became Ready within
 	// progressDeadlineSeconds of their update. Any entry puts the rollout in Phase=Failed.
 	stalledNodes []stalledNode
@@ -296,10 +299,16 @@ func (r *LynqFormReconciler) calculateRolloutStats(ctx context.Context, tmpl *ly
 		if nodeGen == targetGenStr {
 			stats.updatedNodes++
 			// Ready for the previous spec is not progress on this update: it only counts once
-			// the LynqNode controller has observed the updated spec.
-			if reachedReadyForCurrentSpec(node) {
+			// the LynqNode controller has observed the updated spec. A node whose update has
+			// completed and that is not Ready now is recovering, not rolling out: counting it as
+			// updating turned every lost pod into an InProgress rollout and reset its
+			// completionTime.
+			switch {
+			case reachedReadyForCurrentSpec(node):
 				stats.readyUpdatedNodes++
-			} else {
+			case updateCompleted(node):
+				stats.recoveringNodes++
+			default:
 				stats.updatingNodes++
 			}
 			if reason := stallReason(node, deadline, now); reason != "" {
@@ -481,10 +490,15 @@ func (r *LynqFormReconciler) updateRolloutStatus(tmpl *lynqv1.LynqForm, stats ro
 			now := metav1.Now()
 			rollout.StartTime = &now
 		}
-	} else if stats.readyUpdatedNodes == stats.totalNodes {
-		// All nodes are updated and ready - rollout complete
+	} else if stats.readyUpdatedNodes+stats.recoveringNodes == stats.totalNodes {
+		// Every node completed the update - rollout complete. A node that regressed since is
+		// recovering, not rolling out: it is named in the message only, so the phase and
+		// completionTime survive a lost pod.
 		rollout.Phase = lynqv1.RolloutPhaseComplete
 		rollout.Message = fmt.Sprintf("All %d nodes updated and ready", stats.totalNodes)
+		if stats.recoveringNodes > 0 {
+			rollout.Message = fmt.Sprintf("All %d nodes updated (%d recovering)", stats.totalNodes, stats.recoveringNodes)
+		}
 		if rollout.CompletionTime == nil {
 			now := metav1.Now()
 			rollout.CompletionTime = &now
@@ -504,6 +518,10 @@ func (r *LynqFormReconciler) updateRolloutStatus(tmpl *lynqv1.LynqForm, stats ro
 		rollout.Phase = lynqv1.RolloutPhaseInProgress
 		rollout.Message = fmt.Sprintf("Updating: %d/%d nodes updated (%d updating, %d ready)",
 			stats.updatedNodes, stats.totalNodes, stats.updatingNodes, stats.readyUpdatedNodes)
+		if stats.recoveringNodes > 0 {
+			rollout.Message = fmt.Sprintf("Updating: %d/%d nodes updated (%d updating, %d ready, %d recovering)",
+				stats.updatedNodes, stats.totalNodes, stats.updatingNodes, stats.readyUpdatedNodes, stats.recoveringNodes)
+		}
 		// Reset completion time while in progress
 		rollout.CompletionTime = nil
 		if rollout.StartTime == nil {
@@ -516,10 +534,11 @@ func (r *LynqFormReconciler) updateRolloutStatus(tmpl *lynqv1.LynqForm, stats ro
 	metrics.FormRolloutUpdatingNodes.WithLabelValues(tmpl.Name, tmpl.Namespace).Set(float64(stats.updatingNodes))
 	metrics.FormRolloutPhase.WithLabelValues(tmpl.Name, tmpl.Namespace).Set(metrics.RolloutPhaseToMetric(string(rollout.Phase)))
 
-	// Calculate progress percentage
+	// Calculate progress percentage: the share of nodes that completed the update, so a
+	// recovering node does not take a Complete rollout below 100%.
 	var progress float64
 	if stats.totalNodes > 0 {
-		progress = float64(stats.readyUpdatedNodes) / float64(stats.totalNodes) * 100
+		progress = float64(stats.readyUpdatedNodes+stats.recoveringNodes) / float64(stats.totalNodes) * 100
 	}
 	metrics.FormRolloutProgress.WithLabelValues(tmpl.Name, tmpl.Namespace).Set(progress)
 }

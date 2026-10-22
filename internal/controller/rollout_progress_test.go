@@ -480,15 +480,90 @@ func TestRolloutDeadline_RegressionAfterCompletedUpdateNeverFailsRollout(t *test
 	// When it regresses long after the update stamp
 	h.setNode("drained-web", markNotReady)
 
-	// Then the rollout is not Failed, however long the recovery takes
+	// Then the rollout stays Complete, however long the recovery takes
 	for _, at := range []time.Duration{2 * time.Hour, 2*time.Hour + 11*time.Minute, 5 * time.Hour} {
-		rollout := h.reconcile(at)
-		assert.NotEqual(t, lynqv1.RolloutPhaseFailed, rollout.Phase, "at %s", at)
-		assert.Equal(t, lynqv1.RolloutPhaseInProgress, rollout.Phase, "a recovering node is still updating")
+		assert.Equal(t, lynqv1.RolloutPhaseComplete, h.reconcile(at).Phase, "at %s", at)
 	}
 	for _, e := range h.events() {
 		assert.NotContains(t, e, "RolloutFailed")
 	}
+}
+
+// A node that completed the update and regressed later is recovering, not rolling out. Counting
+// it as updating flipped a finished rollout to InProgress on every lost pod and restamped its
+// completionTime once the pod came back.
+func TestRolloutStatus_RecoveringNodeKeepsTheRolloutComplete(t *testing.T) {
+	// Given a complete rollout over two nodes whose completion the hub recorded
+	h := newRolloutHarness(t, "recovering-form", 1,
+		withStatus(updatedNode("drained-web", rolloutT0), markReady),
+		withStatus(updatedNode("steady-web", rolloutT0), markReady))
+	require.Equal(t, 2, h.hubSync())
+	completed := h.reconcile(time.Minute)
+	require.Equal(t, lynqv1.RolloutPhaseComplete, completed.Phase)
+	require.NotNil(t, completed.CompletionTime)
+	completionTime := *completed.CompletionTime
+	assert.Equal(t, "All 2 nodes updated and ready", completed.Message)
+	h.events()
+
+	// When one node loses a pod and is not Ready for a while
+	h.setNode("drained-web", markNotReady)
+	writes := h.writes
+	rollout := h.reconcile(2 * time.Hour)
+
+	// Then the rollout stays Complete with its completionTime, and says a node is recovering
+	assert.Equal(t, lynqv1.RolloutPhaseComplete, rollout.Phase)
+	require.NotNil(t, rollout.CompletionTime)
+	assert.True(t, completionTime.Equal(rollout.CompletionTime), "a recovery is not a new rollout completion")
+	assert.Equal(t, "All 2 nodes updated (1 recovering)", rollout.Message)
+	assert.Equal(t, int32(0), rollout.UpdatingNodes, "a recovering node is not updating")
+	assert.Equal(t, int32(1), rollout.ReadyUpdatedNodes, "only the Ready node is ready-updated")
+	assert.Equal(t, int32(2), rollout.UpdatedNodes)
+	assert.Equal(t, 1, h.writes-writes, "the recovering count is a status change: one write")
+	assert.Equal(t, metrics.RolloutPhaseToMetric(string(lynqv1.RolloutPhaseComplete)), h.phaseMetric())
+	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.FormRolloutUpdatingNodes.WithLabelValues(h.form.Name, h.form.Namespace)))
+	assert.Equal(t, 100.0, testutil.ToFloat64(metrics.FormRolloutProgress.WithLabelValues(h.form.Name, h.form.Namespace)))
+	assert.Empty(t, h.events(), "no rollout transition to announce")
+
+	// And an unchanged recovery does not rewrite the status
+	writes = h.writes
+	h.reconcile(3 * time.Hour)
+	h.reconcile(4 * time.Hour)
+	assert.Equal(t, writes, h.writes, "an unchanged recovering count must not write")
+
+	// When a second node regresses too, the count changes and is written once
+	h.setNode("steady-web", markNotReady)
+	rollout = h.reconcile(5 * time.Hour)
+	assert.Equal(t, "All 2 nodes updated (2 recovering)", rollout.Message)
+	assert.Equal(t, writes+1, h.writes)
+
+	// When both recover, the rollout reads as it did before the pod was lost
+	h.setNode("drained-web", markReady)
+	h.setNode("steady-web", markReady)
+	rollout = h.reconcile(6 * time.Hour)
+	assert.Equal(t, lynqv1.RolloutPhaseComplete, rollout.Phase)
+	assert.Equal(t, "All 2 nodes updated and ready", rollout.Message)
+	assert.True(t, completionTime.Equal(rollout.CompletionTime), "the completionTime is the rollout's, not the recovery's")
+}
+
+// A recovering node that the LynqNode reports failed needs an operator: it stalls the rollout at
+// once, completion marker or not.
+func TestRolloutStatus_RecoveringNodeThatFailsStallsTheRollout(t *testing.T) {
+	h := newRolloutHarness(t, "recovering-failed-form", 1, withStatus(updatedNode("drained-web", rolloutT0), markReady))
+	require.Equal(t, 1, h.hubSync())
+	h.setNode("drained-web", markNotReady)
+	require.Equal(t, lynqv1.RolloutPhaseComplete, h.reconcile(time.Hour).Phase)
+	h.events()
+
+	// When the recovery fails (for example ProgressDeadlineExceeded on its Deployment)
+	h.setNode("drained-web", markFailed)
+	rollout := h.reconcile(time.Hour + time.Minute)
+
+	// Then the rollout is Failed and says why
+	assert.Equal(t, lynqv1.RolloutPhaseFailed, rollout.Phase)
+	assert.Contains(t, rollout.Message, "drained-web (failed)")
+	events := h.events()
+	require.Len(t, events, 1)
+	assert.Contains(t, events[0], "RolloutFailed")
 }
 
 // Completion is durable: a restart or leader change neither forgets that an update completed nor
@@ -617,6 +692,11 @@ func TestRolloutDeadline_NewUpdateResetsTheCompletion(t *testing.T) {
 		markNotReady(n)
 		n.Status.ObservedGeneration = n.Generation
 	})
+	h.now = stamp.Add(time.Minute)
+	require.NoError(t, h.r.updateStatus(h.ctx, h.getForm(), nil))
+	rollout := h.getForm().Status.Rollout
+	assert.Equal(t, lynqv1.RolloutPhaseInProgress, rollout.Phase, "the generation 2 completion does not complete generation 3")
+	assert.Equal(t, int32(1), rollout.UpdatingNodes)
 	h.now = stamp.Add(601 * time.Second)
 	require.NoError(t, h.r.updateStatus(h.ctx, h.getForm(), nil))
 	assert.Equal(t, lynqv1.RolloutPhaseFailed, h.getForm().Status.Rollout.Phase)
@@ -650,7 +730,9 @@ func TestRolloutDeadline_DataOnlyUpdateIsNotARollout(t *testing.T) {
 			n.Status.ObservedGeneration = n.Generation
 		})
 		for _, at := range []time.Duration{601 * time.Second, 3 * time.Hour} {
-			assert.Equal(t, lynqv1.RolloutPhaseInProgress, h.reconcile(at).Phase, "at %s", at)
+			rollout := h.reconcile(at)
+			assert.Equal(t, lynqv1.RolloutPhaseComplete, rollout.Phase, "at %s: a data-only update is not a rollout", at)
+			assert.Equal(t, "All 1 nodes updated (1 recovering)", rollout.Message)
 		}
 
 		// But once the LynqNode reports the data update failed, the rollout stalls at once
@@ -706,7 +788,7 @@ func TestRolloutDeadline_MarkerLeftByARollbackVersion(t *testing.T) {
 		h := newRolloutHarness(t, "rollback-data-form", 1, node)
 
 		// Then it is not a stalled rollout, however long it lasts
-		assert.Equal(t, lynqv1.RolloutPhaseInProgress, h.reconcile(3*time.Hour).Phase)
+		assert.Equal(t, lynqv1.RolloutPhaseComplete, h.reconcile(3*time.Hour).Phase)
 
 		// But it stalls the rollout as soon as the LynqNode reports it failed
 		h.setNode("rolledback-data-web", markFailed)
@@ -782,7 +864,10 @@ func TestRolloutDeadline_NodeWithoutCompletionMarkerIsNotTimed(t *testing.T) {
 	delete(legacy.Annotations, lynqv1.AnnotationRolloutCompletedGeneration)
 	h := newRolloutHarness(t, "legacy-form", 1, legacy)
 
-	assert.Equal(t, lynqv1.RolloutPhaseInProgress, h.reconcile(3*time.Hour).Phase)
+	rollout := h.reconcile(3 * time.Hour)
+	assert.Equal(t, lynqv1.RolloutPhaseComplete, rollout.Phase, "a node that predates the marker completed its update")
+	assert.Equal(t, int32(0), rollout.UpdatingNodes)
+	assert.Equal(t, "All 1 nodes updated (1 recovering)", rollout.Message)
 	h.setNode("legacy-web", markReady)
 	assert.Equal(t, 0, h.hubSync(), "no backfill write for nodes that predate the marker")
 
