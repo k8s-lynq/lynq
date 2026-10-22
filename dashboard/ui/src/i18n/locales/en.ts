@@ -32,7 +32,7 @@ const en = {
   // Status
   status: {
     ready: "Ready",
-    pending: "Pending",
+    pending: "Progressing",
     failed: "Failed",
     skipped: "Skipped",
     all: "All Status",
@@ -107,6 +107,12 @@ const en = {
     relatedNodes: "Related Nodes",
     noNodesYet: "No nodes created from this hub yet.",
     moreNodes: "+{{count}} more nodes",
+    progressingHint:
+      "Nodes rolling out, recovering, or not created yet. They are neither ready nor failed.",
+    failedHint:
+      "Nodes that need an operator: failed or conflicted resources, or Degraded.",
+    notCreatedHint: "{{count}} of them not created yet.",
+    dbDisconnected: "Datasource disconnected",
   },
 
   // Forms Page
@@ -153,6 +159,28 @@ const en = {
     networkPolicies: "Network Policies",
     horizontalPodAutoscalers: "HPAs",
     manifests: "Custom Manifests",
+    rolloutPhase: {
+      Idle: "Idle",
+      InProgress: "In progress",
+      Failed: "Failed",
+      Complete: "Complete",
+    },
+    rolloutStalled: "Rollout stalled",
+    updatedNodes: "Updated",
+    updatingNodes: "Updating",
+    completedNodes: "completed the update",
+    completedHint:
+      "Nodes that completed this rollout, Ready or not: the operator's rollout progress. Recovering nodes count; nodes still updating do not.",
+    readyUpdatedNodes: "Ready",
+    recoveringNodes: "Recovering",
+    recoveringCount: "{{count}} recovering",
+    recoveringHint:
+      "Nodes that completed this rollout and are not Ready again, for example after losing a pod. They are recovering, not rolling out, and do not hold the rollout back.",
+    reportedPhase: "Operator reports: {{phase}}",
+    reportedPhaseHint:
+      "This operator version counts recovering nodes as still updating. Every node has completed this rollout, so the Dashboard shows it as Complete.",
+    targetGeneration: "Target generation",
+    recentEvents: "Recent Events",
   },
 
   // Nodes Page
@@ -191,6 +219,11 @@ const en = {
     checkConditionsTab:
       "Check the Conditions tab for error details. Failed resources are not included in the applied resources list.",
     noConditionsReported: "No conditions reported.",
+    notReady: "Not ready",
+    templateGeneration: "Template generation",
+    rolloutPending: "Rollout pending",
+    rolloutGenerationHint:
+      "Rollout pending: this node has not been Ready since it was updated to this template generation.",
   },
 
   // Topology Page
@@ -198,7 +231,7 @@ const en = {
     title: "Topology View",
     problems: "Problems",
     exitProblemMode: "Exit problem highlight mode",
-    highlightFailed: "Highlight failed nodes",
+    highlightFailed: "Highlight nodes that need an operator (failed, conflicted or degraded)",
     searchNodes: "Search nodes...",
     clearSearch: "Clear search",
     found: "found",
@@ -338,7 +371,7 @@ const en = {
   charts: {
     ready: "Ready",
     failed: "Failed",
-    pending: "Pending",
+    pending: "Progressing",
   },
 
   // Time

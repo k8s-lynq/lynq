@@ -24,6 +24,7 @@ import type {
   ResourceMetadata,
 } from "@/types/lynq";
 import { formApi, nodeApi, type FormDetailsResponse } from "@/lib/api";
+import { RolloutPhaseBadge } from "@/components/RolloutProgress";
 import {
   IconCircleCheck,
   IconCircleX,
@@ -284,8 +285,38 @@ function OverviewTab({ node }: { node: TopologyNode }) {
         <CardContent className="py-3 pt-0">
           <div className="flex items-center gap-2">
             {STATUS_ICONS[node.status]}
-            <span className="capitalize">{node.status}</span>
+            <span>{t(`status.${node.status}`)}</span>
           </div>
+          {node.type === "form" && node.metadata?.rolloutPhase && (
+            <div className="mt-3 space-y-1">
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-muted-foreground">{t("forms.rollout")}</span>
+                <RolloutPhaseBadge phase={node.metadata.rolloutPhase} />
+                {!!node.metadata.rolloutRecovering && (
+                  <Badge variant="secondary" title={t("forms.recoveringHint")}>
+                    {t("forms.recoveringCount", { count: node.metadata.rolloutRecovering })}
+                  </Badge>
+                )}
+              </div>
+              {node.metadata.rolloutReportedPhase && (
+                <p
+                  className="text-xs text-muted-foreground"
+                  title={[t("forms.reportedPhaseHint"), node.metadata.rolloutMessage]
+                    .filter(Boolean)
+                    .join("\n")}
+                >
+                  {t("forms.reportedPhase", {
+                    phase: t(`forms.rolloutPhase.${node.metadata.rolloutReportedPhase}`),
+                  })}
+                </p>
+              )}
+              {node.metadata.rolloutPhase === "Failed" && node.metadata.rolloutMessage && (
+                <p className="text-xs text-rose-500 break-words">
+                  {node.metadata.rolloutMessage}
+                </p>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -395,13 +426,13 @@ function ResourcesTab({
   };
 
   // Separate conflicted / managed / skipped.
-  // Gate conflict display on the LynqNode itself being non-ready.
+  // Gate conflict display on the LynqNode's own Conflicted=True condition (BFF metadata).
   // Individual resource nodes often keep 'ready' status even during a conflict
-  // (the resource physically exists — ownership is disputed, not the resource).
-  // node.status transitioning back to 'ready' (via liveSelectedNode) is the
-  // reliable signal that the controller re-reconciled successfully, even though
-  // old ResourceConflict events persist in Kubernetes for ~1 hour.
-  const conflictActive = node.status !== "ready" && conflictsByKey.size > 0;
+  // (the resource physically exists — ownership is disputed, not the resource), and old
+  // ResourceConflict events persist in Kubernetes for ~1 hour. Gating on "not ready" showed
+  // those stale conflicts on a node that was merely recovering after the conflict cleared.
+  const conflictActive =
+    (node.metadata?.conflicted ?? node.status === "failed") && conflictsByKey.size > 0;
   const conflictedResources = resourceChildren.filter(
     (r) => conflictActive && conflictsByKey.has(getConflictKey(r))
   );

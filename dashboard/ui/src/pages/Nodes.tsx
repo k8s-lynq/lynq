@@ -24,15 +24,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useNodes, useNodePolling } from '@/contexts/NodeContext'
+import { classifyNode, countHealth } from '@/lib/health'
 import type { LynqNode, ResourceStatus } from '@/types/lynq'
-
-function getNodeStatus(node: LynqNode): ResourceStatus {
-  const readyCondition = node.status?.conditions?.find((c) => c.type === 'Ready')
-  if (!readyCondition) return 'pending'
-  if (readyCondition.status === 'True') return 'ready'
-  if (readyCondition.status === 'False') return 'failed'
-  return 'pending'
-}
 
 function StatusIcon({ status }: { status: ResourceStatus }) {
   switch (status) {
@@ -49,7 +42,7 @@ function StatusIcon({ status }: { status: ResourceStatus }) {
 
 function NodeCard({ node }: { node: LynqNode }) {
   const { t } = useTranslation()
-  const status = getNodeStatus(node)
+  const status = classifyNode(node)
   const uid = node.spec.data?.uid as string | undefined
   const hubRef = node.metadata.labels?.['lynq.sh/hub']
 
@@ -180,8 +173,7 @@ export function Nodes() {
 
       // Status filter
       if (statusFilter !== 'all') {
-        const status = getNodeStatus(node)
-        if (status !== statusFilter) return false
+        if (classifyNode(node) !== statusFilter) return false
       }
 
       // Hub filter (hubRef is in labels)
@@ -219,6 +211,8 @@ export function Nodes() {
   const clearFilters = () => {
     setSearchParams(new URLSearchParams())
   }
+
+  const counts = useMemo(() => countHealth(filteredNodes, classifyNode), [filteredNodes])
 
   const hasActiveFilters = searchQuery || statusFilter !== 'all' || hubFilter !== 'all' || formFilter !== 'all' || namespaceFilter !== 'all'
 
@@ -339,7 +333,7 @@ export function Nodes() {
           <Card>
             <CardContent className="pt-6 text-center">
               <p className="text-3xl font-bold text-emerald-500">
-                {filteredNodes.filter((n) => getNodeStatus(n) === 'ready').length}
+                {counts.ready}
               </p>
               <p className="text-sm text-muted-foreground">{t('status.ready')}</p>
             </CardContent>
@@ -347,7 +341,7 @@ export function Nodes() {
           <Card>
             <CardContent className="pt-6 text-center">
               <p className="text-3xl font-bold text-rose-500">
-                {filteredNodes.filter((n) => getNodeStatus(n) === 'failed').length}
+                {counts.failed}
               </p>
               <p className="text-sm text-muted-foreground">{t('status.failed')}</p>
             </CardContent>
@@ -355,7 +349,7 @@ export function Nodes() {
           <Card>
             <CardContent className="pt-6 text-center">
               <p className="text-3xl font-bold text-amber-500">
-                {filteredNodes.filter((n) => getNodeStatus(n) === 'pending').length}
+                {counts.pending}
               </p>
               <p className="text-sm text-muted-foreground">{t('status.pending')}</p>
             </CardContent>

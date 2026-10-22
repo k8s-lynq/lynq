@@ -10,7 +10,7 @@ type TopologyNode struct {
 	Type      string                 `json:"type"` // hub, form, node, resource
 	Name      string                 `json:"name"`
 	Namespace string                 `json:"namespace"`
-	Status    string                 `json:"status"` // ready, failed, pending, skipped
+	Status    string                 `json:"status"` // ready, pending (progressing), failed, skipped
 	Children  []string               `json:"children,omitempty"`
 	Metrics   TopologyMetrics        `json:"metrics"`
 	Metadata  map[string]interface{} `json:"metadata,omitempty"` // Extra info like creationPolicy
@@ -105,16 +105,19 @@ func buildTopology(hubs, forms, nodes, orphanedResources *unstructured.Unstructu
 	// Build resource policy map: formName -> resourceID -> ResourcePolicy
 	formResourcePolicies := buildFormResourcePolicies(forms)
 
+	// LynqFormStatus has no failed-node count, and LynqHub status.failed counts every not-Ready
+	// node in Lynq v1.1.23-alpha.1 and earlier, so both are counted from the LynqNodes themselves
+	nodesByForm := countNodes(nodes, formKey)
+	nodesByHub := countNodes(nodes, hubKey)
+	nodeListByForm := groupNodes(nodes, formKey)
+
 	// Process hubs
 	for _, hub := range hubs.Items {
 		name, _, _ := unstructured.NestedString(hub.Object, "metadata", "name")
 		namespace, _, _ := unstructured.NestedString(hub.Object, "metadata", "namespace")
 
-		desired, _, _ := unstructured.NestedInt64(hub.Object, "status", "desired")
-		ready, _, _ := unstructured.NestedInt64(hub.Object, "status", "ready")
-		failed, _, _ := unstructured.NestedInt64(hub.Object, "status", "failed")
-
-		status := getResourceStatus(hub)
+		health := newHubHealth(hub, nodesByHub[namespace+"/"+name])
+		status := classifyHub(hub, health)
 		nodeID := "hub-" + namespace + "-" + name
 
 		topology.Nodes = append(topology.Nodes, TopologyNode{
@@ -125,9 +128,9 @@ func buildTopology(hubs, forms, nodes, orphanedResources *unstructured.Unstructu
 			Status:    status,
 			Children:  []string{},
 			Metrics: TopologyMetrics{
-				Desired: desired,
-				Ready:   ready,
-				Failed:  failed,
+				Desired: health.Desired,
+				Ready:   health.Ready,
+				Failed:  health.Failed,
 			},
 		})
 	}
@@ -140,10 +143,25 @@ func buildTopology(hubs, forms, nodes, orphanedResources *unstructured.Unstructu
 
 		totalNodes, _, _ := unstructured.NestedInt64(form.Object, "status", "totalNodes")
 		readyNodes, _, _ := unstructured.NestedInt64(form.Object, "status", "readyNodes")
-		failedNodes, _, _ := unstructured.NestedInt64(form.Object, "status", "failedNodes")
+		formNodes := nodesByForm[namespace+"/"+name]
 
-		status := getResourceStatus(form)
+		status := classifyForm(form, formNodes)
 		nodeID := "form-" + namespace + "-" + name
+
+		// rolloutPhase is the phase the dashboard shows (see rolloutView); rolloutReportedPhase is
+		// the operator's, when it differs
+		var formMetadata map[string]interface{}
+		if rollout, ok := newRolloutView(form, nodeListByForm[namespace+"/"+name]); ok {
+			message, _, _ := unstructured.NestedString(form.Object, "status", "rollout", "message")
+			formMetadata = map[string]interface{}{
+				"rolloutPhase":      rollout.Phase,
+				"rolloutMessage":    message,
+				"rolloutRecovering": rollout.Recovering,
+			}
+			if rollout.Phase != rollout.ReportedPhase {
+				formMetadata["rolloutReportedPhase"] = rollout.ReportedPhase
+			}
+		}
 
 		topology.Nodes = append(topology.Nodes, TopologyNode{
 			ID:        nodeID,
@@ -155,8 +173,9 @@ func buildTopology(hubs, forms, nodes, orphanedResources *unstructured.Unstructu
 			Metrics: TopologyMetrics{
 				Desired: totalNodes,
 				Ready:   readyNodes,
-				Failed:  failedNodes,
+				Failed:  formNodes.Failed,
 			},
+			Metadata: formMetadata,
 		})
 
 		// Track form by hub for edge creation
@@ -175,7 +194,7 @@ func buildTopology(hubs, forms, nodes, orphanedResources *unstructured.Unstructu
 	for _, node := range nodes.Items {
 		name, _, _ := unstructured.NestedString(node.Object, "metadata", "name")
 		namespace, _, _ := unstructured.NestedString(node.Object, "metadata", "namespace")
-		hubRef, _, _ := unstructured.NestedString(node.Object, "spec", "hubRef")
+		hubRef := node.GetLabels()["lynq.sh/hub"]
 		templateRef, _, _ := unstructured.NestedString(node.Object, "spec", "templateRef")
 
 		desired, _, _ := unstructured.NestedInt64(node.Object, "status", "desiredResources")
@@ -198,7 +217,7 @@ func buildTopology(hubs, forms, nodes, orphanedResources *unstructured.Unstructu
 			}
 		}
 
-		status := getResourceStatus(node)
+		status := classifyNode(node)
 		nodeID := "node-" + namespace + "-" + name
 
 		topology.Nodes = append(topology.Nodes, TopologyNode{
@@ -211,6 +230,10 @@ func buildTopology(hubs, forms, nodes, orphanedResources *unstructured.Unstructu
 				Desired: desired,
 				Ready:   ready,
 				Failed:  failed,
+			},
+			// The drawer shows past ResourceConflict events only while the conflict is live
+			Metadata: map[string]interface{}{
+				"conflicted": conditionStatus(node, "Conflicted") == "True",
 			},
 		})
 
@@ -260,9 +283,9 @@ func buildTopology(hubs, forms, nodes, orphanedResources *unstructured.Unstructu
 				// - "ready" = successfully applied and being reconciled
 				// - "skipped" = skipped due to dependency failure
 				// Note: This is NOT the K8s Ready condition, but whether it's being managed
-				resourceStatus := "ready"
+				resourceStatus := statusReady
 				if skippedResourceIds[res.ID] {
-					resourceStatus = "skipped"
+					resourceStatus = statusSkipped
 				}
 
 				// Look up policy for this resource
@@ -329,7 +352,7 @@ func buildTopology(hubs, forms, nodes, orphanedResources *unstructured.Unstructu
 				Type:      "orphan",
 				Name:      kind + "/" + name,
 				Namespace: namespace,
-				Status:    "skipped", // Use skipped status for orphaned resources
+				Status:    statusSkipped, // Use skipped status for orphaned resources
 				Metrics: TopologyMetrics{
 					Desired: 0,
 					Ready:   0,
@@ -352,39 +375,6 @@ func buildTopology(hubs, forms, nodes, orphanedResources *unstructured.Unstructu
 	}
 
 	return topology
-}
-
-// getResourceStatus extracts status from conditions
-func getResourceStatus(obj unstructured.Unstructured) string {
-	conditions, found, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
-	if !found {
-		return "pending"
-	}
-
-	// Check for Ready condition (LynqHub, LynqNode)
-	// Check for Applied condition (LynqForm)
-	readyConditionTypes := []string{"Ready", "Applied"}
-
-	for _, c := range conditions {
-		condition, ok := c.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		condType, _, _ := unstructured.NestedString(condition, "type")
-		condStatus, _, _ := unstructured.NestedString(condition, "status")
-
-		for _, readyType := range readyConditionTypes {
-			if condType == readyType {
-				if condStatus == "True" {
-					return "ready"
-				}
-				if condStatus == "False" {
-					return "failed"
-				}
-			}
-		}
-	}
-	return "pending"
 }
 
 // buildFormResourcePolicies extracts resource policies from all LynqForms
