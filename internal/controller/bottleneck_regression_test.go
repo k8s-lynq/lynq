@@ -611,9 +611,13 @@ func TestElapsedSinceApply_FallsBackOnInvalidFormat(t *testing.T) {
 //   - timeoutSeconds=1, rolling Deployment (not ready)
 //   - 1st reconcile: apply → apply-start-time annotation stamped (≈now)
 //   - sleep 2s (annotation is now 2s old)
-//   - 2nd reconcile (shared client, new reconciler): reads annotation → elapsed≈2s > 1s → FAILED
+//   - 2nd reconcile (same reconciler): reads annotation → elapsed≈2s > 1s → FAILED
 //
 // Without the annotation: 2nd reconcile elapsed = time.Since(fresh applyStartTime) ≈ 0 < 1s → NOT failed.
+//
+// The same reconciler is reused on purpose. A restarted controller has no readiness history
+// and starts the clock at its first not-ready observation instead, so a restart grants one
+// more timeout of grace; TestReadiness_RestartWithoutHistoryGrantsAFullTimeoutOfGrace covers that.
 func TestRegression_TimerPersistsAcrossReconciles(t *testing.T) {
 	scheme := makeBottleneckScheme(t)
 	node := makeTestNode("test-node", "default")
@@ -637,10 +641,8 @@ func TestRegression_TimerPersistsAcrossReconciles(t *testing.T) {
 	// Wait for the timeout to elapse (annotation is now ≈2s old, timeout=1s)
 	time.Sleep(2 * time.Second)
 
-	// 2nd reconcile (new reconciler = empty in-memory cache, same cluster state)
-	// elapsedSinceApply reads the annotation (≈2s ago) → elapsed > 1s → timeout fires
-	r2 := makeReconcilerForClient(scheme, c)
-	_, failedCount2, _, _, _, _ := r2.applyResources(context.Background(), node, sortedNodes, defaultVars(), false)
+	// 2nd reconcile: elapsedSinceApply reads the annotation (≈2s ago) → elapsed > 1s → timeout fires
+	_, failedCount2, _, _, _, _ := r1.applyResources(context.Background(), node, sortedNodes, defaultVars(), false)
 
 	assert.Equal(t, int32(1), failedCount2,
 		"after 2s with timeoutSeconds=1, apply-start-time annotation must be read to fire the timeout.\n"+

@@ -217,11 +217,27 @@ type TResource struct {
   - Blocks dependents silently (no event, no skip count)
   - Does NOT trigger `skipOnDependencyFailure` logic
   - Dependents will be applied on next reconcile when dependency becomes ready
-- **Timed-out dependencies**: Resources not ready after `timeoutSeconds` (default: 300s).
+- **Timed-out dependencies**: Resources that never became Ready within `timeoutSeconds`
+  (default: 300s) of Lynq applying them.
   - Transitions to **failed** state
   - Emits `ReadinessTimeout` event
   - Triggers `skipOnDependencyFailure` logic for dependents
-- This distinction ensures Deployments starting up don't cause misleading "DependencySkipped" events
+- **Regressed dependencies**: Resources that became Ready after Lynq last started a rollout of
+  them and later dropped out of it (lost pod, node drain, external `kubectl rollout restart`).
+  - Treated as not-ready, never timed out — the workload controller is already recovering them
+  - The only failure verdict is the workload controller's own: a Deployment whose
+    `Progressing` condition is `False/ProgressDeadlineExceeded` is failed
+  - Does NOT block dependents: it already satisfied their ordering under the current apply, and
+    blocking would freeze their spec updates and drift correction for the whole recovery
+  - An apply of ours that changes the resource's live `.spec` (including a force-reapply that
+    reverts drift) starts a new rollout: the resource is not-ready again, blocks dependents,
+    and is timed from that apply. So does one whose pre-apply read was a stale cache that the
+    write's generation outran by two or more, since the cache may have hidden a `.spec` change
+  - An apply of ours that does not change it (a metadata-only template change: labels,
+    annotations) starts no rollout and leaves a regression a regression, even though it
+    re-stamps `lynq.sh/apply-start-time` and, on a Deployment, moves `metadata.generation`
+- This distinction ensures Deployments starting up or recovering pods don't cause misleading
+  "DependencySkipped" events
 
 **LynqNode Status Fields for Dependency Tracking**:
 - `status.skippedResources`: Count of resources skipped due to dependency failures
@@ -567,7 +583,9 @@ apply_attempts_total{kind, result, conflict_policy}
 
 - `lynqnode_conflicts_total`: Counter tracking total conflicts encountered
 - `lynqnode_resources_conflicted`: Current number of resources in conflict state
-- `lynqnode_degraded_status`: Binary indicator (1=degraded, 0=healthy) with reason label
+- `lynqnode_degraded_status`: Binary indicator (1=degraded, 0=healthy) with reason label. Only
+  the current reason is 1; every other known reason is reset to 0 on each update, so a reason
+  change never leaves a stale series firing
 - `lynqnode_condition_status`: Status of node conditions (Ready, Degraded, etc.)
 
 **Alert Rules:** Available at `config/prometheus/alerts.yaml` with comprehensive rules for:
@@ -631,8 +649,9 @@ All CRDs have comprehensive OpenAPI v3 schemas with:
 
 ### Ready Timeout
 
-- Retry with exponential backoff
-- If cumulative failures exceed threshold, mark LynqNode as Degraded
+- A resource that never becomes Ready within `timeoutSeconds` of being applied is failed, which
+  marks the LynqNode as Degraded
+- A previously Ready resource that regresses is not-ready only (see Dependency Blocking vs Failure)
 - Emit event with resource status details
 
 ### Dependency Cycle
@@ -719,6 +738,14 @@ make test-e2e-focus FOCUS="metrics update"
 make test-e2e
 ```
 
+**CI Groups**: `.github/workflows/test-e2e.yml` splits the suite into matrix groups by
+focusing on top-level `Describe` names, and each group runs under a 30-minute `go test`
+timeout. A new top-level `Describe` that matches no group's focus falls into `other`. When a
+group's runtime approaches the timeout, move the slow scenarios to their own top-level
+`Describe`, add a group that focuses on it, and add the same name to `other`'s skip list.
+For example, `Readiness Regression` runs on its own because its gated-restart scenarios hold a
+Deployment not ready for longer than one timeout plus one periodic requeue.
+
 **Critical Rules**:
 1. **Always use 60-minute timeout minimum**: E2E tests build Docker images, create Kind clusters, install cert-manager, and deploy the operator. This takes significant time.
    ```bash
@@ -790,7 +817,9 @@ make test-e2e
 ### Important Invariants
 
 1. `LynqHub.status.desired` MUST equal active row count
-2. `LynqNode` is Ready IFF all resources are Ready
+2. `LynqNode` is Ready IFF all resources are Ready. It is Degraded IFF something needs an
+   operator: failed or conflicted resources, or template/variables/dependency errors. Not-ready
+   alone is `Ready=False` (`NotAllResourcesReady`) with `Degraded=False`.
 3. SSA fieldManager MUST be `lynq`
 4. Dependency cycles MUST be rejected
 5. Naming MUST respect 63-char K8s limit
@@ -805,13 +834,60 @@ make test-e2e
 - Always validate `dependIds` before topological sort
 - SSA requires `fieldManager` and correct content-type
 - `waitForReady=true` blocks the reconciliation pipeline
-- **Readiness timeout is measured from `lynq.sh/apply-start-time` annotation, NOT `creationTimestamp`.**
-  - Using `creationTimestamp` causes pre-existing resources (months old) to immediately exceed the
+- **Readiness timeout measures "Lynq's change never became Ready" — nothing else.**
+  - It is measured from `lynq.sh/apply-start-time`, NOT `creationTimestamp`. Using
+    `creationTimestamp` causes pre-existing resources (months old) to immediately exceed the
     timeout after apply, marking them as FAILED instantly. This is the root cause of the maxSkew deadlock.
-  - `lynq.sh/apply-start-time` is stamped on the child resource by the Applier at apply time and
-    persists across reconcile loops so the timeout clock does not reset every 30 seconds.
-  - `applyStartTime` (local variable) is only a fallback for the very first reconcile before the
-    annotation has been written.
+  - `lynq.sh/apply-start-time` is stamped on the child resource by the Applier when a changed spec
+    is applied and persists across reconcile loops so the timeout clock does not reset every 30
+    seconds. `applyStartTime` (local variable) is only a fallback for the very first reconcile
+    before the annotation has been written.
+  - Because the annotation only moves when Lynq applies a changed desired object, it is months old on any long-running
+    resource. Measuring a later blip (lost pod, drain, external rollout restart) against it fails
+    the resource the instant it is seen not ready — a false failure that skipped dependents,
+    degraded the node and paged. `readinessTracker` (in-memory, keyed by LynqNode UID + resource
+    ID) therefore records what this process has observed:
+    - Observed Ready since Lynq last started a rollout of it, then not ready → a regression:
+      never timed out (only `ProgressDeadlineExceeded` fails it), and it does not block
+      dependents.
+    - No such history (fresh apply, or a controller restart) → the clock starts at the later of
+      apply-start-time and the first not-ready observation, so a restart grants one full
+      `timeoutSeconds` of grace: detection may be delayed, never faked.
+  - apply-start-time alone cannot tell "Lynq started a rollout" from "nothing changed": a
+    force-reapply that reverts external drift preserves it, because the desired hash did not
+    change. `ApplyResource` therefore reports `StartedRollout` — the pre-apply read's `.spec`
+    against the write response's, no extra API call — and an apply that started one resets the
+    resource's history (`startRollout`): earlier Ready observations stop counting and the clock
+    starts no earlier than that apply. A no-op apply leaves the history alone. The tracker
+    records the generation that write left the resource at, and a Ready read older than it is
+    a stale cache read and does not count.
+  - The pre-apply read comes from the informer cache, so the `.spec` comparison alone can miss
+    a rollout: a force-reapply reverting drift the cache has not seen yet compares the old
+    cached spec to an identical response. One write moves `metadata.generation` by at most one,
+    so `StartedRollout` is also true when the response's generation is two or more past the
+    cached read's (both non-zero) — the cache missed a write, which is assumed to be a rollout.
+    The rule may only err toward re-timing (e.g. an unseen external annotation edit plus a
+    metadata-only apply); missing a real rollout would exempt it from `timeoutSeconds` for
+    good. Do not "fix" it with an uncached read or a resourceVersion precondition: that is an
+    extra API read or a conflict-retry on every apply.
+  - `metadata.generation` is NOT the rollout signal. The Deployment registry strategy also
+    bumps it when `metadata.annotations` change (they are copied onto the ReplicaSet), and
+    every apply that changes the desired hash re-stamps `lynq.sh/applied-hash` and
+    `lynq.sh/apply-start-time`, so a metadata-only template change moves a Deployment's
+    generation without starting a rollout. Treating that as a rollout re-timed an in-progress
+    external `kubectl rollout restart` from the metadata apply. Kinds with no `.spec` on either
+    side fall back to comparing generation. A generation jump of two or more (the stale-cache
+    rule above) is the one case where generation alone counts.
+  - The converse also holds, so for a kind that gives that signal (`apply.TracksRollouts`: it
+    has a `.spec` or a non-zero generation) the regression verdict deliberately ignores
+    apply-start-time: only `startRollout` (or having no history) ends a Ready history.
+    Comparing stamps re-timed the same in-progress restart from a metadata-only apply and
+    failed it within `timeoutSeconds` — a false ReadinessTimeout and Degraded alert. A kind
+    with neither gives no rollout signal, so a changed stamp still ends its Ready history there.
+  - The tracker is in-memory on purpose. Persisting readiness history would need a write per
+    readiness transition, breaking invariant 6 and the exactly-one-write-per-apply contract. It is
+    released when the LynqNode is cleaned up or found NotFound, and when a LynqNode of the same
+    name shows up with a new UID (a delete/recreate no reconcile observed).
 - **Skip-decision is annotation-driven only — there is no in-memory cache.**
   - `shouldSkipApply` reads `lynq.sh/applied-hash` from the live resource. If it matches the
     desired hash, the apply is elided. There is no fast-path / slow-path divergence and no

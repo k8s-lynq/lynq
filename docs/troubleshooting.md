@@ -227,7 +227,9 @@ kubectl get lynqnode <name> -o jsonpath='{.status.skippedResources}'
 
 ## Readiness / Degraded Nodes
 
-**Symptom:** `readyResources < desiredResources`; `Degraded=True` with reason `ResourcesNotReady`.
+**Symptom:** `readyResources < desiredResources`; `Ready=False` with reason `NotAllResourcesReady`.
+
+Not-ready alone does **not** degrade a node: `Degraded` stays `False` (reason `Healthy`) while resources roll out or recover lost pods. `Degraded=True` means something needs an operator — failed or conflicted resources, or template/variables/dependency errors. A node that stays not ready is caught by the `LynqNodeNotReady` alert (`Ready` condition false for 15 minutes), not by `LynqNodeDegraded`. The `ResourcesNotReady` degraded reason is no longer emitted.
 
 ```bash
 kubectl get lynqnode <name> -o jsonpath='{.status.readyResources}/{.status.desiredResources}'
@@ -257,23 +259,26 @@ deployments:
     timeoutSeconds: 600  # default is 300
 ```
 
-**The `Degraded` condition clears automatically** once all resources reach ready state. Status updates every 30 seconds (plus immediately on child resource changes).
+**The `Ready` condition returns to `True` automatically** once all resources reach ready state. Status updates every 30 seconds (plus immediately on child resource changes).
 
-### Symptom: `Resource not ready after timeout` with `elapsed` much larger than the resource has been actually unhealthy
+### Symptom: `Resource not ready after timeout` — when does a resource time out?
 
 ```
 Resource not ready after timeout, marking as failed
-  id=core-api  name=acme-api-123  elapsed=38m18s  timeout=1m0s
+  id=core-api  name=acme-api-123  elapsed=1m2s  timeout=1m0s
 ```
 
-The readiness timeout is measured from `lynq.sh/apply-start-time` on the child resource (not `creationTimestamp`). This annotation is stamped at the last actual apply and **preserved across reconciles when the spec is unchanged** (so a rolling update accumulates elapsed time correctly).
+`timeoutSeconds` measures one thing: **a change Lynq applied never became Ready**. The clock starts at `lynq.sh/apply-start-time` on the child resource (stamped when Lynq applies a changed desired object, preserved across reconciles so a rolling update accumulates elapsed time) and never earlier than the moment Lynq applied a write that changed the resource's `.spec`.
 
-The trade-off: if a resource has been stable for hours/days and then becomes unhealthy due to an external event (pod eviction, node replacement, downstream dependency failure), `elapsed` reflects the time since the last spec change — not the time since the resource became unhealthy. With a short `timeoutSeconds`, the resource is marked FAILED on the very next reconcile after going unhealthy.
+- **A resource that was Ready after Lynq's last change and later drops out of it** (lost pod, node drain, eviction, external `kubectl rollout restart`) is reported not ready — `Ready=False`, `Degraded=False` — and never timed out. Its workload controller is already recovering it. The only failure verdict for it is the workload controller's own: a Deployment whose `Progressing` condition is `False` with reason `ProgressDeadlineExceeded` is marked failed (event `ProgressDeadlineExceeded`). Such a resource also keeps letting its dependents be applied and drift-corrected.
+- **A rollout Lynq starts is timed afresh**, including a periodic force-reapply that reverts external drift on a resource whose `applied-hash` did not change: if that write changes the resource's `.spec`, any earlier Ready observation no longer counts, the resource gets `timeoutSeconds` from that write, and dependents wait for it again. A force-reapply that changes nothing keeps the previous verdict. Because Lynq compares against its cached copy of the resource, a write that lands on a resource changed more recently than that copy (its `metadata.generation` moved by two or more) is also treated as a new rollout — Lynq cannot rule one out, so it times the resource rather than risk never timing it.
+- **A change Lynq applies that does not change `.spec` starts no rollout.** Changing only a resource's labels or annotations in the LynqForm re-stamps `lynq.sh/apply-start-time`, but a resource recovering from a disruption at that moment (for example mid `kubectl rollout restart`) is still judged as recovering, not timed from the new stamp. Do not read a Deployment's `metadata.generation` as evidence of a rollout here: Kubernetes also bumps it when the Deployment's annotations change, so such a metadata-only apply moves it without rolling any pods. Only resources with neither a `.spec` nor a `metadata.generation` treat a new `apply-start-time` as a new rollout.
+- **After a controller restart** Lynq has no readiness history. A not-ready resource gets one full `timeoutSeconds` from the moment the new process first sees it not ready, so a restart can delay failure detection but not cause a false one.
 
 **Diagnose:**
 
 ```bash
-# Compare apply-start-time vs. when the resource actually went unhealthy
+# When did Lynq last change the resource, and what does its workload controller say?
 kubectl get deploy <name> -o jsonpath='{.metadata.annotations.lynq\.sh/apply-start-time}{"\n"}'
 kubectl get deploy <name> -o jsonpath='{range .status.conditions[*]}{.type}={.status} ({.reason}) lastTransitionTime={.lastTransitionTime}{"\n"}{end}'
 
@@ -282,7 +287,7 @@ kubectl get pods -l app=<name> -o wide
 kubectl describe pod <unhealthy-pod>
 ```
 
-If pods are restarting (CrashLoopBackOff, liveness-probe failure, image pull failure, OOMKilled), fix the underlying issue. The Lynq timeout is a faithful signal that *something is wrong now*, not a Lynq bug.
+If pods are restarting (CrashLoopBackOff, liveness-probe failure, image pull failure, OOMKilled), fix the underlying issue: the timeout fired because Lynq's change never became healthy.
 
 **If the resource is large or rolling slowly**, raise `timeoutSeconds`:
 

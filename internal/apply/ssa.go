@@ -24,6 +24,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -111,10 +112,64 @@ func NewApplier(c client.Client, scheme *runtime.Scheme) *Applier {
 	}
 }
 
+// ApplyResult describes what an ApplyResource call did to the live resource.
+type ApplyResult struct {
+	// Changed is true when the server-side resourceVersion moved (or the resource was created).
+	Changed bool
+	// StartedRollout is true when the write may have started a rollout: it created the
+	// resource, changed its .spec, or moved its generation further than one write can (see
+	// startedRollout). A no-op apply, or one that only touched metadata, leaves it false.
+	// Derived from the pre-apply read and the write response, without an extra GET.
+	StartedRollout bool
+	// Generation is the resource's metadata.generation after the write. Zero when nothing was
+	// written.
+	Generation int64
+}
+
+// TracksRollouts reports whether ApplyResult.StartedRollout carries a real signal for obj's
+// kind: it has a .spec to compare, or at least a metadata.generation to fall back on. Kinds
+// with neither (ConfigMap, Secret, ServiceAccount) never report a rollout.
+func TracksRollouts(obj *unstructured.Unstructured) bool {
+	_, hasSpec := obj.Object["spec"]
+	return hasSpec || obj.GetGeneration() > 0
+}
+
+// startedRollout reports whether a write that moved the live object from before to after may
+// have started a rollout. It errs only toward reporting one, which re-times the resource; the
+// other way would let a rollout Lynq started pass as a regression that never times out.
+//
+// It compares .spec rather than metadata.generation because generation over-reports for
+// Deployments: the Deployment registry strategy also bumps it when metadata.annotations
+// change (annotations are copied onto the ReplicaSet), and every apply that changes the
+// desired hash re-stamps lynq.sh/applied-hash and lynq.sh/apply-start-time. A metadata-only
+// template change therefore moves a Deployment's generation without starting a rollout. Kinds
+// without a .spec on either side fall back to the generation comparison.
+//
+// The .spec comparison alone under-reports when before is a stale cache read: if an external
+// edit drifted the live spec and the informer has not seen it yet, a force-reapply that
+// reverts it compares the old cached spec to an identical response. One write moves the
+// generation by at most one, so a jump of two or more means before missed a write — the
+// rollout is then assumed.
+func startedRollout(existsBeforeApply bool, before, after *unstructured.Unstructured) bool {
+	if !existsBeforeApply {
+		return true
+	}
+	beforeGen, afterGen := before.GetGeneration(), after.GetGeneration()
+	if beforeGen > 0 && afterGen > 0 && afterGen-beforeGen >= 2 {
+		return true
+	}
+	beforeSpec, hadSpec := before.Object["spec"]
+	afterSpec, hasSpec := after.Object["spec"]
+	if !hadSpec && !hasSpec {
+		return afterGen != beforeGen
+	}
+	return !equality.Semantic.DeepEqual(beforeSpec, afterSpec)
+}
+
 // ApplyResource applies a resource using the specified patch strategy.
 //
-// Returns true if the resource was changed (server-side resourceVersion bumped),
-// false if no change was needed.
+// The result reports whether the resource was changed (server-side resourceVersion bumped)
+// and whether the write started a new rollout (the live .spec moved).
 //
 // ignoreFields: JSONPath expressions for fields to ignore (only effective on existing
 // resources, not initial creation).
@@ -133,7 +188,7 @@ func (a *Applier) ApplyResource(
 	deletionPolicy lynqv1.DeletionPolicy,
 	ignoreFields []string,
 	forceReapply bool,
-) (bool, error) {
+) (ApplyResult, error) {
 	// Set owner reference or tracking labels based on namespace and deletion policy
 	if owner != nil {
 		isCrossNamespace := obj.GetNamespace() != owner.Namespace
@@ -157,7 +212,7 @@ func (a *Applier) ApplyResource(
 			// For same-namespace resources with Delete policy, use traditional ownerReference
 			// This enables automatic garbage collection when LynqNode is deleted
 			if err := controllerutil.SetControllerReference(owner, obj, a.scheme); err != nil {
-				return false, fmt.Errorf("failed to set owner reference: %w", err)
+				return ApplyResult{}, fmt.Errorf("failed to set owner reference: %w", err)
 			}
 		}
 	}
@@ -181,7 +236,7 @@ func (a *Applier) ApplyResource(
 		if errors.IsNotFound(err) {
 			existsBeforeApply = false
 		} else {
-			return false, fmt.Errorf("failed to get existing resource: %w", err)
+			return ApplyResult{}, fmt.Errorf("failed to get existing resource: %w", err)
 		}
 	} else {
 		beforeResourceVersion = existing.GetResourceVersion()
@@ -206,7 +261,7 @@ func (a *Applier) ApplyResource(
 			refreshed := &unstructured.Unstructured{}
 			refreshed.SetGroupVersionKind(obj.GroupVersionKind())
 			if err := a.client.Get(ctx, key, refreshed); err != nil {
-				return false, fmt.Errorf("failed to re-get resource after orphan-marker removal: %w", err)
+				return ApplyResult{}, fmt.Errorf("failed to re-get resource after orphan-marker removal: %w", err)
 			}
 			existing = refreshed
 			beforeResourceVersion = existing.GetResourceVersion()
@@ -220,13 +275,13 @@ func (a *Applier) ApplyResource(
 	if existsBeforeApply && len(ignoreFields) > 0 {
 		filter, err := fieldfilter.NewFilter(ignoreFields)
 		if err != nil {
-			return false, fmt.Errorf("failed to create field filter: %w", err)
+			return ApplyResult{}, fmt.Errorf("failed to create field filter: %w", err)
 		}
 
 		// Preserve ignored fields by copying values from existing resource
 		// This ensures SSA doesn't delete fields that are externally controlled
 		if err := filter.PreserveIgnoredFields(obj, existing); err != nil {
-			return false, fmt.Errorf("failed to preserve ignored fields: %w", err)
+			return ApplyResult{}, fmt.Errorf("failed to preserve ignored fields: %w", err)
 		}
 
 		logger := log.FromContext(ctx)
@@ -240,7 +295,7 @@ func (a *Applier) ApplyResource(
 	// The hash is computed from the PRE-patch desired object (before server mutations).
 	preApplyDesiredHash := a.computeDesiredHash(obj)
 	if a.shouldSkipApply(existsBeforeApply, orphanReadopted, forceReapply, preApplyDesiredHash, existing) {
-		return false, nil
+		return ApplyResult{}, nil
 	}
 
 	// Decide once whether this apply should reset apply-start-time. We're past the
@@ -277,16 +332,22 @@ func (a *Applier) ApplyResource(
 		existsBeforeApply:   existsBeforeApply,
 		preApplyDesiredHash: preApplyDesiredHash,
 	})
-	if err != nil || earlyReturn {
-		return changed, err
+	if err != nil {
+		return ApplyResult{}, err
 	}
 
-	// Check if resource was actually changed by comparing resourceVersion.
-	// Patch/Update/Create responses update obj in-place with the server response,
-	// so obj.GetResourceVersion() reflects the post-apply state without an extra GET.
-	changed = beforeResourceVersion != obj.GetResourceVersion()
-
-	return changed, nil
+	// Patch/Update/Create responses update obj in-place with the server response, so obj
+	// reflects the post-apply state without an extra GET, and existing is the pre-apply read
+	// shouldSkipApply already used.
+	if !earlyReturn {
+		// Check if resource was actually changed by comparing resourceVersion.
+		changed = beforeResourceVersion != obj.GetResourceVersion()
+	}
+	return ApplyResult{
+		Changed:        changed,
+		StartedRollout: startedRollout(existsBeforeApply, existing, obj),
+		Generation:     obj.GetGeneration(),
+	}, nil
 }
 
 // shouldSkipApply decides whether the desired spec is already on the resource (so the
