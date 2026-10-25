@@ -123,6 +123,8 @@ kubectl get events -A --field-selector involvedObject.kind=LynqNode --sort-by='.
 
 Configure log level via the `--zap-log-level` flag: `debug`, `info` (default), `error`.
 
+Warnings returned by the API server (for example a deprecated API version used in a LynqForm) are logged once per distinct message per process by default; set `--kube-api-warnings=all` to log every occurrence. See [Configuration](configuration.md#controller-flags).
+
 All logs are structured JSON:
 
 ```json

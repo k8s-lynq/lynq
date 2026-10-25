@@ -254,7 +254,8 @@ type TResource struct {
 
 **LynqNode Status Fields for Dependency Tracking**:
 - `status.skippedResources`: Count of resources skipped due to dependency failures
-- `status.skippedResourceIds`: List of resource IDs that were skipped
+- `status.skippedResourceIds`: List of resource IDs skipped by the latest reconcile (cleared when
+  nothing is skipped)
 - Visible in `kubectl get lynqnodes` via the "Skipped" column
 
 ### Cross-Namespace Resource Support ✅
@@ -690,6 +691,12 @@ All CRDs have comprehensive OpenAPI v3 schemas with:
   - `--hub-concurrency=N` (default: 3)
   - `--form-concurrency=N` (default: 5)
   - `--node-concurrency=N` (default: 10)
+- Leader election flags (`cmd/manager_options.go`), defaults are controller-runtime's:
+  - `--leader-elect-lease-duration` (15s), `--leader-elect-renew-deadline` (10s),
+    `--leader-elect-retry-period` (2s); validated at startup
+    (`lease-duration > renew-deadline > 1.2 × retry-period`)
+  - `--leader-elect-release-on-cancel` (default: false)
+- `--kube-api-warnings=deduplicate|all` (default: deduplicate) — see Common Pitfalls
 
 ### Reconciliation Optimization ✅
 
@@ -1041,6 +1048,17 @@ Deadline` because each scenario waits out a 60s `progressDeadlineSeconds` plus a
   - Guarded by `TestManager_NoWriteWhenValuesUnchanged` (and its inverse,
     `TestManager_WritesWhenValueActuallyChanges`, so the comparison cannot swallow real
     transitions).
+- **"Published empty" is not "not published".**
+  - `StatusUpdate` uses nil for a list field nobody published, but publishers build an empty
+    list as nil (`applyResources` returns no skipped IDs as nil). `StatusUpdate.Apply`
+    therefore records any list carried by an event as non-nil (`publishedList`), so an empty
+    list clears the stored one. This covers `skippedResourceIds` and `appliedResources`, the
+    only list fields in LynqNode status. Reading nil as "unpublished" left the
+    `skippedResourceIds` of a resolved skip on Ready nodes next to `skippedResources: 0`.
+  - An empty list equals a nil stored value under `slices.Equal`, so this never adds a write.
+  - Guarded by `TestManager_ClearsPublishedEmptyLists`,
+    `TestStatusUpdate_ApplyMarksEmptyListsPublished` and
+    `TestRegression_StaleSkippedResourceIdsAreClearedOnce`.
 - **Rollout throttling must not read LynqNodes from the informer cache.**
   - The hub is re-enqueued from several independent sources. Only `Owns(&LynqNode{})`
     guarantees a fresh node view, because an informer updates its store *before*
@@ -1082,6 +1100,39 @@ Deadline` because each scenario waits out a 60s `progressDeadlineSeconds` plus a
     "Others" group stops *before* the controllers.
   - Pool defaults (3 open / 2 idle) describe actual usage: a hub runs one query at a time,
     and `database/sql` opens connections lazily, so a hub holds exactly one connection.
+- **API server warnings are deduplicated on the rest.Config, not per client.**
+  - A deprecated API version in a LynqForm (e.g. `KafkaTopic` v1beta2) makes the API server
+    attach a warning to every apply and read of that resource. controller-runtime's default
+    handler logs each one: 3 manifests × 126 nodes filled the manager log with 22k identical
+    lines in 28 minutes, and kubelet log rotation lost the lines around an incident.
+  - `main` sets `WarningHandlerWithContext` on the config passed to `ctrl.NewManager`
+    (`withKubeAPIWarningHandler`). Every client the manager builds — manager client,
+    `APIReader`, informers, event recorder, leader election — copies the config, so they share
+    one `KubeAPIWarningLogger` and dedup is process-wide. A client built from a config that did
+    not come from there (e.g. a new `client.New` with its own config) would fall back to
+    controller-runtime's non-deduplicating handler.
+  - Never suppress warnings entirely: the first occurrence is how an operator learns a template
+    needs migrating. Dedup memory is one entry per distinct message. Built-in deprecation and
+    field warnings carry no object name, but admission webhook warnings may, which bounds the
+    growth by the number of managed objects.
+- **Leader lease renewal shares a flow with all of the manager's traffic.**
+  - The lease client's HTTP timeout is `--leader-elect-renew-deadline`, and its requests come
+    from the operator ServiceAccount, so APF puts them in `service-accounts`/`workload-low`
+    together with every reconcile GET and apply. A burst of LynqNode reconciles (each does a live
+    GET per child resource) or a slow API server can starve a renewal; after renew-deadline the
+    manager exits with `leader election lost`. Longer timings are the knob, not more replicas.
+  - `--leader-elect-release-on-cancel` is safe because the manager releases the lease only after
+    stopping the controllers, StatusManager and caches, and `main` does nothing on the API server
+    after `mgr.Start` returns (it only closes `datasource.Pool`). Keep it that way: any API write
+    added after `mgr.Start` would run while a new leader may already be reconciling.
+  - StatusManager stops alongside the controllers, not after them: it flushes what it has
+    batched when it stops, and a status publish from a reconcile that finishes later is dropped
+    (the new leader recomputes it). Safe, but not a guarantee that every status update lands.
+  - The release is the last step of a shutdown that may wait up to the manager's 30s graceful
+    timeout for in-flight reconciles, while the shipped manifests give the pod
+    `terminationGracePeriodSeconds: 10` (chart value `terminationGracePeriodSeconds`). A kill
+    before the release silently drops it and the standby waits out the lease, as without the
+    flag. Pair `--leader-elect-release-on-cancel` with a grace period of 40s or more.
 
 ---
 

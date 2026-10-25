@@ -66,6 +66,21 @@ securityContext:
 manager:
   # -- Enable leader election for controller manager
   leaderElection: true
+  # -- Leader election timings (only used when leaderElection is true).
+  # Leave empty to use the binary defaults: leaseDuration 15s, renewDeadline 10s, retryPeriod 2s.
+  # Must satisfy leaseDuration > renewDeadline > 1.2 * retryPeriod, or the manager refuses to start.
+  # Set all three together: a value left empty keeps its default, so renewDeadline "20s" alone
+  # breaks leaseDuration (15s) > renewDeadline. Values are Go durations and need a unit ("30s", not 30).
+  leaderElectionTuning:
+    # -- How long standby replicas wait after the last renewal before taking the lease (e.g. "30s")
+    leaseDuration: ""
+    # -- How long the leader retries renewing before it gives up leadership and exits (e.g. "20s")
+    renewDeadline: ""
+    # -- Interval between acquire/renew attempts (e.g. "5s")
+    retryPeriod: ""
+    # -- Release the lease on graceful shutdown so a standby takes over without waiting leaseDuration.
+    # Only takes effect if shutdown finishes within terminationGracePeriodSeconds (set it to 40 or more)
+    releaseOnCancel: false
   # -- Health probe bind address
   healthProbeBindAddress: ":8081"
   # -- Metrics bind address (0 disables metrics)
@@ -73,6 +88,10 @@ manager:
   # -- Log level for the controller (debug, info, error)
   # Use "debug" to see detailed reconciliation logs
   logLevel: "info"
+  # -- How API server warnings (e.g. a deprecated API version in a LynqForm) are logged:
+  # "deduplicate" logs each distinct warning once per process, "all" logs every occurrence.
+  # Leave empty to use the binary default ("deduplicate").
+  kubeAPIWarnings: ""
   # -- Additional command-line arguments
   args: []
   # -- Additional environment variables
@@ -126,6 +145,13 @@ tolerations: []
 
 # Affinity for pod assignment
 affinity: {}
+
+# -- Seconds the kubelet waits after SIGTERM before it kills the manager.
+# The manager stops its controllers (up to 30s for in-flight reconciles) before it releases the
+# leader lease, so with manager.leaderElectionTuning.releaseOnCancel a shutdown that outlives this
+# period is killed before the release and the standby waits out leaseDuration as usual.
+# Set it to 40 or more together with releaseOnCancel.
+terminationGracePeriodSeconds: 10
 
 # RBAC configuration
 rbac:

@@ -44,6 +44,20 @@ spec:
         args:
         {{- if .Values.manager.leaderElection }}
         - --leader-elect
+        {{- with .Values.manager.leaderElectionTuning }}
+        {{- if .leaseDuration }}
+        - --leader-elect-lease-duration={{ .leaseDuration }}
+        {{- end }}
+        {{- if .renewDeadline }}
+        - --leader-elect-renew-deadline={{ .renewDeadline }}
+        {{- end }}
+        {{- if .retryPeriod }}
+        - --leader-elect-retry-period={{ .retryPeriod }}
+        {{- end }}
+        {{- if .releaseOnCancel }}
+        - --leader-elect-release-on-cancel
+        {{- end }}
+        {{- end }}
         {{- end }}
         {{- if .Values.manager.healthProbeBindAddress }}
         - --health-probe-bind-address={{ .Values.manager.healthProbeBindAddress }}
@@ -53,6 +67,9 @@ spec:
         {{- end }}
         {{- if .Values.manager.logLevel }}
         - --zap-log-level={{ .Values.manager.logLevel }}
+        {{- end }}
+        {{- if .Values.manager.kubeAPIWarnings }}
+        - --kube-api-warnings={{ .Values.manager.kubeAPIWarnings }}
         {{- end }}
         {{- with .Values.manager.args }}
         {{- toYaml . | nindent 8 }}
@@ -109,4 +126,4 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      terminationGracePeriodSeconds: 10
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
