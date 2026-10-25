@@ -123,10 +123,10 @@ type StatusUpdate struct {
 	FailedResources  *int32
 	DesiredResources *int32
 
-	// Applied resources (nil means no update)
+	// Applied resources (nil means no update; a published empty list is non-nil, see Apply)
 	AppliedResources []string
 
-	// Skipped resources (nil means no update)
+	// Skipped resources (nil means no update; a published empty list is non-nil, see Apply)
 	SkippedResources   *int32
 	SkippedResourceIds []string
 
@@ -169,12 +169,12 @@ func (u *StatusUpdate) Apply(event StatusEvent) {
 
 	case EventAppliedResourcesUpdated:
 		payload := event.Payload.(AppliedResourcesPayload)
-		u.AppliedResources = payload.Keys
+		u.AppliedResources = publishedList(payload.Keys)
 
 	case EventSkippedResourcesUpdated:
 		payload := event.Payload.(SkippedResourcesPayload)
 		u.SkippedResources = &payload.Count
-		u.SkippedResourceIds = payload.Ids
+		u.SkippedResourceIds = publishedList(payload.Ids)
 
 	case EventObservedGenerationUpdated:
 		payload := event.Payload.(ObservedGenerationPayload)
@@ -189,6 +189,21 @@ func (u *StatusUpdate) Apply(event StatusEvent) {
 		ts := payload.Timestamp
 		u.LastFullReconcileAt = &ts
 	}
+}
+
+// publishedList records a list carried by an event as published, even when it is empty.
+//
+// StatusUpdate uses nil to mean "not published", but publishers naturally build an empty
+// list as nil (e.g. appending to a nil slice when nothing was skipped). Storing that nil
+// would make applyUpdate keep the previous value, so a cleared list never reached the
+// status: a node whose skips resolved kept skippedResources=0 next to stale
+// skippedResourceIds. An empty list compares equal to a nil stored value, so this
+// does not cause a write when the status is already empty.
+func publishedList(items []string) []string {
+	if items == nil {
+		return []string{}
+	}
+	return items
 }
 
 // HasChanges returns true if this update has any changes

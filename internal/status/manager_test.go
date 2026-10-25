@@ -576,3 +576,115 @@ func TestManager_DegradedReasonTransitionClearsPreviousReasonSeries(t *testing.T
 		assert.Equal(t, float64(0), degradedStatus(reason), "reason %s must be cleared after recovery", reason)
 	}
 }
+
+// TestManager_ClearsPublishedEmptyLists pins that a list published empty clears the stored
+// list. Publishers build an empty list as nil, and StatusUpdate uses nil for "not published",
+// so without the distinction a node whose skips resolved kept skippedResources=0 next to the
+// stale skippedResourceIds of the skip that was gone.
+func TestManager_ClearsPublishedEmptyLists(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	require.NoError(t, lynqv1.AddToScheme(scheme))
+
+	read := func(c client.Client, key types.NamespacedName) *lynqv1.LynqNode {
+		current := &lynqv1.LynqNode{}
+		require.NoError(t, c.Get(ctx, key, current))
+		return current
+	}
+
+	t.Run("skipped resources are cleared when the skip resolves", func(t *testing.T) {
+		node := &lynqv1.LynqNode{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-node", Namespace: "default"},
+			Spec:       lynqv1.LynqNodeSpec{UID: "node1"},
+		}
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(node).WithStatusSubresource(node).Build()
+		m := NewManager(fakeClient, WithSyncMode())
+		key := types.NamespacedName{Name: node.Name, Namespace: node.Namespace}
+
+		// Given a node whose dependents were skipped because a dependency failed
+		m.PublishSkippedResources(node, 2, []string{"core-api-ingress", "core-api-service"})
+		skipped := read(fakeClient, key)
+		require.Equal(t, int32(2), skipped.Status.SkippedResources)
+		require.Equal(t, []string{"core-api-ingress", "core-api-service"}, skipped.Status.SkippedResourceIds)
+
+		// When the dependency recovers and the reconcile skips nothing (ids built as nil)
+		m.PublishSkippedResources(node, 0, nil)
+
+		// Then the count and the ids are cleared together
+		resolved := read(fakeClient, key)
+		assert.Equal(t, int32(0), resolved.Status.SkippedResources)
+		assert.Empty(t, resolved.Status.SkippedResourceIds, "stale skipped ids survived the resolved skip")
+
+		// And republishing the empty skip set does not write again
+		for i := 0; i < 5; i++ {
+			m.PublishSkippedResources(node, 0, nil)
+			m.PublishSkippedResources(node, 0, []string{})
+		}
+		assert.Equal(t, resolved.ResourceVersion, read(fakeClient, key).ResourceVersion,
+			"republishing an empty skip set wrote to the API server")
+	})
+
+	t.Run("stale skipped ids left by an older version are cleared once", func(t *testing.T) {
+		// Given a node an older operator left with skippedResources=0 but stale ids
+		node := &lynqv1.LynqNode{
+			ObjectMeta: metav1.ObjectMeta{Name: "upgraded-node", Namespace: "default"},
+			Spec:       lynqv1.LynqNodeSpec{UID: "node1"},
+			Status: lynqv1.LynqNodeStatus{
+				SkippedResources:   0,
+				SkippedResourceIds: []string{"core-api-service", "core-api-ingress"},
+			},
+		}
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(node).WithStatusSubresource(node).Build()
+		m := NewManager(fakeClient, WithSyncMode())
+		key := types.NamespacedName{Name: node.Name, Namespace: node.Namespace}
+		before := read(fakeClient, key)
+		require.Len(t, before.Status.SkippedResourceIds, 2)
+
+		// When the next reconcile publishes that nothing is skipped
+		m.PublishSkippedResources(node, 0, nil)
+
+		// Then the stale ids are cleared in one write
+		cleaned := read(fakeClient, key)
+		assert.NotEqual(t, before.ResourceVersion, cleaned.ResourceVersion, "clearing stale ids should write")
+		assert.Empty(t, cleaned.Status.SkippedResourceIds)
+
+		// And later reconciles do not write again
+		m.PublishSkippedResources(node, 0, nil)
+		assert.Equal(t, cleaned.ResourceVersion, read(fakeClient, key).ResourceVersion)
+	})
+
+	t.Run("applied resources are cleared when published empty", func(t *testing.T) {
+		node := &lynqv1.LynqNode{
+			ObjectMeta: metav1.ObjectMeta{Name: "applied-node", Namespace: "default"},
+			Spec:       lynqv1.LynqNodeSpec{UID: "node1"},
+		}
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(node).WithStatusSubresource(node).Build()
+		m := NewManager(fakeClient, WithSyncMode())
+		key := types.NamespacedName{Name: node.Name, Namespace: node.Namespace}
+
+		// Given a node tracking one applied resource
+		m.PublishAppliedResources(node, []string{"ConfigMap/default/a@a"})
+		require.Len(t, read(fakeClient, key).Status.AppliedResources, 1)
+
+		// When every resource is removed from the template (keys built as nil)
+		m.PublishAppliedResources(node, nil)
+
+		// Then the applied set is cleared
+		assert.Empty(t, read(fakeClient, key).Status.AppliedResources)
+	})
+}
+
+// TestStatusUpdate_ApplyMarksEmptyListsPublished pins the StatusUpdate side of the contract:
+// an event carrying a nil list still counts as a published (empty) list.
+func TestStatusUpdate_ApplyMarksEmptyListsPublished(t *testing.T) {
+	key := client.ObjectKey{Name: "test-node", Namespace: "default"}
+	update := NewStatusUpdate(key)
+
+	update.Apply(StatusEvent{Type: EventSkippedResourcesUpdated, NodeKey: key, Payload: SkippedResourcesPayload{Count: 0}})
+	update.Apply(StatusEvent{Type: EventAppliedResourcesUpdated, NodeKey: key, Payload: AppliedResourcesPayload{}})
+
+	assert.NotNil(t, update.SkippedResourceIds, "a nil skipped list must still be published")
+	assert.Empty(t, update.SkippedResourceIds)
+	assert.NotNil(t, update.AppliedResources, "a nil applied list must still be published")
+	assert.Empty(t, update.AppliedResources)
+}
