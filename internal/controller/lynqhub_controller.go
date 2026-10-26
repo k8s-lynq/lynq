@@ -281,20 +281,15 @@ func (r *LynqHubReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 				throttledByTemplate[tmpl.Name]++
 			}
 		} else {
-			// Update existing LynqNode if data or template changed
-			if r.shouldUpdateLynqNode(ctx, registry, existingLynqNode, desired.Row, templateMap) {
-				// Check maxSkew before updating
-				if canUpdateNodeWithPrecount(tmpl, skew.count(ctx, tmpl), updatedInThisIteration[tmpl.Name]) {
-					if err := r.updateLynqNode(ctx, registry, tmpl, existingLynqNode, desired.Row); err != nil {
-						logger.Error(err, "Failed to update LynqNode", "template", key.TemplateName, "uid", key.UID)
-					} else {
-						// Successfully updated - track it
-						updatedInThisIteration[tmpl.Name]++
-					}
-				} else {
-					// Throttled by maxSkew
-					throttledByTemplate[tmpl.Name]++
-				}
+			// Update existing LynqNode if data or template changed, gated by maxSkew
+			admit := func() bool {
+				return canUpdateNodeWithPrecount(tmpl, skew.count(ctx, tmpl), updatedInThisIteration[tmpl.Name])
+			}
+			switch r.syncExistingNode(ctx, registry, tmpl, existingLynqNode, desired.Row, templateMap, admit) {
+			case existingNodeUpdated:
+				updatedInThisIteration[tmpl.Name]++
+			case existingNodeThrottled:
+				throttledByTemplate[tmpl.Name]++
 			}
 		}
 	}
@@ -707,6 +702,8 @@ func (r *LynqHubReconciler) createLynqNode(ctx context.Context, registry *lynqv1
 				lynqv1.AnnotationTemplateGeneration:     fmt.Sprintf("%d", tmpl.Generation),
 				"lynq.sh/hubId":                         registry.Name,
 				lynqv1.AnnotationRolloutUpdateStartTime: time.Now().Format(time.RFC3339Nano),
+				// Pending until recordRolloutCompletion sees the node Ready for this spec.
+				lynqv1.AnnotationRolloutCompletedGeneration: "",
 			},
 		},
 		Spec: *renderedSpec,
@@ -811,13 +808,24 @@ func (r *LynqHubReconciler) updateLynqNode(ctx context.Context, registry *lynqv1
 		if latest.Annotations == nil {
 			latest.Annotations = make(map[string]string)
 		}
+		// Judged on the uncached read, so a cache that has not seen an earlier update cannot
+		// reset the marker of a rollout that update already started.
+		startsRollout := latest.Annotations[lynqv1.AnnotationTemplateGeneration] != newTemplateGeneration
 		latest.Annotations["lynq.sh/hostOrUrl"] = row.HostOrURL
 		latest.Annotations["lynq.sh/activate"] = row.Activate
 		latest.Annotations["lynq.sh/extra"] = string(extraJSON)
 		latest.Annotations[lynqv1.AnnotationTemplateGeneration] = newTemplateGeneration
 		latest.Annotations["lynq.sh/hubId"] = registry.Name
-		// Update rollout start time for progress deadline tracking
+		// Update rollout start time for progress deadline tracking. Every update moves it, data-only
+		// ones included: the maxSkew count's safety margin reads it.
 		latest.Annotations[lynqv1.AnnotationRolloutUpdateStartTime] = time.Now().Format(time.RFC3339Nano)
+		// A new template generation is a LynqForm rollout, which has not completed yet whatever the
+		// previous one did. Reset in the same write so an earlier completion can never exempt it
+		// from the deadline. A data-only update (row values, same generation) is not a rollout:
+		// it leaves the marker alone, and its failures surface as a failed LynqNode instead.
+		if startsRollout {
+			latest.Annotations[lynqv1.AnnotationRolloutCompletedGeneration] = ""
+		}
 
 		// Update spec with newly rendered resources
 		latest.Spec = *renderedSpec
@@ -866,6 +874,99 @@ func (r *LynqHubReconciler) updateLynqNode(ctx context.Context, registry *lynqv1
 	// and logging at DEBUG level to reduce noise
 
 	return nil
+}
+
+// existingNodeOutcome is what syncExistingNode did with a node that already exists.
+type existingNodeOutcome int
+
+const (
+	existingNodeUnchanged existingNodeOutcome = iota
+	existingNodeUpdated
+	existingNodeThrottled
+)
+
+// syncExistingNode brings an existing LynqNode up to date with its row and template. An update
+// is made only when admit allows it (maxSkew); a node that needs no update gets its completed
+// update recorded, once. A failed update is logged and reported as unchanged.
+func (r *LynqHubReconciler) syncExistingNode(
+	ctx context.Context,
+	registry *lynqv1.LynqHub,
+	tmpl *lynqv1.LynqForm,
+	node *lynqv1.LynqNode,
+	row datasource.NodeRow,
+	templateMap map[string]*lynqv1.LynqForm,
+	admit func() bool,
+) existingNodeOutcome {
+	logger := log.FromContext(ctx)
+
+	if !r.shouldUpdateLynqNode(ctx, registry, node, row, templateMap) {
+		if needsRolloutCompletionMark(node, tmpl) {
+			if err := r.recordRolloutCompletion(ctx, node); err != nil {
+				logger.Error(err, "Failed to record rollout completion", "node", node.Name)
+			}
+		}
+		return existingNodeUnchanged
+	}
+	if !admit() {
+		return existingNodeThrottled
+	}
+	if err := r.updateLynqNode(ctx, registry, tmpl, node, row); err != nil {
+		logger.Error(err, "Failed to update LynqNode", "template", tmpl.Name, "uid", row.UID)
+		return existingNodeUnchanged
+	}
+	return existingNodeUpdated
+}
+
+// needsRolloutCompletionMark reports whether the node completed its current update and the
+// completion is not recorded yet. True at most once per update: the mark it leads to makes it
+// false, and only the next update (which resets the mark) makes it true again.
+func needsRolloutCompletionMark(node *lynqv1.LynqNode, tmpl *lynqv1.LynqForm) bool {
+	if !node.DeletionTimestamp.IsZero() {
+		// Being deleted: there is no rollout left to complete, and the write would be wasted.
+		return false
+	}
+	completed, pending := node.Annotations[lynqv1.AnnotationRolloutCompletedGeneration]
+	if !pending {
+		// Created before the marker existed; updateCompleted already treats it as completed.
+		return false
+	}
+	generation := node.Annotations[lynqv1.AnnotationTemplateGeneration]
+	return generation == fmt.Sprintf("%d", tmpl.Generation) &&
+		completed != generation &&
+		reachedReadyForCurrentSpec(node)
+}
+
+// recordRolloutCompletion records on the node that its current update completed, so
+// rollout.progressDeadlineSeconds never times a later regression of it — durably, so a restart
+// or leader change cannot either.
+//
+// observed is the (cached) node seen Ready for its current spec. The mark is written only if the
+// node still carries that same update — same spec generation, update stamp and template
+// generation — and is not being deleted, so a completion is never recorded against an update it
+// did not observe. The write
+// touches metadata only: it does not move the LynqNode's generation, and the hub's own
+// GenerationChangedPredicate filters the watch event it causes.
+func (r *LynqHubReconciler) recordRolloutCompletion(ctx context.Context, observed *lynqv1.LynqNode) error {
+	generation := observed.Annotations[lynqv1.AnnotationTemplateGeneration]
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		latest := &lynqv1.LynqNode{}
+		if err := r.uncachedReader().Get(ctx, client.ObjectKeyFromObject(observed), latest); err != nil {
+			return err
+		}
+		if !latest.DeletionTimestamp.IsZero() {
+			return nil
+		}
+		if latest.Generation != observed.Generation ||
+			latest.Annotations[lynqv1.AnnotationTemplateGeneration] != generation ||
+			latest.Annotations[lynqv1.AnnotationRolloutUpdateStartTime] != observed.Annotations[lynqv1.AnnotationRolloutUpdateStartTime] {
+			return nil // updated since the observation; the next sync judges the new update
+		}
+		if latest.Annotations[lynqv1.AnnotationRolloutCompletedGeneration] == generation {
+			return nil
+		}
+		latest.Annotations[lynqv1.AnnotationRolloutCompletedGeneration] = generation
+		return r.Update(ctx, latest)
+	})
 }
 
 // countResourcesByType counts resources by type in a LynqNodeSpec
@@ -1011,19 +1112,19 @@ func (r *LynqHubReconciler) countLynqNodeStatus(ctx context.Context, registry *l
 	return countNodeStatusFromList(nodes)
 }
 
-// countNodeStatusFromList counts ready/failed from an already-fetched node list (no API call)
+// countNodeStatusFromList counts ready/failed from an already-fetched node list (no API call).
+//
+// Nodes are classified by classifyNode. A progressing node — rolling out, recovering from a
+// regression, or not reconciled yet — is in neither count: status.failed (and hub_failed) must
+// only move when a node needs an operator, or every spot drain pages through HubNodesFailure.
 func countNodeStatusFromList(nodes *lynqv1.LynqNodeList) (int32, int32) {
 	var ready, failed int32
-	for _, node := range nodes.Items {
-		for _, cond := range node.Status.Conditions {
-			if cond.Type == "Ready" {
-				if cond.Status == metav1.ConditionTrue {
-					ready++
-				} else {
-					failed++
-				}
-				break
-			}
+	for i := range nodes.Items {
+		switch classifyNode(&nodes.Items[i]) {
+		case nodeHealthReady:
+			ready++
+		case nodeHealthFailed:
+			failed++
 		}
 	}
 	return ready, failed
@@ -1215,16 +1316,6 @@ func removeString(slice []string, str string) []string {
 	return result
 }
 
-// isNodeReady checks if a LynqNode has Ready condition set to True
-func isNodeReady(node *lynqv1.LynqNode) bool {
-	for _, cond := range node.Status.Conditions {
-		if cond.Type == "Ready" {
-			return cond.Status == metav1.ConditionTrue
-		}
-	}
-	return false
-}
-
 // safetyMarginDuration is the minimum time we consider a node as "updating" after it starts updating.
 // This covers the StatusManager batch delay (up to 1 second) plus a small safety buffer.
 const safetyMarginDuration = 2 * time.Second
@@ -1248,8 +1339,11 @@ func (r *LynqHubReconciler) countUpdatingNodes(ctx context.Context, nodes []*lyn
 			continue
 		}
 
-		// Case 1: Node is explicitly not Ready
-		if !isNodeReady(node) {
+		// Case 1: Node is not Ready. That includes failed nodes and nodes recovering from a
+		// regression: both keep their rollout slot, so a node that cannot recover stalls the
+		// rollout instead of letting it march past. The stall is surfaced by the LynqForm
+		// rollout status (Phase=Failed), not hidden by releasing the slot.
+		if classifyNode(node) != nodeHealthReady {
 			count++
 			continue
 		}
