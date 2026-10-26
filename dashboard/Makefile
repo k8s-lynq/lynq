@@ -88,7 +88,7 @@ lint: lint-ui lint-bff ## Lint all code
 
 # Test
 test-ui: ## Run UI tests
-	cd ui && npm test || true
+	cd ui && npm test
 
 test-bff: ## Run BFF tests
 	cd bff && go test ./...

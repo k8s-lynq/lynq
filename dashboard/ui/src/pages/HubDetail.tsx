@@ -8,6 +8,7 @@ import {
   IconCircleCheck,
   IconCircleX,
   IconClock,
+  IconAlertCircle,
   IconFileCode,
   IconBox,
   IconCalendar,
@@ -19,40 +20,22 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
+import { ConditionBadge } from '@/components/ConditionBadge'
 import { hubApi } from '@/lib/api'
-import type { LynqHub, LynqNode, Condition } from '@/types/lynq'
+import { HealthBadge } from '@/components/HealthBadge'
+import {
+  classifyHub,
+  classifyNode,
+  hubNodeHealth,
+  indexNodeHealth,
+  isHubDisconnected,
+} from '@/lib/health'
+import type { LynqHub, LynqNode } from '@/types/lynq'
 
-function ConditionBadge({ condition }: { condition: Condition }) {
-  const isTrue = condition.status === 'True'
-  const isFalse = condition.status === 'False'
-
-  return (
-    <div className="flex items-center gap-2 p-3 rounded-lg border bg-card">
-      {isTrue ? (
-        <IconCircleCheck size={16} className="text-emerald-500" />
-      ) : isFalse ? (
-        <IconCircleX size={16} className="text-rose-500" />
-      ) : (
-        <IconClock size={16} className="text-amber-500" />
-      )}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="font-medium text-sm">{condition.type}</span>
-          <Badge variant={isTrue ? 'ready' : isFalse ? 'failed' : 'pending'}>
-            {condition.status}
-          </Badge>
-        </div>
-        {condition.message && (
-          <p className="text-xs text-muted-foreground truncate mt-1">
-            {condition.message}
-          </p>
-        )}
-      </div>
-      <span className="text-xs text-muted-foreground shrink-0">
-        {new Date(condition.lastTransitionTime).toLocaleString()}
-      </span>
-    </div>
-  )
+const NODE_HEALTH_ICON = {
+  ready: <IconCircleCheck size={16} className="text-emerald-500" />,
+  pending: <IconClock size={16} className="text-amber-500" />,
+  failed: <IconCircleX size={16} className="text-rose-500" />,
 }
 
 export function HubDetail() {
@@ -117,9 +100,12 @@ export function HubDetail() {
     )
   }
 
-  const isReady = hub.status?.conditions?.some(
-    (c) => c.type === 'Ready' && c.status === 'True'
-  )
+  // Counted from the hub's own LynqNodes, not status.ready/status.failed (see HubNodeHealth).
+  // Without a namespace the API lists nodes by hub name in every namespace; the index keys
+  // them by namespace, so another namespace's hub of the same name is not counted.
+  const nodeHealth = hubNodeHealth(hub, indexNodeHealth(nodes))
+  const health = classifyHub(hub, nodeHealth)
+  const disconnected = isHubDisconnected(hub)
   const mysql = hub.spec.source.mysql
 
   return (
@@ -136,9 +122,8 @@ export function HubDetail() {
             <div className="flex items-center gap-2">
               <IconDatabase size={20} />
               <h1 className="text-2xl font-bold">{hub.metadata.name}</h1>
-              <Badge variant={isReady ? 'ready' : 'pending'}>
-                {isReady ? t('status.ready') : t('status.pending')}
-              </Badge>
+              <HealthBadge health={health} />
+              {disconnected && <Badge variant="failed">{t('hubs.dbDisconnected')}</Badge>}
             </div>
             <p className="text-muted-foreground">{hub.metadata.namespace}</p>
           </div>
@@ -150,7 +135,7 @@ export function HubDetail() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-5">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -190,10 +175,26 @@ export function HubDetail() {
           <CardContent>
             <div className="flex items-center gap-2">
               <IconCircleCheck size={16} className="text-emerald-500" />
-              <span className="text-2xl font-bold text-emerald-500">
-                {hub.status?.ready || 0}
-              </span>
+              <span className="text-2xl font-bold text-emerald-500">{nodeHealth.ready}</span>
             </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              {t('status.pending')}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center gap-2">
+              <IconAlertCircle size={16} className="text-amber-500" />
+              <span className="text-2xl font-bold text-amber-500">{nodeHealth.progressing}</span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {t('hubs.progressingHint')}
+              {nodeHealth.notCreated > 0 &&
+                ` ${t('hubs.notCreatedHint', { count: nodeHealth.notCreated })}`}
+            </p>
           </CardContent>
         </Card>
         <Card>
@@ -205,10 +206,9 @@ export function HubDetail() {
           <CardContent>
             <div className="flex items-center gap-2">
               <IconCircleX size={16} className="text-rose-500" />
-              <span className="text-2xl font-bold text-rose-500">
-                {hub.status?.failed || 0}
-              </span>
+              <span className="text-2xl font-bold text-rose-500">{nodeHealth.failed}</span>
             </div>
+            <p className="text-xs text-muted-foreground mt-1">{t('hubs.failedHint')}</p>
           </CardContent>
         </Card>
       </div>
@@ -375,9 +375,7 @@ export function HubDetail() {
           ) : (
             <div className="space-y-2">
               {nodes.slice(0, 10).map((node) => {
-                const nodeReady = node.status?.conditions?.some(
-                  (c) => c.type === 'Ready' && c.status === 'True'
-                )
+                const nodeHealth = classifyNode(node)
                 return (
                   <Link
                     key={`${node.metadata.namespace}-${node.metadata.name}`}
@@ -397,11 +395,7 @@ export function HubDetail() {
                       <span className="text-sm text-muted-foreground">
                         {node.status?.readyResources || 0}/{node.status?.desiredResources || 0}
                       </span>
-                      {nodeReady ? (
-                        <IconCircleCheck size={16} className="text-emerald-500" />
-                      ) : (
-                        <IconClock size={16} className="text-amber-500" />
-                      )}
+                      <span title={t(`status.${nodeHealth}`)}>{NODE_HEALTH_ICON[nodeHealth]}</span>
                     </div>
                   </Link>
                 )

@@ -7,7 +7,6 @@ import {
   IconRefresh,
   IconCircleCheck,
   IconCircleX,
-  IconClock,
   IconCircleMinus,
   IconDatabase,
   IconFileCode,
@@ -16,51 +15,14 @@ import {
   IconVariable,
   IconAlertTriangle,
 } from "@tabler/icons-react";
-// Note: Clock is used in ConditionBadge for Unknown status
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ConditionBadge } from "@/components/ConditionBadge";
 import { nodeApi } from "@/lib/api";
-import type { LynqNode, Condition } from "@/types/lynq";
-
-function ConditionBadge({ condition }: { condition: Condition }) {
-  const isTrue = condition.status === "True";
-  const isFalse = condition.status === "False";
-
-  return (
-    <div className="flex items-center gap-2 p-3 rounded-lg border bg-card">
-      {isTrue ? (
-        <IconCircleCheck size={16} className="text-emerald-500" />
-      ) : isFalse ? (
-        <IconCircleX size={16} className="text-rose-500" />
-      ) : (
-        <IconClock size={16} className="text-amber-500" />
-      )}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="font-medium text-sm">{condition.type}</span>
-          <Badge variant={isTrue ? "ready" : isFalse ? "failed" : "pending"}>
-            {condition.status}
-          </Badge>
-        </div>
-        {condition.reason && (
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {condition.reason}
-          </p>
-        )}
-        {condition.message && (
-          <p className="text-xs text-muted-foreground truncate mt-1">
-            {condition.message}
-          </p>
-        )}
-      </div>
-      <span className="text-xs text-muted-foreground shrink-0">
-        {new Date(condition.lastTransitionTime).toLocaleString()}
-      </span>
-    </div>
-  );
-}
+import { classifyNode, isRolloutPending } from "@/lib/health";
+import type { LynqNode } from "@/types/lynq";
 
 interface AppliedResource {
   kind: string;
@@ -206,9 +168,7 @@ export function NodeDetail() {
     );
   }
 
-  const isReady = node.status?.conditions?.some(
-    (c) => c.type === "Ready" && c.status === "True"
-  );
+  const health = classifyNode(node);
   // hubRef is stored in labels, not spec
   const hubRef = node.metadata.labels?.["lynq.sh/hub"];
   const nodeSpec = node.spec;
@@ -229,25 +189,23 @@ export function NodeDetail() {
   const managedResources = appliedResources.filter((r) => !r.isSkipped);
   const skippedResources = appliedResources.filter((r) => r.isSkipped);
 
-  // Status breakdown for chart
-  const statusData = [
-    {
-      label: "Ready",
-      count: node.status?.readyResources || 0,
-      color: "bg-emerald-500",
-    },
-    {
-      label: "Failed",
-      count: node.status?.failedResources || 0,
-      color: "bg-rose-500",
-    },
-    {
-      label: "Skipped",
-      count: node.status?.skippedResources || 0,
-      color: "bg-slate-400",
-    },
-  ];
+  // Status breakdown for chart. Not-ready resources (rolling out or recovering) are neither
+  // ready nor failed; without their own segment they rendered as an unexplained gap.
   const totalResources = node.status?.desiredResources || 0;
+  const readyCount = node.status?.readyResources || 0;
+  const failedCount = node.status?.failedResources || 0;
+  const skippedCount = node.status?.skippedResources || 0;
+  const statusData = [
+    { label: t("status.ready"), count: readyCount, color: "bg-emerald-500" },
+    {
+      label: t("nodes.notReady"),
+      count: Math.max(totalResources - readyCount - failedCount - skippedCount, 0),
+      color: "bg-amber-500",
+    },
+    { label: t("status.failed"), count: failedCount, color: "bg-rose-500" },
+    { label: t("status.skipped"), count: skippedCount, color: "bg-slate-400" },
+  ];
+  const templateGeneration = node.metadata.annotations?.["lynq.sh/template-generation"];
 
   return (
     <div className="space-y-6">
@@ -263,9 +221,7 @@ export function NodeDetail() {
             <div className="flex items-center gap-2">
               <IconBox size={20} />
               <h1 className="text-2xl font-bold">{node.metadata.name}</h1>
-              <Badge variant={isReady ? "ready" : "pending"}>
-                {isReady ? t("status.ready") : t("status.pending")}
-              </Badge>
+              <Badge variant={health}>{t(`status.${health}`)}</Badge>
             </div>
             <p className="text-muted-foreground">{node.metadata.namespace}</p>
           </div>
@@ -304,6 +260,18 @@ export function NodeDetail() {
           <span className="text-sm">{t("nodes.form")}: </span>
           <span className="font-mono text-sm">{node.spec.templateRef}</span>
         </Link>
+        {templateGeneration && (
+          <div
+            className="flex items-center gap-2 px-3 py-2 rounded-lg border"
+            title={t("nodes.rolloutGenerationHint")}
+          >
+            <span className="text-sm">{t("nodes.templateGeneration")}: </span>
+            <span className="font-mono text-sm">{templateGeneration}</span>
+            {isRolloutPending(node.metadata.annotations) && (
+              <Badge variant="pending">{t("nodes.rolloutPending")}</Badge>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Stats Cards */}
@@ -534,7 +502,7 @@ export function NodeDetail() {
         <TabsContent value="conditions">
           <Card>
             <CardHeader>
-              <CardTitle>Conditions</CardTitle>
+              <CardTitle>{t("hubs.conditions")}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
               {node.status?.conditions && node.status.conditions.length > 0 ? (

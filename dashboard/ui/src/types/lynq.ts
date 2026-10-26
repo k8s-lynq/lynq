@@ -1,5 +1,7 @@
 // Lynq CRD Types - matching api/v1/*.go
 
+// 'pending' is the progressing state (rolling out, recovering, or not reconciled yet); the UI
+// labels it "Progressing". See lib/health.ts.
 export type ResourceStatus = 'ready' | 'pending' | 'failed' | 'skipped'
 
 // Common Kubernetes metadata
@@ -7,6 +9,7 @@ export interface ObjectMeta {
   name: string
   namespace: string
   uid?: string
+  generation?: number
   creationTimestamp?: string
   labels?: Record<string, string>
   annotations?: Record<string, string>
@@ -105,18 +108,36 @@ export interface LynqFormSpec {
   networkPolicies?: TResource[]
   horizontalPodAutoscalers?: TResource[]
   manifests?: TResource[]
+  rollout?: RolloutConfig
 }
 
+export interface RolloutConfig {
+  maxSkew?: number
+  progressDeadlineSeconds?: number
+}
+
+export type RolloutPhase = 'Idle' | 'InProgress' | 'Failed' | 'Complete'
+
+// Matches RolloutStatus in api/v1/lynqform_types.go
+export interface RolloutStatus {
+  phase?: RolloutPhase
+  targetGeneration?: number
+  totalNodes?: number
+  updatedNodes?: number
+  updatingNodes?: number
+  readyUpdatedNodes?: number
+  startTime?: string
+  completionTime?: string
+  // On Failed, names the stalled nodes
+  message?: string
+}
+
+// LynqFormStatus has no failed-node count: derive it from the nodes (lib/health.ts formNodeCounts)
 export interface LynqFormStatus {
+  observedGeneration?: number
   totalNodes: number
   readyNodes: number
-  failedNodes: number
-  rollout?: {
-    inProgress: boolean
-    updatedNodes: number
-    totalNodes: number
-    percentage: number
-  }
+  rollout?: RolloutStatus
   conditions: Condition[]
 }
 
@@ -143,6 +164,7 @@ export interface LynqNodeStatus {
   skippedResources: number
   skippedResourceIds?: string[]
   appliedResources?: string[]
+  observedGeneration?: number
   conditions: Condition[]
 }
 
@@ -174,6 +196,15 @@ export interface ResourceMetadata {
   orphanedReason?: 'RemovedFromTemplate' | 'LynqNodeDeleted'
   originalNode?: string
   originalNodeNamespace?: string
+  // LynqNode: Conflicted=True
+  conflicted?: boolean
+  // LynqForm: the rollout phase the dashboard shows (lib/health.ts rolloutView) and the
+  // operator's status.rollout.message. rolloutReportedPhase is status.rollout.phase, set only
+  // when it differs from rolloutPhase; rolloutRecovering counts nodes recovering after completing it.
+  rolloutPhase?: RolloutPhase
+  rolloutMessage?: string
+  rolloutReportedPhase?: RolloutPhase
+  rolloutRecovering?: number
 }
 
 // Topology types for visualization
