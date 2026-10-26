@@ -74,6 +74,7 @@ func main() {
 	var hubConcurrency int
 	var formConcurrency int
 	var nodeConcurrency int
+	var kubeAPIWarnings string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -81,6 +82,7 @@ func main() {
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
+	leaderElection := bindLeaderElectionFlags(flag.CommandLine)
 	flag.BoolVar(&secureMetrics, "metrics-secure", true,
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
 	flag.StringVar(&webhookCertPath, "webhook-cert-path", "", "The directory that contains the webhook certificate.")
@@ -100,6 +102,9 @@ func main() {
 		"Number of concurrent reconciliations for LynqNode controller")
 	flag.BoolVar(&enablePprof, "enable-pprof", false,
 		"Enable pprof profiling endpoint on :6060 for CPU/memory diagnostics")
+	flag.StringVar(&kubeAPIWarnings, "kube-api-warnings", kubeAPIWarningsDeduplicate,
+		"How warnings returned by the API server (e.g. a deprecated API version) are logged: "+
+			"'deduplicate' logs each distinct warning once per process, 'all' logs every occurrence.")
 	opts := zap.Options{
 		Development: false,
 	}
@@ -208,25 +213,37 @@ func main() {
 		})
 	}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	if err := leaderElection.validate(); err != nil {
+		setupLog.Error(err, "invalid leader election flags")
+		os.Exit(1)
+	}
+	warningHandler, err := newKubeAPIWarningHandler(kubeAPIWarnings)
+	if err != nil {
+		setupLog.Error(err, "invalid --kube-api-warnings")
+		os.Exit(1)
+	}
+	// Set on the config rather than per client: every client the manager builds copies it, so
+	// the manager client, APIReader, informers, recorder and leader election share one handler.
+	restConfig := withKubeAPIWarningHandler(ctrl.GetConfigOrDie(), warningHandler)
+
+	mgrOptions := ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "f2130106.lynq.sh",
-		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
-		// when the Manager ends. This requires the binary to immediately end when the
-		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
-		// speeds up voluntary leader transitions as the new leader don't have to wait
-		// LeaseDuration time first.
-		//
-		// In the default scaffold provided, the program ends immediately after
-		// the manager stops, so would be fine to enable this option. However,
-		// if you are doing or is intended to do any operation such as perform cleanups
-		// after the manager stops then its usage might be unsafe.
-		// LeaderElectionReleaseOnCancel: true,
-	})
+	}
+	// LeaderElectionReleaseOnCancel (--leader-elect-release-on-cancel) is safe here: the manager
+	// releases the lease only after it has stopped the controllers, StatusManager (which flushes
+	// what it has batched when it stops) and caches, and nothing after mgr.Start returns talks to
+	// the API server — main only closes the datasource pool and exits. The one gap is a reconcile
+	// still running when the 30s graceful-shutdown timeout expires: the lease is released anyway,
+	// but mgr.Start then returns an error and main exits at once, well before a standby has synced
+	// its caches. The release only happens if the pod's terminationGracePeriodSeconds outlasts
+	// that shutdown; a kill before it leaves the lease to expire as without the flag.
+	leaderElection.applyTo(&mgrOptions)
+	mgr, err := ctrl.NewManager(restConfig, mgrOptions)
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)

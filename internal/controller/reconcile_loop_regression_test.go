@@ -184,3 +184,58 @@ func TestRegression_AppliedResourcesIsSorted(t *testing.T) {
 		"appliedResources must be sorted; unsorted map iteration re-randomizes it every reconcile: %v",
 		current.Status.AppliedResources)
 }
+
+// TestRegression_StaleSkippedResourceIdsAreClearedOnce pins the fix for a Ready LynqNode that
+// carried skippedResourceIds with skippedResources=0. When nothing is skipped, applyResources
+// returns its skipped ids as nil, and StatusManager used to read a nil list as "not
+// published", so the ids of a resolved skip were never cleared. Nodes an older version left in
+// that state must be cleaned by the next reconcile, and only once.
+func TestRegression_StaleSkippedResourceIdsAreClearedOnce(t *testing.T) {
+	ctx := context.Background()
+	scheme := setupTestScheme(t)
+
+	// Given a node with no dependencies whose status still lists ids of a resolved skip
+	node := multiResourceLynqNode()
+	node.Status.SkippedResources = 0
+	node.Status.SkippedResourceIds = []string{"core-api-service", "core-api-ingress"}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(node).
+		WithStatusSubresource(node).
+		Build()
+
+	r := &LynqNodeReconciler{
+		Client:        fakeClient,
+		Scheme:        scheme,
+		Recorder:      record.NewFakeRecorder(1000),
+		StatusManager: status.NewManager(fakeClient, status.WithSyncMode()),
+	}
+
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: node.Name, Namespace: node.Namespace}}
+	read := func() *lynqv1.LynqNode {
+		current := &lynqv1.LynqNode{}
+		require.NoError(t, fakeClient.Get(ctx, req.NamespacedName, current))
+		return current
+	}
+
+	// When the node is reconciled (finalizer, then a full reconcile)
+	for i := 0; i < 3; i++ {
+		_, err := r.Reconcile(ctx, req)
+		require.NoError(t, err)
+	}
+
+	// Then the stale ids are cleared along with the count
+	cleaned := read()
+	assert.Empty(t, cleaned.Status.SkippedResourceIds,
+		"skippedResourceIds of a resolved skip survived a reconcile that skipped nothing")
+	assert.Equal(t, int32(0), cleaned.Status.SkippedResources)
+
+	// And later reconciles do not write the node again
+	for i := 0; i < 5; i++ {
+		_, err := r.Reconcile(ctx, req)
+		require.NoError(t, err, "a failing reconcile would make the no-write assertion below vacuous")
+	}
+	assert.Equal(t, cleaned.ResourceVersion, read().ResourceVersion,
+		"steady-state reconcile wrote to the LynqNode after the stale ids were cleared")
+}

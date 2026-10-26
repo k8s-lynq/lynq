@@ -98,4 +98,7 @@ spec:
         volumeMounts: []
       volumes: []
       serviceAccountName: controller-manager
+      # The manager stops its controllers (up to 30s) before it releases the leader lease. With
+      # --leader-elect-release-on-cancel, raise this to 40 or more, or the kubelet kills the
+      # manager before the release and the standby waits out the lease duration as usual.
       terminationGracePeriodSeconds: 10

@@ -154,11 +154,17 @@ helm upgrade lynq k8s-lynq/lynq \
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `manager.leaderElection` | Enable leader election | `true` |
+| `manager.leaderElectionTuning.leaseDuration` | `--leader-elect-lease-duration` (empty = binary default `15s`; set all three timings together, with units) | `""` |
+| `manager.leaderElectionTuning.renewDeadline` | `--leader-elect-renew-deadline` (empty = binary default `10s`) | `""` |
+| `manager.leaderElectionTuning.retryPeriod` | `--leader-elect-retry-period` (empty = binary default `2s`) | `""` |
+| `manager.leaderElectionTuning.releaseOnCancel` | `--leader-elect-release-on-cancel`: release the lease on graceful shutdown (needs `terminationGracePeriodSeconds` of 40 or more to take effect reliably) | `false` |
 | `manager.healthProbeBindAddress` | Health probe bind address | `:8081` |
 | `manager.metricsBindAddress` | Metrics bind address | `:8443` |
 | `manager.logLevel` | Log verbosity level | `info` |
+| `manager.kubeAPIWarnings` | `--kube-api-warnings`: `deduplicate` or `all` (empty = binary default `deduplicate`) | `""` |
 | `manager.args` | Additional command-line arguments | `[]` |
 | `manager.env` | Additional environment variables | `[]` |
+| `terminationGracePeriodSeconds` | Seconds the kubelet waits after SIGTERM before killing the manager | `10` |
 
 **Log Levels:**
 - `info` (default): Shows important events (creation, deletion, errors)

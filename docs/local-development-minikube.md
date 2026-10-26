@@ -188,7 +188,7 @@ Run operator with debugger:
 go install github.com/go-delve/delve/cmd/dlv@latest
 
 # Run with delve
-dlv debug ./cmd/main.go -- --zap-devel=true
+dlv debug ./cmd -- --zap-devel=true
 ```
 
 Then in delve:
