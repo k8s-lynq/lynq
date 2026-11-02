@@ -14,12 +14,13 @@ export function FloatingTooltip({ x, y, lines, visible }: TooltipProps) {
 
   useEffect(() => {
     if (timerRef.current) clearTimeout(timerRef.current)
-    if (visible) {
-      timerRef.current = setTimeout(() => setShow(true), ANIM_TOOLTIP_DELAY)
-    } else {
+    if (!visible) return
+    timerRef.current = setTimeout(() => setShow(true), ANIM_TOOLTIP_DELAY)
+    // Hide again when visibility ends, so the next show waits out the delay
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current)
       setShow(false)
     }
-    return () => { if (timerRef.current) clearTimeout(timerRef.current) }
   }, [visible])
 
   if (!show || !visible) return null

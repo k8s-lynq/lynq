@@ -64,12 +64,27 @@ kubectl get servicemonitor -n lynq-system
 
 ### Grafana Dashboard
 
-Import `config/monitoring/grafana-dashboard.json` via **Dashboards → Import** in the Grafana UI. Select your Prometheus datasource. The dashboard ships 17 panels grouped into four categories:
+Import `config/monitoring/grafana-dashboard.json` via **Dashboards → Import** in the Grafana UI. Select your Prometheus datasource. The dashboard ships 21 panels grouped into five categories:
 
-- **Top-line stat panels**: Total Desired / Ready / Failed Nodes, Total Conflicted Resources
-- **Reconciliation health**: Reconciliation Duration percentiles, Reconciliation Rate, Error Rate, LynqNode Ready Status, Degraded Nodes
+- **Top-line stat panels**: Total Desired / Ready / Progressing / Failed Nodes, Stalled Rollouts, Total Conflicted Resources
+- **Reconciliation health**: Reconciliation Duration percentiles, Reconciliation Rate, Error Rate, Not-Ready LynqNodes (progressing vs degraded), Degraded Nodes
 - **Resource & conflict breakdowns**: Resource Counts by Node and Total, Conflicted Resources by Node and Total, Conflicts Rate by Node
-- **Hub & runtime internals**: Hub Health, Apply Rate by Kind, Work Queue Depth
+- **Hub & runtime internals**: Hub Node Breakdown, Apply Rate by Kind, Work Queue Depth
+- **Rollouts**: LynqForm Rollout Phase, LynqForm Rollout Progress (only LynqForms with `spec.rollout.maxSkew > 0` report a rollout)
+
+Every LynqNode is in exactly one of three states, and the node panels add up: Desired = Ready + Progressing + Failed.
+
+| State | Meaning | Where it shows |
+|-------|---------|----------------|
+| Ready | `Ready=True` | Total Ready Nodes, Hub Node Breakdown |
+| Failed | Needs an operator: failed or conflicted resources, or `Degraded=True` | Total Failed Nodes (red), Degraded Nodes, Not-Ready LynqNodes with Degraded = Yes |
+| Progressing | Rolling out, recovering lost pods, or not created yet (including creation held back by `maxSkew`). Not an error by itself | Progressing Nodes (`hub_desired - hub_ready - hub_failed`), Not-Ready LynqNodes with Degraded = No |
+
+A rollout that stops progressing is not hidden among progressing nodes: its LynqForm reports phase `Failed` (Stalled Rollouts, LynqForm Rollout Phase), and the stalled nodes are listed in `kubectl get lynqform <name> -o jsonpath='{.status.rollout.message}'`.
+
+::: warning Older Lynq versions
+Lynq v1.1.23-alpha.1 and earlier count every LynqNode with `Ready!=True` as failed in `hub_failed`, and never report rollout phase `Failed`. Against those versions, Progressing Nodes stays near 0 and Total Failed Nodes includes nodes that are only rolling out or recovering.
+:::
 
 ## Metrics Catalog
 

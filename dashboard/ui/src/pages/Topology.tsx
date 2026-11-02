@@ -44,9 +44,14 @@ export function Topology() {
 
   const [selectedNode, setSelectedNode] = useState<TopologyNode | null>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
+  const [searchQuery, setSearchQueryState] = useState('')
   const [isSearchFocused, setIsSearchFocused] = useState(false)
   const [focusedMatchIndex, setFocusedMatchIndex] = useState(0)
+  // A new search query starts from its first match
+  const setSearchQuery = useCallback((query: string) => {
+    setSearchQueryState(query)
+    setFocusedMatchIndex(0)
+  }, [])
   const [problemMode, setProblemMode] = useState(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
 
@@ -117,10 +122,6 @@ export function Topology() {
 
   const focusedNodeId = matchedNodeIds[focusedMatchIndex] || null
 
-  // Reset focus index when search query changes
-  useEffect(() => {
-    setFocusedMatchIndex(0)
-  }, [searchQuery])
 
   // Keyboard shortcut for search (Cmd/Ctrl + F)
   useEffect(() => {
@@ -137,7 +138,7 @@ export function Topology() {
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [isSearchFocused])
+  }, [isSearchFocused, setSearchQuery])
 
   // Handle Enter key in search input to cycle through matches
   const handleSearchKeyDown = useCallback((e: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -183,7 +184,7 @@ export function Topology() {
     if (!problemMode) {
       setSearchQuery('')
     }
-  }, [problemMode])
+  }, [problemMode, setSearchQuery])
 
   return (
     <div className={`h-full ${isFullscreen ? 'fixed inset-0 z-50 bg-background' : ''}`}>

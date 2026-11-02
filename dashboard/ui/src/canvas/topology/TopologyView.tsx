@@ -22,7 +22,6 @@ interface TopologyViewProps {
 export function TopologyView({
   data,
   loading,
-  searchQuery: _searchQuery,
   highlightedNodeIds,
   highlightMode,
   problemMode,

@@ -47,7 +47,7 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
+        "w": 4,
         "x": 0,
         "y": 0
       },
@@ -106,8 +106,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 6,
+        "w": 4,
+        "x": 4,
         "y": 0
       },
       "id": 2,
@@ -144,6 +144,68 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
+      "description": "LynqNodes neither Ready nor failed: rolling out, recovering lost pods, or not created yet (including creation held back by maxSkew) (hub_desired - hub_ready - hub_failed). Not an error by itself; a rollout that stops progressing shows in Stalled Rollouts. Lynq v1.1.23-alpha.1 and earlier counted these nodes as failed, so this stays near 0 there.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "blue",
+            "mode": "fixed"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 0
+      },
+      "id": 21,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"],
+          "fields": ""
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "clamp_min(sum(hub_desired) - sum(hub_ready) - sum(hub_failed), 0)",
+          "refId": "A"
+        }
+      ],
+      "title": "Progressing Nodes",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "LynqNodes that need an operator: failed or conflicted resources, or Degraded=True. Nodes rolling out or recovering lost pods are not counted here (see Progressing Nodes), so Desired = Ready + Progressing + Failed. Lynq v1.1.23-alpha.1 and earlier counted every node with Ready!=True as failed.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -169,7 +231,7 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
+        "w": 4,
         "x": 12,
         "y": 0
       },
@@ -207,6 +269,70 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
+      "description": "LynqForms whose rollout phase is Failed (lynqform_rollout_phase == 2): an updated LynqNode failed, or did not become Ready within spec.rollout.progressDeadlineSeconds. The rollout stops; the stalled nodes are listed in the LynqForm's .status.rollout.message. Only LynqForms with spec.rollout.maxSkew > 0 report a rollout phase.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 0
+      },
+      "id": 19,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"],
+          "fields": ""
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "count(lynqform_rollout_phase == 2) or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "title": "Stalled Rollouts",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -236,8 +362,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 18,
+        "w": 4,
+        "x": 20,
         "y": 0
       },
       "id": 4,
@@ -475,6 +601,15 @@
           "expr": "sum(rate(lynqnode_reconcile_duration_seconds_count{result=\"error\"}[5m]))",
           "legendFormat": "Error",
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(lynqnode_reconcile_duration_seconds_count{result=\"partial_failure\"}[5m]))",
+          "legendFormat": "Partial Failure",
+          "refId": "C"
         }
       ],
       "title": "Reconciliation Rate",
@@ -551,6 +686,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
+      "description": "Only LynqNodes that are not Ready. Degraded=No means the node is progressing (rolling out or recovering lost pods) and needs no action yet; Degraded=Yes means failed or conflicted resources, or a template/variables/dependency error. Ready nodes are not listed.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -587,7 +723,7 @@
                   {
                     "options": {
                       "0": {
-                        "color": "red",
+                        "color": "orange",
                         "index": 0,
                         "text": "Not Ready"
                       },
@@ -595,6 +731,45 @@
                         "color": "green",
                         "index": 1,
                         "text": "Ready"
+                      },
+                      "2": {
+                        "color": "yellow",
+                        "index": 2,
+                        "text": "Unknown"
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Degraded"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "0": {
+                        "color": "blue",
+                        "index": 0,
+                        "text": "No (progressing)"
+                      },
+                      "1": {
+                        "color": "red",
+                        "index": 1,
+                        "text": "Yes"
                       },
                       "2": {
                         "color": "yellow",
@@ -631,7 +806,13 @@
           "reducer": ["sum"],
           "show": false
         },
-        "showHeader": true
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Degraded"
+          }
+        ]
       },
       "pluginVersion": "11.0.0",
       "targets": [
@@ -640,15 +821,30 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "max by (lynqnode, namespace) (lynqnode_condition_status{type=\"Ready\"})",
+          "expr": "max by (lynqnode, namespace) (lynqnode_condition_status{type=\"Ready\"}) != 1",
           "format": "table",
           "instant": true,
           "legendFormat": "",
-          "refId": "A"
+          "refId": "ready"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by (lynqnode, namespace) (lynqnode_condition_status{type=\"Degraded\"})\nand on (lynqnode, namespace) (max by (lynqnode, namespace) (lynqnode_condition_status{type=\"Ready\"}) != 1)",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "",
+          "refId": "degraded"
         }
       ],
-      "title": "LynqNode Ready Status",
+      "title": "Not-Ready LynqNodes (progressing vs degraded)",
       "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
         {
           "id": "organize",
           "options": {
@@ -664,9 +860,15 @@
               "pod": true,
               "service": true
             },
-            "indexByName": {},
+            "indexByName": {
+              "lynqnode": 0,
+              "namespace": 1,
+              "Value #ready": 2,
+              "Value #degraded": 3
+            },
             "renameByName": {
-              "Value": "Status",
+              "Value #ready": "Status",
+              "Value #degraded": "Degraded",
               "lynqnode": "LynqNode",
               "namespace": "Namespace"
             }
@@ -680,6 +882,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
+      "description": "LynqNodes with Degraded=True and the current reason. Not-ready alone (Ready=False/NotAllResourcesReady) never appears here; see Not-Ready LynqNodes.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -800,6 +1003,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
+      "description": "Failed = Lynq's own change never became Ready (readiness timeout, ProgressDeadlineExceeded) or failed to apply. A resource that was Ready and regressed (lost pod, drain, external rollout restart) is Not Ready, not Failed. Not Ready also includes resources skipped because a dependency failed (there is no skipped-resource metric). Desired = Ready + Not Ready + Failed.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -881,7 +1085,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (lynqnode) (lynqnode_resources_desired)",
+          "expr": "sum by (lynqnode, namespace) (lynqnode_resources_desired)",
           "format": "table",
           "instant": true,
           "legendFormat": "__auto",
@@ -892,7 +1096,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (lynqnode) (lynqnode_resources_ready)",
+          "expr": "sum by (lynqnode, namespace) (lynqnode_resources_ready)",
           "format": "table",
           "instant": true,
           "legendFormat": "__auto",
@@ -903,7 +1107,18 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (lynqnode) (lynqnode_resources_failed)",
+          "expr": "sum by (lynqnode, namespace) (lynqnode_resources_desired - lynqnode_resources_ready - lynqnode_resources_failed)",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "__auto",
+          "refId": "notready"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (lynqnode, namespace) (lynqnode_resources_failed)",
           "format": "table",
           "instant": true,
           "legendFormat": "__auto",
@@ -913,31 +1128,29 @@
       "title": "Resource Counts by Node",
       "transformations": [
         {
-          "id": "joinByField",
-          "options": {
-            "byField": "lynqnode",
-            "mode": "outer"
-          }
+          "id": "merge",
+          "options": {}
         },
         {
           "id": "organize",
           "options": {
             "excludeByName": {
-              "Time": true,
-              "Time 1": true,
-              "Time 2": true,
-              "Time 3": true
+              "Time": true
             },
             "indexByName": {
               "lynqnode": 0,
-              "Value #desired": 1,
-              "Value #ready": 2,
-              "Value #failed": 3
+              "namespace": 1,
+              "Value #desired": 2,
+              "Value #ready": 3,
+              "Value #notready": 4,
+              "Value #failed": 5
             },
             "renameByName": {
               "lynqnode": "LynqNode",
+              "namespace": "Namespace",
               "Value #desired": "Desired",
               "Value #ready": "Ready",
+              "Value #notready": "Not Ready",
               "Value #failed": "Failed"
             }
           }
@@ -950,6 +1163,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
+      "description": "Failed = Lynq's own change never became Ready (readiness timeout, ProgressDeadlineExceeded) or failed to apply. A resource that was Ready and regressed (lost pod, drain, external rollout restart) is Not Ready, not Failed. Not Ready also includes resources skipped because a dependency failed (there is no skipped-resource metric). Desired = Ready + Not Ready + Failed.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1022,6 +1236,15 @@
       },
       "pluginVersion": "11.0.0",
       "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(lynqnode_resources_desired)",
+          "legendFormat": "Desired",
+          "refId": "C"
+        },
         {
           "datasource": {
             "type": "prometheus",
@@ -1252,6 +1475,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
+      "description": "Per hub: Desired = Ready + Progressing + Failed. Failed = LynqNodes needing an operator (failed or conflicted resources, or Degraded=True). Progressing = rolling out, recovering lost pods, or not created yet (including creation held back by maxSkew); not an error by itself. Lynq v1.1.23-alpha.1 and earlier counted progressing nodes as failed.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1279,13 +1503,30 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Health"
+              "options": "Progressing"
             },
             "properties": [
               {
-                "id": "unit",
-                "value": "percentunit"
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
               },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Failed"
+            },
+            "properties": [
               {
                 "id": "color",
                 "value": {
@@ -1298,16 +1539,12 @@
                   "mode": "absolute",
                   "steps": [
                     {
-                      "color": "red",
+                      "color": "green",
                       "value": null
                     },
                     {
-                      "color": "yellow",
-                      "value": 0.7
-                    },
-                    {
-                      "color": "green",
-                      "value": 0.95
+                      "color": "red",
+                      "value": 1
                     }
                   ]
                 }
@@ -1315,17 +1552,8 @@
               {
                 "id": "custom.cellOptions",
                 "value": {
-                  "type": "gauge",
-                  "mode": "gradient"
+                  "type": "color-background"
                 }
-              },
-              {
-                "id": "min",
-                "value": 0
-              },
-              {
-                "id": "max",
-                "value": 1
               }
             ]
           }
@@ -1355,15 +1583,52 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (hub, namespace) (hub_ready) / sum by (hub, namespace) (hub_desired)",
+          "expr": "sum by (hub, namespace) (hub_desired)",
           "format": "table",
           "instant": true,
           "legendFormat": "{{hub}}",
-          "refId": "A"
+          "refId": "desired"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (hub, namespace) (hub_ready)",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "{{hub}}",
+          "refId": "ready"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "clamp_min(sum by (hub, namespace) (hub_desired) - sum by (hub, namespace) (hub_ready) - sum by (hub, namespace) (hub_failed), 0)",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "{{hub}}",
+          "refId": "progressing"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (hub, namespace) (hub_failed)",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "{{hub}}",
+          "refId": "failed"
         }
       ],
-      "title": "Hub Health",
+      "title": "Hub Node Breakdown",
       "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
         {
           "id": "organize",
           "options": {
@@ -1378,11 +1643,21 @@
               "pod": true,
               "service": true
             },
-            "indexByName": {},
+            "indexByName": {
+              "hub": 0,
+              "namespace": 1,
+              "Value #desired": 2,
+              "Value #ready": 3,
+              "Value #progressing": 4,
+              "Value #failed": 5
+            },
             "renameByName": {
-              "Value": "Health",
               "hub": "Hub",
-              "namespace": "Namespace"
+              "namespace": "Namespace",
+              "Value #desired": "Desired",
+              "Value #ready": "Ready",
+              "Value #progressing": "Progressing",
+              "Value #failed": "Failed"
             }
           }
         }
@@ -1670,7 +1945,7 @@
             "uid": "${datasource}"
           },
           "expr": "sum(workqueue_depth{name=\"lynqhub\"})",
-          "legendFormat": "Hub Queue",
+          "legendFormat": "LynqHub Queue",
           "refId": "B"
         },
         {
@@ -1679,11 +1954,326 @@
             "uid": "${datasource}"
           },
           "expr": "sum(workqueue_depth{name=\"lynqform\"})",
-          "legendFormat": "Template Queue",
+          "legendFormat": "LynqForm Queue",
           "refId": "C"
         }
       ],
       "title": "Work Queue Depth",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Rollout phase per LynqForm (lynqform_rollout_phase: 0=Idle, 1=InProgress, 2=Failed, 3=Complete). Failed = an updated LynqNode failed, or did not become Ready within spec.rollout.progressDeadlineSeconds; it keeps its maxSkew slot, so the rollout stops. The stalled nodes are listed in kubectl get lynqform <name> -o jsonpath='{.status.rollout.message}'. Only LynqForms with spec.rollout.maxSkew > 0 report a rollout.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Phase"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "0": {
+                        "color": "text",
+                        "index": 0,
+                        "text": "Idle"
+                      },
+                      "1": {
+                        "color": "blue",
+                        "index": 1,
+                        "text": "InProgress"
+                      },
+                      "2": {
+                        "color": "red",
+                        "index": 2,
+                        "text": "Failed"
+                      },
+                      "3": {
+                        "color": "green",
+                        "index": 3,
+                        "text": "Complete"
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Progress"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 100
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 10,
+        "x": 0,
+        "y": 52
+      },
+      "id": 18,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": ["sum"],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Phase"
+          }
+        ]
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by (form, namespace) (lynqform_rollout_phase)",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "",
+          "refId": "phase"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by (form, namespace) (lynqform_rollout_updating_nodes)",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "",
+          "refId": "updating"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by (form, namespace) (lynqform_rollout_progress)",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "",
+          "refId": "progress"
+        }
+      ],
+      "title": "LynqForm Rollout Phase",
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "indexByName": {
+              "form": 0,
+              "namespace": 1,
+              "Value #phase": 2,
+              "Value #updating": 3,
+              "Value #progress": 4
+            },
+            "renameByName": {
+              "form": "LynqForm",
+              "namespace": "Namespace",
+              "Value #phase": "Phase",
+              "Value #updating": "Updating Nodes",
+              "Value #progress": "Progress"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Rollout progress (% of nodes Ready on the new LynqForm generation) and nodes currently updating (updated but not Ready; bounded by maxSkew). Progress that stays flat while Updating Nodes stays at maxSkew is a stalled rollout.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "percent",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [10, 10],
+                  "fill": "dash"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 14,
+        "x": 10,
+        "y": 52
+      },
+      "id": 20,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by (form, namespace) (lynqform_rollout_progress)",
+          "legendFormat": "{{namespace}}/{{form}} progress",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by (form, namespace) (lynqform_rollout_updating_nodes)",
+          "legendFormat": "{{namespace}}/{{form}} updating",
+          "refId": "B"
+        }
+      ],
+      "title": "LynqForm Rollout Progress",
       "type": "timeseries"
     }
   ],
@@ -1720,6 +2310,6 @@
   "timezone": "browser",
   "title": "Lynq Operator",
   "uid": "lynq-operator",
-  "version": 2,
+  "version": 3,
   "weekStart": ""
 }

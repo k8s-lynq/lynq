@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useMemo } from "react"
 import { useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import {
@@ -24,6 +24,14 @@ import {
 import { useHubs } from "@/contexts/HubContext"
 import { useForms } from "@/contexts/FormContext"
 import { useNodes } from "@/contexts/NodeContext"
+import {
+  classifyForm,
+  classifyHub,
+  classifyNode,
+  formNodeCounts,
+  hubNodeHealth,
+  indexNodeHealth,
+} from "@/lib/health"
 import type { ResourceStatus } from "@/types/lynq"
 
 const STATUS_ICONS: Record<ResourceStatus, React.ReactNode> = {
@@ -33,17 +41,6 @@ const STATUS_ICONS: Record<ResourceStatus, React.ReactNode> = {
   skipped: <IconCircleMinus size={12} className="text-slate-400" />,
 }
 
-function getStatus(conditions?: { type: string; status: string }[]): ResourceStatus {
-  if (!conditions) return "pending"
-  const readyCondition = conditions.find(
-    (c) => c.type === "Ready" || c.type === "Applied"
-  )
-  if (!readyCondition) return "pending"
-  if (readyCondition.status === "True") return "ready"
-  if (readyCondition.status === "False") return "failed"
-  return "pending"
-}
-
 export function SearchCommand() {
   const [open, setOpen] = useState(false)
   const navigate = useNavigate()
@@ -51,7 +48,10 @@ export function SearchCommand() {
 
   const { hubs } = useHubs()
   const { forms } = useForms()
-  const { nodes } = useNodes()
+  const { nodes, loaded: nodesLoaded } = useNodes()
+  // Hubs and forms are classified from their LynqNodes; until those load their status is null
+  // and no icon is shown
+  const nodeIndex = useMemo(() => (nodesLoaded ? indexNodeHealth(nodes) : null), [nodes, nodesLoaded])
 
   // Global keyboard shortcut
   useEffect(() => {
@@ -117,7 +117,7 @@ export function SearchCommand() {
         {hubs.length > 0 && (
           <CommandGroup heading={t('nav.hubs')}>
             {hubs.map((hub) => {
-              const status = getStatus(hub.status?.conditions)
+              const status = classifyHub(hub, nodeIndex && hubNodeHealth(hub, nodeIndex))
               return (
                 <CommandItem
                   key={`hub-${hub.metadata.namespace}-${hub.metadata.name}`}
@@ -132,7 +132,7 @@ export function SearchCommand() {
                   <span className="text-xs text-muted-foreground mr-2">
                     {hub.metadata.namespace}
                   </span>
-                  {STATUS_ICONS[status]}
+                  {status && STATUS_ICONS[status]}
                 </CommandItem>
               )
             })}
@@ -143,7 +143,7 @@ export function SearchCommand() {
         {forms.length > 0 && (
           <CommandGroup heading={t('nav.forms')}>
             {forms.map((form) => {
-              const status = getStatus(form.status?.conditions)
+              const status = classifyForm(form, nodeIndex && formNodeCounts(nodeIndex, form.metadata))
               return (
                 <CommandItem
                   key={`form-${form.metadata.namespace}-${form.metadata.name}`}
@@ -158,7 +158,7 @@ export function SearchCommand() {
                   <span className="text-xs text-muted-foreground mr-2">
                     {form.metadata.namespace}
                   </span>
-                  {STATUS_ICONS[status]}
+                  {status && STATUS_ICONS[status]}
                 </CommandItem>
               )
             })}
@@ -169,7 +169,7 @@ export function SearchCommand() {
         {nodes.length > 0 && (
           <CommandGroup heading={t('nav.nodes')}>
             {nodes.slice(0, 20).map((node) => {
-              const status = getStatus(node.status?.conditions)
+              const status = classifyNode(node)
               return (
                 <CommandItem
                   key={`node-${node.metadata.namespace}-${node.metadata.name}`}

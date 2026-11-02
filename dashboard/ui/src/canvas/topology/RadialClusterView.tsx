@@ -511,8 +511,10 @@ function drawNode(
   const accent = statusColor(datum.status)
 
   if (datum.nodeType === 'hub') {
-    // Hub: large donut showing ready/failed proportions
-    const segs = buildDonutSegments(datum.metrics.ready, datum.metrics.failed, 0, HUB_R, HUB_R * 0.55)
+    // Hub: large donut showing ready/progressing/failed proportions. Progressing nodes (rolling
+    // out, recovering, not created yet) are in neither ready nor failed.
+    const hubPending = Math.max(datum.metrics.desired - datum.metrics.ready - datum.metrics.failed, 0)
+    const segs = buildDonutSegments(datum.metrics.ready, datum.metrics.failed, hubPending, HUB_R, HUB_R * 0.55)
     segs.forEach(({ d: path, color }) => {
       el.append('path').attr('d', path).attr('fill', color).attr('fill-opacity', 0.9)
     })
@@ -665,6 +667,11 @@ function parseResourceName(raw: string): { kind: string; name: string } {
   return { kind: raw.slice(0, slash), name: raw.slice(slash + 1) }
 }
 
+// The 'pending' key is the progressing state (see lib/health.ts)
+function statusLabel(status: ResourceStatus): string {
+  return status === 'pending' ? 'progressing' : status
+}
+
 function showTooltip(
   event: MouseEvent,
   d: d3.HierarchyPointNode<HierarchyDatum>,
@@ -673,6 +680,7 @@ function showTooltip(
 ) {
   if (!el || !container) return
   const datum = d.data
+  const progressing = Math.max(datum.metrics.desired - datum.metrics.ready - datum.metrics.failed, 0)
   let lines: string[]
 
   if (datum.nodeType === 'resource') {
@@ -683,15 +691,15 @@ function showTooltip(
       datum.namespace
         ? `<span style="font-size:11px;color:#64748b">${datum.namespace}</span>`
         : '',
-      `<span style="font-size:11px;color:${datum.status === 'failed' ? '#dc2626' : datum.status === 'skipped' ? '#64748b' : '#0d9488'}">${datum.status}</span>`,
+      `<span style="font-size:11px;color:${datum.status === 'failed' ? '#dc2626' : datum.status === 'skipped' ? '#64748b' : '#0d9488'}">${statusLabel(datum.status)}</span>`,
     ].filter(Boolean)
   } else {
     lines = [
       `<span style="font-weight:600">${datum.name}</span>`,
       `<span style="font-size:11px;color:#64748b">${datum.namespace}</span>`,
       datum.nodeType !== 'hub' && datum.nodeType !== 'form'
-        ? `<span style="font-size:11px;color:${datum.status === 'failed' ? '#dc2626' : '#64748b'}">${datum.status}</span>`
-        : `<span style="font-size:11px">${datum.metrics.ready}/${datum.metrics.desired} ready${datum.metrics.failed > 0 ? ` · <span style="color:#dc2626">${datum.metrics.failed} failed</span>` : ''}</span>`,
+        ? `<span style="font-size:11px;color:${datum.status === 'failed' ? '#dc2626' : '#64748b'}">${statusLabel(datum.status)}</span>`
+        : `<span style="font-size:11px">${datum.metrics.ready}/${datum.metrics.desired} ready${progressing > 0 ? ` · <span style="color:#d97706">${progressing} progressing</span>` : ''}${datum.metrics.failed > 0 ? ` · <span style="color:#dc2626">${datum.metrics.failed} failed</span>` : ''}</span>`,
     ]
   }
 

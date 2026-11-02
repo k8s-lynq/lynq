@@ -1,3 +1,4 @@
+import { useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
@@ -19,6 +20,17 @@ import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 
 import { useHubs, useHubPolling } from '@/contexts/HubContext'
 import { useForms, useFormPolling } from '@/contexts/FormContext'
 import { useNodes, useNodePolling } from '@/contexts/NodeContext'
+import {
+  classifyForm,
+  classifyHub,
+  classifyNode,
+  countHealth,
+  formNodeCounts,
+  hubNodeHealth,
+  indexNodeHealth,
+  type Health,
+} from '@/lib/health'
+import type { LynqForm, LynqHub } from '@/types/lynq'
 
 function KPICard({
   title,
@@ -175,25 +187,17 @@ function HealthOverviewChart({ data }: { data: { name: string; ready: number; fa
   )
 }
 
-function getStatus(conditions?: { type: string; status: string }[]): 'ready' | 'failed' | 'pending' {
-  if (!conditions) return 'pending'
-  const readyCondition = conditions.find(
-    (c) => c.type === 'Ready' || c.type === 'Applied'
-  )
-  if (!readyCondition) return 'pending'
-  if (readyCondition.status === 'True') return 'ready'
-  if (readyCondition.status === 'False') return 'failed'
-  return 'pending'
-}
-
-function RecentItemsList<T extends { metadata: { name: string; namespace: string; creationTimestamp?: string }; status?: { conditions?: { type: string; status: string }[] } }>({
+function RecentItemsList<T extends { metadata: { name: string; namespace: string; creationTimestamp?: string } }>({
   items,
+  classify,
   titleKey,
   icon: Icon,
   basePath,
   emptyMessage,
 }: {
   items: T[]
+  // null: not known yet (a hub or form whose nodes have not loaded)
+  classify: (item: T) => Health | null
   titleKey: string
   icon: React.ComponentType<{ size?: number; className?: string }>
   basePath: string
@@ -244,7 +248,7 @@ function RecentItemsList<T extends { metadata: { name: string; namespace: string
         ) : (
           <div className="space-y-2">
             {recentItems.map((item) => {
-              const status = getStatus(item.status?.conditions)
+              const status = classify(item)
               return (
                 <div
                   key={`${item.metadata.namespace}-${item.metadata.name}`}
@@ -252,7 +256,11 @@ function RecentItemsList<T extends { metadata: { name: string; namespace: string
                   onClick={() => navigate(`/${basePath}/${item.metadata.name}?namespace=${item.metadata.namespace}`)}
                 >
                   <div className="flex items-center gap-2 min-w-0 flex-1">
-                    {statusIcons[status]}
+                    {status ? (
+                      statusIcons[status]
+                    ) : (
+                      <IconClock size={14} className="text-muted-foreground" />
+                    )}
                     <span className="font-medium truncate">{item.metadata.name}</span>
                   </div>
                   <Badge variant="outline" className="text-xs shrink-0 ml-2">
@@ -273,49 +281,31 @@ export function Overview() {
   const { t } = useTranslation()
   const { hubs, loading: hubsLoading } = useHubs()
   const { forms, loading: formsLoading } = useForms()
-  const { nodes, loading: nodesLoading } = useNodes()
+  const { nodes, loading: nodesFetching, loaded: nodesLoaded } = useNodes()
+  // Until the first node list arrives every node count is unknown, not 0
+  const nodesLoading = nodesFetching || !nodesLoaded
 
   // Enable polling
   useHubPolling()
   useFormPolling()
   useNodePolling()
 
-  // Calculate hub stats
-  const hubStats = {
-    total: hubs.length,
-    ready: hubs.filter(
-      (h) => h.status?.conditions?.some((c) => c.type === 'Ready' && c.status === 'True')
-    ).length,
-    failed: hubs.filter(
-      (h) => h.status?.conditions?.some((c) => c.type === 'Ready' && c.status === 'False')
-    ).length,
-  }
-
-  // Calculate form stats (LynqForm uses 'Applied' condition instead of 'Ready')
-  const formStats = {
-    total: forms.length,
-    ready: forms.filter(
-      (f) => f.status?.conditions?.some((c) =>
-        (c.type === 'Ready' || c.type === 'Applied') && c.status === 'True'
-      )
-    ).length,
-    failed: forms.filter(
-      (f) => f.status?.conditions?.some((c) =>
-        (c.type === 'Ready' || c.type === 'Applied') && c.status === 'False'
-      )
-    ).length,
-  }
-
-  // Calculate node stats
-  const nodeStats = {
-    total: nodes.length,
-    ready: nodes.filter(
-      (n) => n.status?.conditions?.some((c) => c.type === 'Ready' && c.status === 'True')
-    ).length,
-    failed: nodes.filter(
-      (n) => n.status?.conditions?.some((c) => c.type === 'Ready' && c.status === 'False')
-    ).length,
-  }
+  // One classification per kind (lib/health.ts), shared with every other page
+  // Hubs and forms are classified from their LynqNodes (see HubNodeHealth), so their counts
+  // wait for the node list too
+  const nodeIndex = useMemo(() => (nodesLoaded ? indexNodeHealth(nodes) : null), [nodes, nodesLoaded])
+  const hubHealth = useCallback(
+    (hub: LynqHub) => classifyHub(hub, nodeIndex && hubNodeHealth(hub, nodeIndex)),
+    [nodeIndex],
+  )
+  const formHealth = useCallback(
+    (form: LynqForm) => classifyForm(form, nodeIndex && formNodeCounts(nodeIndex, form.metadata)),
+    [nodeIndex],
+  )
+  // Only counted once nodeIndex exists, when neither classifier returns null
+  const hubStats = { total: hubs.length, ...countHealth(hubs, (h) => hubHealth(h) ?? 'pending') }
+  const formStats = { total: forms.length, ...countHealth(forms, (f) => formHealth(f) ?? 'pending') }
+  const nodeStats = { total: nodes.length, ...countHealth(nodes, classifyNode) }
 
   // Calculate resource stats from nodes
   const resourceStats = nodes.reduce(
@@ -334,19 +324,19 @@ export function Overview() {
       name: t('nav.hubs'),
       ready: hubStats.ready,
       failed: hubStats.failed,
-      pending: hubStats.total - hubStats.ready - hubStats.failed,
+      pending: hubStats.pending,
     },
     {
       name: t('nav.forms'),
       ready: formStats.ready,
       failed: formStats.failed,
-      pending: formStats.total - formStats.ready - formStats.failed,
+      pending: formStats.pending,
     },
     {
       name: t('nav.nodes'),
       ready: nodeStats.ready,
       failed: nodeStats.failed,
-      pending: nodeStats.total - nodeStats.ready - nodeStats.failed,
+      pending: nodeStats.pending,
     },
     {
       name: t('overview.resources'),
@@ -368,7 +358,7 @@ export function Overview() {
           total={hubStats.total}
           ready={hubStats.ready}
           failed={hubStats.failed}
-          loading={hubsLoading}
+          loading={hubsLoading || nodesLoading}
           href="/hubs"
         />
         <KPICard
@@ -377,7 +367,7 @@ export function Overview() {
           total={formStats.total}
           ready={formStats.ready}
           failed={formStats.failed}
-          loading={formsLoading}
+          loading={formsLoading || nodesLoading}
           href="/forms"
         />
         <KPICard
@@ -441,7 +431,7 @@ export function Overview() {
                 <StatusPieChart
                   ready={nodeStats.ready}
                   failed={nodeStats.failed}
-                  pending={nodeStats.total - nodeStats.ready - nodeStats.failed}
+                  pending={nodeStats.pending}
                   emptyMessage={t('overview.noNodes')}
                 />
                 <div className="flex justify-center gap-4 mt-2">
@@ -468,6 +458,7 @@ export function Overview() {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         <RecentItemsList
           items={hubs}
+          classify={hubHealth}
           titleKey="overview.recentHubs"
           icon={IconDatabase}
           basePath="hubs"
@@ -475,6 +466,7 @@ export function Overview() {
         />
         <RecentItemsList
           items={forms}
+          classify={formHealth}
           titleKey="overview.recentForms"
           icon={IconFileCode}
           basePath="forms"
@@ -482,6 +474,7 @@ export function Overview() {
         />
         <RecentItemsList
           items={nodes}
+          classify={classifyNode}
           titleKey="overview.recentNodes"
           icon={IconBox}
           basePath="nodes"

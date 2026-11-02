@@ -7,7 +7,6 @@ import {
   IconRefresh,
   IconCircleCheck,
   IconCircleX,
-  IconClock,
   IconDatabase,
   IconBox,
   IconGitBranch,
@@ -25,41 +24,21 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
-import { formApi, type FormDetailsResponse } from '@/lib/api'
-import type { LynqForm, Condition, TResource } from '@/types/lynq'
-
-function ConditionBadge({ condition }: { condition: Condition }) {
-  const isTrue = condition.status === 'True'
-  const isFalse = condition.status === 'False'
-
-  return (
-    <div className="flex items-center gap-2 p-3 rounded-lg border bg-card">
-      {isTrue ? (
-        <IconCircleCheck size={16} className="text-emerald-500" />
-      ) : isFalse ? (
-        <IconCircleX size={16} className="text-rose-500" />
-      ) : (
-        <IconClock size={16} className="text-amber-500" />
-      )}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="font-medium text-sm">{condition.type}</span>
-          <Badge variant={isTrue ? 'ready' : isFalse ? 'failed' : 'pending'}>
-            {condition.status}
-          </Badge>
-        </div>
-        {condition.message && (
-          <p className="text-xs text-muted-foreground truncate mt-1">
-            {condition.message}
-          </p>
-        )}
-      </div>
-      <span className="text-xs text-muted-foreground shrink-0">
-        {new Date(condition.lastTransitionTime).toLocaleString()}
-      </span>
-    </div>
-  )
-}
+import { ConditionBadge } from '@/components/ConditionBadge'
+import { RolloutProgress } from '@/components/RolloutProgress'
+import { useEvents } from '@/hooks/useEvents'
+import { formApi, nodeApi, type FormDetailsResponse } from '@/lib/api'
+import { HealthBadge } from '@/components/HealthBadge'
+import {
+  classifyForm,
+  formNodeCounts,
+  formNodes,
+  indexNodeHealth,
+  rolloutView,
+  type HealthCounts,
+  type RolloutNode,
+} from '@/lib/health'
+import type { LynqForm, TResource } from '@/types/lynq'
 
 function TResourceCard({
   resource,
@@ -200,6 +179,9 @@ export function FormDetail() {
   const { t } = useTranslation()
 
   const [details, setDetails] = useState<FormDetailsResponse | null>(null)
+  // LynqFormStatus has no failed-node count; classify the form's nodes instead
+  const [nodeCounts, setNodeCounts] = useState<HealthCounts | null>(null)
+  const [ownNodes, setOwnNodes] = useState<RolloutNode[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -208,8 +190,14 @@ export function FormDetail() {
     setLoading(true)
     setError(null)
     try {
-      const data = await formApi.getDetails(name, namespace)
+      const [data, nodes] = await Promise.all([
+        formApi.getDetails(name, namespace),
+        nodeApi.list(namespace).catch(() => null),
+      ])
+      const index = nodes ? indexNodeHealth(nodes.items || []) : null
       setDetails(data)
+      setNodeCounts(index && formNodeCounts(index, data.form.metadata))
+      setOwnNodes(index && formNodes(index, data.form.metadata))
     } catch (err) {
       setError(err instanceof Error ? err.message : t('forms.errorLoadingForm'))
     } finally {
@@ -221,6 +209,20 @@ export function FormDetail() {
     fetchData()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [name, namespace])
+
+  // Rollout history (RolloutFailed / RolloutRecovered) is only visible as LynqForm events
+  const { events } = useEvents({
+    nodeName: name ?? '',
+    namespace: details?.form.metadata.namespace ?? namespace,
+    pollInterval: 30000,
+  })
+  const formEvents = events
+    .filter(
+      (e) =>
+        e.involvedObject.kind === 'LynqForm' &&
+        (!details || e.involvedObject.namespace === details.form.metadata.namespace)
+    )
+    .slice(0, 10)
 
   if (loading) {
     return (
@@ -251,9 +253,9 @@ export function FormDetail() {
   }
 
   const { form, variables } = details
-  const isReady = form.status?.conditions?.some(
-    (c) => (c.type === 'Ready' || c.type === 'Applied') && c.status === 'True'
-  )
+  const health = classifyForm(form, nodeCounts)
+  const rollout = form.status?.rollout
+  const rollingOut = rolloutView(form, ownNodes)
   const formSpec = form.spec as LynqForm['spec']
 
   // Count total resources
@@ -283,9 +285,7 @@ export function FormDetail() {
             <div className="flex items-center gap-2">
               <IconFileCode size={20} />
               <h1 className="text-2xl font-bold">{form.metadata.name}</h1>
-              <Badge variant={isReady ? 'ready' : 'pending'}>
-                {isReady ? t('status.ready') : t('status.pending')}
-              </Badge>
+              <HealthBadge health={health} />
             </div>
             <p className="text-muted-foreground">{form.metadata.namespace}</p>
           </div>
@@ -354,7 +354,7 @@ export function FormDetail() {
             <div className="flex items-center gap-2">
               <IconCircleX size={16} className="text-rose-500" />
               <span className="text-2xl font-bold text-rose-500">
-                {form.status?.failedNodes || 0}
+                {nodeCounts ? nodeCounts.failed : '-'}
               </span>
             </div>
           </CardContent>
@@ -362,26 +362,13 @@ export function FormDetail() {
       </div>
 
       {/* Rollout Progress */}
-      {form.status?.rollout?.inProgress && (
-        <Card>
+      {rollout && rollingOut && (
+        <Card className={rollingOut.phase === 'Failed' ? 'border-rose-200 dark:border-rose-900' : ''}>
           <CardHeader>
             <CardTitle>{t('forms.rollout')}</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm">
-                <span>
-                  {form.status.rollout.updatedNodes} / {form.status.rollout.totalNodes} {t('forms.nodesUpdated')}
-                </span>
-                <span>{form.status.rollout.percentage}%</span>
-              </div>
-              <div className="h-2 bg-muted rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-primary transition-all"
-                  style={{ width: `${form.status.rollout.percentage}%` }}
-                />
-              </div>
-            </div>
+            <RolloutProgress rollout={rollout} view={rollingOut} />
           </CardContent>
         </Card>
       )}
@@ -429,6 +416,30 @@ export function FormDetail() {
           <CardContent className="space-y-2">
             {form.status.conditions.map((condition, i) => (
               <ConditionBadge key={i} condition={condition} />
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Events */}
+      {formEvents.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>{t('forms.recentEvents')}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {formEvents.map((event, i) => (
+              <div key={i} className="flex items-start gap-2 p-2 rounded-lg border text-sm">
+                <Badge variant={event.type === 'Warning' ? 'destructive' : 'secondary'}>
+                  {event.reason}
+                </Badge>
+                <p className="flex-1 min-w-0 text-xs text-muted-foreground break-words">
+                  {event.message}
+                </p>
+                <span className="text-xs text-muted-foreground shrink-0">
+                  {new Date(event.lastTimestamp).toLocaleString()}
+                </span>
+              </div>
             ))}
           </CardContent>
         </Card>

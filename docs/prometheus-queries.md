@@ -25,15 +25,22 @@ count(lynqnode_condition_status{type="Ready"} == 1) / count(lynqnode_condition_s
 
 ### Check Not Ready Nodes
 
+A not-ready node is not necessarily a failed one. Every LynqNode is in exactly one of three states: **ready** (`Ready=True`), **failed** (failed or conflicted resources, or `Degraded=True`), or **progressing** (rolling out, recovering lost pods, or not reconciled yet). Not-ready covers both failed and progressing nodes.
+
 ```promql
-# All not ready nodes
+# All not ready nodes (failed and progressing)
 lynqnode_condition_status{type="Ready"} != 1
 
 # Count not ready nodes
 count(lynqnode_condition_status{type="Ready"} != 1)
 
-# List not ready nodes with details
-lynqnode_condition_status{type="Ready"} != 1
+# Not-ready nodes that need an operator (Degraded=True)
+max by (lynqnode, namespace) (lynqnode_condition_status{type="Degraded"}) == 1
+and on (lynqnode, namespace) (max by (lynqnode, namespace) (lynqnode_condition_status{type="Ready"}) != 1)
+
+# Not-ready nodes that are only progressing (Degraded=False): no action needed yet
+max by (lynqnode, namespace) (lynqnode_condition_status{type="Degraded"}) == 0
+and on (lynqnode, namespace) (max by (lynqnode, namespace) (lynqnode_condition_status{type="Ready"}) != 1)
 ```
 
 ### Check Degraded Nodes
@@ -81,7 +88,14 @@ lynqnode_resources_failed
 
 # Nodes with 100% resources ready
 (lynqnode_resources_ready / lynqnode_resources_desired) == 1
+
+# Not-ready resources per node: neither ready nor failed (starting up, recovering after a
+# regression such as a lost pod, or skipped because a dependency failed).
+# desired = ready + not ready + failed
+lynqnode_resources_desired - lynqnode_resources_ready - lynqnode_resources_failed
 ```
+
+`lynqnode_resources_failed` counts only Lynq's own changes that never became Ready (readiness timeout, `ProgressDeadlineExceeded`) or failed to apply. A resource that was Ready and later regressed is not-ready, not failed.
 
 ## Conflict Monitoring
 
@@ -239,6 +253,12 @@ sum(rate(apply_attempts_total{result="error"}[5m])) by (kind)
 
 ## Hub Health
 
+A hub's nodes split into three states: `hub_desired = hub_ready + hub_failed + progressing`. `hub_failed` counts only nodes that need an operator (failed or conflicted resources, or `Degraded=True`). Progressing nodes (rolling out, recovering lost pods, or not created yet, including creation held back by `maxSkew`) have no metric of their own; they are the gap `hub_desired - hub_ready - hub_failed`.
+
+::: warning Older Lynq versions
+Lynq v1.1.23-alpha.1 and earlier count every node with `Ready!=True` in `hub_failed`. On those versions the progressing gap is only nodes not created yet, and `hub_failed` rises during every rollout or node drain.
+:::
+
 ### Hub Status
 
 ```promql
@@ -248,40 +268,77 @@ hub_desired
 # Ready nodes per hub
 hub_ready
 
-# Failed nodes per hub
+# Failed nodes per hub (need an operator)
 hub_failed
 
-# Hub health percentage
+# Progressing nodes per hub (neither ready nor failed). clamp_min hides the brief negative
+# value a scrape taken between two status updates can produce
+clamp_min(hub_desired - hub_ready - hub_failed, 0)
+
+# Ready percentage per hub (drops during rollouts and drains; not a failure signal by itself)
 (hub_ready / hub_desired) * 100
 ```
 
 ### Hub Capacity
 
 ```promql
-# Total desired nodes across all registries
+# Total desired nodes across all hubs
 sum(hub_desired)
 
-# Total ready nodes across all registries
+# Total ready nodes across all hubs
 sum(hub_ready)
 
-# Total failed nodes across all registries
+# Total failed nodes across all hubs
 sum(hub_failed)
 
-# Overall health percentage
+# Total progressing nodes across all hubs
+clamp_min(sum(hub_desired) - sum(hub_ready) - sum(hub_failed), 0)
+
+# Overall ready percentage
 (sum(hub_ready) / sum(hub_desired)) * 100
 ```
 
 ### Hub Trends
 
 ```promql
-# Hub health over time
+# Hub ready percentage over time
 (hub_ready / hub_desired) * 100
 
-# Registries with >90% health
-(hub_ready / hub_desired) > 0.9
+# Hubs with any failed node (what HubNodesFailure / HubManyNodesFailure fire on)
+hub_failed > 0
 
-# Unhealthy registries (<80% ready)
-(hub_ready / hub_desired) < 0.8
+# Hubs with progressing nodes but none failed (what HubDesiredCountMismatch fires on after 20m)
+(hub_ready != hub_desired) and (hub_desired > 0) and (hub_failed == 0)
+```
+
+## Rollouts
+
+LynqForms with `spec.rollout.maxSkew > 0` report rollout metrics; other LynqForms have no rollout series. `lynqform_rollout_phase` is `0=Idle`, `1=InProgress`, `2=Failed`, `3=Complete`. `Failed` means an updated LynqNode failed, or did not become Ready within `spec.rollout.progressDeadlineSeconds`; the node keeps its `maxSkew` slot, so the rollout stops until it is fixed.
+
+```promql
+# Stalled rollouts (what LynqFormRolloutFailed fires on)
+lynqform_rollout_phase == 2
+
+# Count stalled rollouts
+count(lynqform_rollout_phase == 2) or vector(0)
+
+# Rollouts in progress
+lynqform_rollout_phase == 1
+
+# Rollout progress percentage (nodes Ready on the new LynqForm generation)
+lynqform_rollout_progress
+
+# Nodes currently updating (updated but not Ready yet; bounded by maxSkew)
+lynqform_rollout_updating_nodes
+
+# In-progress rollouts that made no progress in the last 30 minutes
+(lynqform_rollout_phase == 1) and on (form, namespace) (delta(lynqform_rollout_progress[30m]) == 0)
+```
+
+The nodes that stalled a rollout are listed in the LynqForm status:
+
+```bash
+kubectl get lynqform <name> -n <namespace> -o jsonpath='{.status.rollout.message}'
 ```
 
 ## Capacity Planning
@@ -357,20 +414,26 @@ sum(lynqnode_resources_failed)
 
 ### Problem Detection
 
-```promql
-# Nodes with issues (not ready OR degraded OR conflicts OR failures)
-(lynqnode_condition_status{type="Ready"} != 1)
-or (lynqnode_degraded_status == 1)
-or (lynqnode_resources_conflicted > 0)
-or (lynqnode_resources_failed > 0)
+Not-ready alone is not a problem: rolling-out and recovering nodes are not ready but need no action. Query nodes that need an operator separately from nodes that are only not ready.
 
-# Count problematic nodes
+```promql
+# Nodes that need an operator (degraded OR conflicts OR failures)
+max by (lynqnode, namespace) (lynqnode_degraded_status) == 1
+or max by (lynqnode, namespace) (lynqnode_resources_conflicted) > 0
+or max by (lynqnode, namespace) (lynqnode_resources_failed) > 0
+
+# Count nodes that need an operator
 count(
-  (lynqnode_condition_status{type="Ready"} != 1)
-  or (lynqnode_degraded_status == 1)
-  or (lynqnode_resources_conflicted > 0)
-  or (lynqnode_resources_failed > 0)
+  max by (lynqnode, namespace) (lynqnode_degraded_status) == 1
+  or max by (lynqnode, namespace) (lynqnode_resources_conflicted) > 0
+  or max by (lynqnode, namespace) (lynqnode_resources_failed) > 0
 )
+
+# Nodes that are not ready (needing an operator or only progressing)
+lynqnode_condition_status{type="Ready"} != 1
+
+# Stalled rollouts
+lynqform_rollout_phase == 2
 ```
 
 ### Performance Summary
@@ -397,8 +460,11 @@ lynqnode_resources_failed > 0
 # Node is degraded
 lynqnode_degraded_status > 0
 
-# Node not ready
-lynqnode_condition_status{type="Ready"} != 1
+# Node not ready (fires after 15m; includes progressing nodes)
+lynqnode_condition_status{type="Ready"} == 0
+
+# Node status unknown (fires after 10m)
+lynqnode_condition_status{type="Ready"} == 2
 
 # Hub has many failures
 hub_failed > 5 or (hub_failed / hub_desired > 0.5 and hub_desired > 0)
@@ -424,6 +490,15 @@ min_over_time(lynqnode_condition_status{type="Ready"}[15m]) == 0
 
 # Nodes with both failures and conflicts (v1.1.4+)
 lynqnode_degraded_status{reason="ResourceFailuresAndConflicts"} > 0
+
+# Hub has failed nodes (1-5)
+hub_failed > 0 and hub_failed <= 5
+
+# Hub has progressing nodes but none failed (fires after 20m)
+(hub_ready != hub_desired) and (hub_desired > 0) and (hub_failed == 0)
+
+# LynqForm rollout stalled
+lynqform_rollout_phase == 2
 ```
 
 ## v1.1.4 Enhanced Status Queries

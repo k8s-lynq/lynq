@@ -1,0 +1,57 @@
+name: Dashboard
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  bff:
+    name: BFF vet and test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard/bff
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: dashboard/bff/go.mod
+          cache-dependency-path: dashboard/bff/go.sum
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+  ui:
+    name: UI lint, test and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard/ui
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: dashboard/ui/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build

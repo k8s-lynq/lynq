@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { IconDatabase, IconExternalLink, IconRefresh } from '@tabler/icons-react'
@@ -5,14 +6,22 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useHubs, useHubPolling } from '@/contexts/HubContext'
+import { useNodes, useNodePolling } from '@/contexts/NodeContext'
+import { HealthBadge } from '@/components/HealthBadge'
+import {
+  classifyHub,
+  hubNodeHealth,
+  indexNodeHealth,
+  isHubDisconnected,
+  type HubNodeHealth,
+} from '@/lib/health'
 import type { LynqHub } from '@/types/lynq'
 
-function HubCard({ hub }: { hub: LynqHub }) {
+// nodeHealth is null until the node list has loaded: the counts show '-', not 0
+function HubCard({ hub, nodeHealth }: { hub: LynqHub; nodeHealth: HubNodeHealth | null }) {
   const { t } = useTranslation()
-  const isReady = hub.status?.conditions?.some(
-    (c) => c.type === 'Ready' && c.status === 'True'
-  )
-  const status = isReady ? 'ready' : 'pending'
+  const status = classifyHub(hub, nodeHealth)
+  const disconnected = isHubDisconnected(hub)
 
   return (
     <Card>
@@ -26,26 +35,35 @@ function HubCard({ hub }: { hub: LynqHub }) {
             {hub.metadata.namespace}
           </p>
         </div>
-        <Badge variant={status}>{isReady ? t('status.ready') : t('status.pending')}</Badge>
+        <div className="flex flex-col items-end gap-1">
+          <HealthBadge health={status} />
+          {disconnected && <Badge variant="failed">{t('hubs.dbDisconnected')}</Badge>}
+        </div>
       </CardHeader>
       <CardContent>
         <div className="space-y-4">
           {/* Stats */}
-          <div className="grid grid-cols-3 gap-4 text-center">
+          <div className="grid grid-cols-4 gap-2 text-center">
             <div>
               <p className="text-2xl font-bold">{hub.status?.desired || 0}</p>
               <p className="text-xs text-muted-foreground">{t('hubs.desired')}</p>
             </div>
             <div>
-              <p className="text-2xl font-bold text-emerald-500">
-                {hub.status?.ready || 0}
-              </p>
+              <p className="text-2xl font-bold text-emerald-500">{nodeHealth?.ready ?? '-'}</p>
               <p className="text-xs text-muted-foreground">{t('status.ready')}</p>
             </div>
-            <div>
-              <p className="text-2xl font-bold text-rose-500">
-                {hub.status?.failed || 0}
-              </p>
+            <div
+              title={
+                nodeHealth?.notCreated
+                  ? `${t('hubs.progressingHint')} ${t('hubs.notCreatedHint', { count: nodeHealth.notCreated })}`
+                  : t('hubs.progressingHint')
+              }
+            >
+              <p className="text-2xl font-bold text-amber-500">{nodeHealth?.progressing ?? '-'}</p>
+              <p className="text-xs text-muted-foreground">{t('status.pending')}</p>
+            </div>
+            <div title={t('hubs.failedHint')}>
+              <p className="text-2xl font-bold text-rose-500">{nodeHealth?.failed ?? '-'}</p>
               <p className="text-xs text-muted-foreground">{t('status.failed')}</p>
             </div>
           </div>
@@ -88,9 +106,13 @@ function HubCard({ hub }: { hub: LynqHub }) {
 export function Hubs() {
   const { t } = useTranslation()
   const { hubs, loading, fetchHubs } = useHubs()
+  const { nodes, loaded: nodesLoaded } = useNodes()
 
-  // Enable polling
+  // Enable polling. Hub health is counted from the hubs' LynqNodes (see HubNodeHealth), so the
+  // node list is polled here too, on the same 30s cycle as the Nodes page.
   useHubPolling()
+  useNodePolling()
+  const nodeIndex = useMemo(() => (nodesLoaded ? indexNodeHealth(nodes) : null), [nodes, nodesLoaded])
 
   return (
     <div className="space-y-6">
@@ -129,7 +151,11 @@ export function Hubs() {
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {hubs.map((hub) => (
-            <HubCard key={`${hub.metadata.namespace}/${hub.metadata.name}`} hub={hub} />
+            <HubCard
+              key={`${hub.metadata.namespace}/${hub.metadata.name}`}
+              hub={hub}
+              nodeHealth={nodeIndex && hubNodeHealth(hub, nodeIndex)}
+            />
           ))}
         </div>
       )}

@@ -4,6 +4,7 @@ import {
   useReducer,
   useCallback,
   useEffect,
+  useRef,
   type ReactNode,
 } from 'react'
 import type { LynqNode, ListResponse } from '@/types/lynq'
@@ -64,6 +65,9 @@ function nodeReducer(state: NodeState, action: NodeAction): NodeState {
 }
 
 interface NodeContextValue extends NodeState {
+  // loaded: the node list has been fetched successfully at least once. Until then an empty
+  // nodes array means "unknown", not "no nodes", and counts derived from it must not show 0.
+  loaded: boolean
   fetchNodes: (namespace?: string) => Promise<void>
   selectNode: (node: LynqNode | null) => void
   getNode: (name: string, namespace?: string) => Promise<LynqNode>
@@ -74,17 +78,31 @@ const NodeContext = createContext<NodeContextValue | null>(null)
 export function NodeProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(nodeReducer, initialState)
 
-  const fetchNodes = useCallback(async (namespace?: string) => {
-    dispatch({ type: 'FETCH_START' })
-    try {
-      const response: ListResponse<LynqNode> = await nodeApi.list(namespace)
-      dispatch({ type: 'FETCH_SUCCESS', payload: response.items })
-    } catch (err) {
-      dispatch({
-        type: 'FETCH_ERROR',
-        payload: err instanceof Error ? err.message : 'Failed to fetch nodes',
-      })
-    }
+  // Listing every LynqNode is the dashboard's most expensive request. A fetch for the same
+  // namespace already in flight (a page's poll and a refresh click, or two pages' polls racing
+  // on navigation) is joined instead of issued again.
+  const inFlight = useRef(new Map<string, Promise<void>>())
+
+  const fetchNodes = useCallback((namespace?: string) => {
+    const key = namespace ?? ''
+    const pending = inFlight.current.get(key)
+    if (pending) return pending
+    const request = (async () => {
+      dispatch({ type: 'FETCH_START' })
+      try {
+        const response: ListResponse<LynqNode> = await nodeApi.list(namespace)
+        dispatch({ type: 'FETCH_SUCCESS', payload: response.items })
+      } catch (err) {
+        dispatch({
+          type: 'FETCH_ERROR',
+          payload: err instanceof Error ? err.message : 'Failed to fetch nodes',
+        })
+      } finally {
+        inFlight.current.delete(key)
+      }
+    })()
+    inFlight.current.set(key, request)
+    return request
   }, [])
 
   const selectNode = useCallback((node: LynqNode | null) => {
@@ -98,7 +116,9 @@ export function NodeProvider({ children }: { children: ReactNode }) {
   }, [])
 
   return (
-    <NodeContext.Provider value={{ ...state, fetchNodes, selectNode, getNode }}>
+    <NodeContext.Provider
+      value={{ ...state, loaded: state.lastUpdated !== null, fetchNodes, selectNode, getNode }}
+    >
       {children}
     </NodeContext.Provider>
   )
@@ -112,13 +132,28 @@ export function useNodes() {
   return context
 }
 
-// Polling hook for nodes
+// Polling hook for nodes. A hidden tab skips its polls (the node list is a full LynqNode LIST
+// against the API server) and catches up as soon as it becomes visible again.
 export function useNodePolling(namespace?: string, interval = 30000) {
   const { fetchNodes } = useNodes()
 
   useEffect(() => {
     fetchNodes(namespace)
-    const timer = setInterval(() => fetchNodes(namespace), interval)
-    return () => clearInterval(timer)
+    const timer = setInterval(() => {
+      if (document.visibilityState !== 'hidden') fetchNodes(namespace)
+    }, interval)
+    let skippedWhileHidden = false
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') skippedWhileHidden = true
+      else if (skippedWhileHidden) {
+        skippedWhileHidden = false
+        fetchNodes(namespace)
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
   }, [fetchNodes, namespace, interval])
 }
